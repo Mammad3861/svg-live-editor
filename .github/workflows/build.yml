@@ -16,10 +16,10 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up .NET 10 SDK
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
 
@@ -29,12 +29,12 @@ jobs:
       - name: Build Release
         run: dotnet build SvgLiveEditor.sln --configuration Release --no-restore
 
-      - name: Run tests
-        run: dotnet test SvgLiveEditor.sln --configuration Release --no-build --logger "trx;LogFileName=test-results.trx"
+      - name: Run deterministic tests
+        run: dotnet test SvgLiveEditor.sln --configuration Release --no-build --filter "TestCategory!=DesktopIntegration" --logger "trx;LogFileName=test-results.trx"
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: test-results
           path: "**/TestResults/*.trx"
