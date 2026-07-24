@@ -6,6 +6,7 @@ namespace SvgLiveEditor.Tests;
 [TestClass]
 public sealed class PreviewInteractionTests
 {
+    private const string BridgeToken = "00112233445566778899AABBCCDDEEFF";
     private readonly PreviewInteractionMessageParser _parser = new();
     private readonly PreviewScrollCalculator _scrollCalculator = new();
 
@@ -15,6 +16,7 @@ public sealed class PreviewInteractionTests
         const string json = """
             {
               "type":"zoom",
+              "token":"00112233445566778899AABBCCDDEEFF",
               "direction":"in",
               "contentX":0.5,
               "contentY":0.25,
@@ -25,7 +27,10 @@ public sealed class PreviewInteractionTests
             }
             """;
 
-        Assert.IsTrue(_parser.TryParseZoomRequest(json, out PreviewZoomRequest request));
+        Assert.IsTrue(_parser.TryParseZoomRequest(
+            json,
+            BridgeToken,
+            out PreviewZoomRequest request));
         Assert.AreEqual(PreviewZoomDirection.In, request.Direction);
         Assert.AreEqual(0.5, request.ContentX, 0.0001);
         Assert.AreEqual(300, request.AnchorX, 0.0001);
@@ -35,17 +40,31 @@ public sealed class PreviewInteractionTests
     public void ZoomMessage_RejectsUnknownCommandsAndExtraProperties()
     {
         const string unknown = """
-            {"type":"navigate","direction":"in","contentX":0.5,"contentY":0.5,
+            {"type":"navigate","token":"00112233445566778899AABBCCDDEEFF",
+             "direction":"in","contentX":0.5,"contentY":0.5,
              "anchorX":1,"anchorY":1,"viewportWidth":10,"viewportHeight":10}
             """;
         const string extra = """
-            {"type":"zoom","direction":"out","contentX":0.5,"contentY":0.5,
+            {"type":"zoom","token":"00112233445566778899AABBCCDDEEFF",
+             "direction":"out","contentX":0.5,"contentY":0.5,
              "anchorX":1,"anchorY":1,"viewportWidth":10,"viewportHeight":10,
              "url":"https://example.test"}
             """;
 
-        Assert.IsFalse(_parser.TryParseZoomRequest(unknown, out _));
-        Assert.IsFalse(_parser.TryParseZoomRequest(extra, out _));
+        Assert.IsFalse(_parser.TryParseZoomRequest(unknown, BridgeToken, out _));
+        Assert.IsFalse(_parser.TryParseZoomRequest(extra, BridgeToken, out _));
+    }
+
+    [TestMethod]
+    public void ZoomMessage_RejectsAStaleNavigationToken()
+    {
+        const string json = """
+            {"type":"zoom","token":"FFEEDDCCBBAA99887766554433221100",
+             "direction":"in","contentX":0.5,"contentY":0.5,
+             "anchorX":1,"anchorY":1,"viewportWidth":10,"viewportHeight":10}
+            """;
+
+        Assert.IsFalse(_parser.TryParseZoomRequest(json, BridgeToken, out _));
     }
 
     [TestMethod]

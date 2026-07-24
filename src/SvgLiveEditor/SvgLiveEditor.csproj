@@ -9,6 +9,7 @@
     <RootNamespace>SvgLiveEditor</RootNamespace>
     <Version>0.1.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\SvgLiveEditor.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -20,5 +21,6 @@
     <EmbeddedResource Include="..\..\samples\welcome.svg">
       <LogicalName>SvgLiveEditor.Samples.welcome.svg</LogicalName>
     </EmbeddedResource>
+    <Resource Include="Assets\SvgLiveEditor.ico" />
   </ItemGroup>
 </Project>

@@ -7,7 +7,10 @@ public sealed class PreviewInteractionMessageParser
 {
     private const double MaximumViewportDimension = 100_000;
 
-    public bool TryParseZoomRequest(string json, out PreviewZoomRequest request)
+    public bool TryParseZoomRequest(
+        string json,
+        string expectedToken,
+        out PreviewZoomRequest request)
     {
         request = default;
         try
@@ -15,9 +18,11 @@ public sealed class PreviewInteractionMessageParser
             using JsonDocument document = JsonDocument.Parse(json);
             JsonElement root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object
-                || root.EnumerateObject().Count() != 8
+                || root.EnumerateObject().Count() != 9
                 || !TryReadString(root, "type", out string? type)
                 || type != "zoom"
+                || !TryReadString(root, "token", out string? token)
+                || !string.Equals(token, expectedToken, StringComparison.Ordinal)
                 || !TryReadString(root, "direction", out string? directionText)
                 || !TryReadNumber(root, "contentX", 0, 1, out double contentX)
                 || !TryReadNumber(root, "contentY", 0, 1, out double contentY)

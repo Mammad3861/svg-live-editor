@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Security.Cryptography;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
@@ -30,7 +31,7 @@ public partial class MainWindow : Window
     private readonly UnsavedChangesPolicy _unsavedChangesPolicy = new();
     private readonly AsyncDebouncer _previewDebouncer = new(TimeSpan.FromMilliseconds(300));
     private readonly PreviewZoomCalculator _previewZoomCalculator = new();
-    private readonly PreviewScrollCalculator _previewScrollCalculator = new();
+    private readonly PreviewZoomBridge _previewZoomBridge = new();
     private readonly PreviewInteractionMessageParser _previewInteractionMessageParser = new();
     private readonly SvgCanvasSizeReader _svgCanvasSizeReader = new();
     private readonly UserPreferencesService _userPreferencesService = new();
@@ -50,6 +51,7 @@ public partial class MainWindow : Window
     private string? _lastValidSvg;
     private SvgCanvasSize? _lastValidCanvasSize;
     private ulong? _activePreviewNavigationId;
+    private string? _activePreviewBridgeToken;
     private CoreWebView2? _configuredCoreWebView;
     private Task<bool>? _webViewInitializationTask;
 
@@ -191,7 +193,10 @@ public partial class MainWindow : Window
         settings.AreDevToolsEnabled = false;
         settings.AreBrowserAcceleratorKeysEnabled = false;
         settings.IsStatusBarEnabled = false;
-        settings.IsZoomControlEnabled = false;
+        // Physical Ctrl+Wheel is suppressed before DOM dispatch when this is false.
+        // The trusted page captures and cancels it, then requests artwork-only zoom.
+        settings.IsZoomControlEnabled = true;
+        settings.IsPinchZoomEnabled = false;
         settings.IsGeneralAutofillEnabled = false;
         settings.IsPasswordAutosaveEnabled = false;
 
@@ -235,6 +240,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        _activePreviewBridgeToken = null;
         ShowPreviewError(
             "Preview could not be rendered",
             $"WebView2 navigation failed with {e.WebErrorStatus}. Click Refresh Preview to retry.");
@@ -245,6 +251,7 @@ public partial class MainWindow : Window
         _isWebViewReady = false;
         _isPreviewNavigationRequested = false;
         _activePreviewNavigationId = null;
+        _activePreviewBridgeToken = null;
         ShowPreviewError(
             "Preview process failed",
             $"WebView2 reported {e.ProcessFailedKind} ({e.Reason}, exit code {e.ExitCode}). Click Refresh Preview to retry.");
@@ -256,35 +263,28 @@ public partial class MainWindow : Window
     {
         if (!_isWebViewReady
             || _lastValidCanvasSize is not SvgCanvasSize canvasSize
+            || _activePreviewBridgeToken is not string bridgeToken
+            || !_previewNavigationPolicy.IsTrustedWebMessageSource(e.Source)
             || !_previewInteractionMessageParser.TryParseZoomRequest(
                 e.WebMessageAsJson,
+                bridgeToken,
                 out PreviewZoomRequest request))
         {
             return;
         }
 
-        PreviewZoomState nextState = request.Direction == PreviewZoomDirection.In
-            ? _previewZoomCalculator.ZoomIn(_previewZoomState, GetFitScale(canvasSize))
-            : _previewZoomCalculator.ZoomOut(_previewZoomState, GetFitScale(canvasSize));
-        if (nextState == _previewZoomState)
+        PreviewZoomTransition transition = _previewZoomBridge.Apply(
+            _previewZoomState,
+            canvasSize,
+            GetFitScale(canvasSize),
+            request);
+        if (transition.State == _previewZoomState)
         {
             return;
         }
 
-        double nextScale = _previewZoomCalculator.ResolveScale(
-            nextState,
-            GetFitScale(canvasSize));
-        double contentWidth = Math.Max(
-            request.ViewportWidth,
-            (canvasSize.Width * nextScale) + (PreviewZoomCalculator.CanvasPadding * 2));
-        double contentHeight = Math.Max(
-            request.ViewportHeight,
-            (canvasSize.Height * nextScale) + (PreviewZoomCalculator.CanvasPadding * 2));
-        _pendingPreviewScroll = _previewScrollCalculator.KeepAnchorStable(
-            request,
-            contentWidth,
-            contentHeight);
-        ApplyPreviewZoomState(nextState);
+        _pendingPreviewScroll = transition.Scroll;
+        ApplyPreviewZoomState(transition.State);
     }
 
     private static void BlockUnexpectedWebResource(CoreWebView2 core, CoreWebView2WebResourceRequestedEventArgs args)
@@ -419,10 +419,12 @@ public partial class MainWindow : Window
             double renderedWidth = canvasSize.Width * scale;
             double renderedHeight = canvasSize.Height * scale;
             PreviewScrollPosition? initialScroll = _pendingPreviewScroll;
+            string bridgeToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
             string html = _previewHtmlBuilder.Build(
                 _lastValidSvg,
                 renderedWidth,
                 renderedHeight,
+                bridgeToken,
                 initialScroll);
             _pendingPreviewScroll = null;
             ShowPreviewLoading("Rendering the current valid SVG...");
@@ -431,6 +433,7 @@ public partial class MainWindow : Window
 
             core.Stop();
             _activePreviewNavigationId = null;
+            _activePreviewBridgeToken = bridgeToken;
             _isPreviewNavigationRequested = true;
             core.NavigateToString(html);
         }
@@ -438,6 +441,7 @@ public partial class MainWindow : Window
         {
             _isPreviewNavigationRequested = false;
             _activePreviewNavigationId = null;
+            _activePreviewBridgeToken = null;
             ShowPreviewError(
                 "Preview could not be rendered",
                 $"WebView2 could not start the preview navigation: {exception.Message}");
@@ -824,6 +828,16 @@ public partial class MainWindow : Window
 
         _fitResizeTimer.Stop();
         _fitResizeTimer.Start();
+    }
+
+    private void OnPreviewWebViewZoomFactorChanged(object sender, object e)
+    {
+        // Native document zoom would scale the checkerboard and host HTML. Keep it
+        // pinned while the trusted script implements artwork-only zoom.
+        if (Math.Abs(PreviewWebView.ZoomFactor - 1.0) > 0.0001)
+        {
+            PreviewWebView.ZoomFactor = 1.0;
+        }
     }
 
     private void OnFitResizeTimerTick(object? sender, EventArgs e)

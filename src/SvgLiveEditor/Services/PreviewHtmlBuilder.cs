@@ -13,6 +13,7 @@ public sealed class PreviewHtmlBuilder
           const viewport = document.querySelector('.preview-viewport');
           const image = document.querySelector('img');
           const bridge = window.chrome && window.chrome.webview;
+          const bridgeToken = document.body.dataset.bridgeToken;
           let spaceHeld = false;
           let activePointerId = null;
           let startX = 0;
@@ -42,7 +43,7 @@ public sealed class PreviewHtmlBuilder
             refreshCursor();
           };
 
-          viewport.addEventListener('wheel', event => {
+          const handleWheel = event => {
             if (event.ctrlKey) {
               event.preventDefault();
               if (!bridge) {
@@ -57,6 +58,7 @@ public sealed class PreviewHtmlBuilder
                 (viewport.scrollTop + anchorY) / Math.max(1, viewport.scrollHeight)));
               bridge.postMessage({
                 type: 'zoom',
+                token: bridgeToken,
                 direction: event.deltaY < 0 ? 'in' : 'out',
                 contentX,
                 contentY,
@@ -75,7 +77,14 @@ public sealed class PreviewHtmlBuilder
                 viewport.scrollLeft += horizontalDelta;
               }
             }
-          }, { passive: false });
+          };
+
+          // WebView2 must allow Ctrl+Wheel into the renderer before this handler can
+          // replace native document zoom with artwork-only zoom.
+          window.addEventListener(
+            'wheel',
+            handleWheel,
+            { capture: true, passive: false });
 
           viewport.addEventListener('pointerdown', event => {
             const isMiddlePan = event.button === 1;
@@ -156,9 +165,17 @@ public sealed class PreviewHtmlBuilder
         string validatedSvg,
         double renderedWidth,
         double renderedHeight,
+        string bridgeToken,
         PreviewScrollPosition? initialScroll = null)
     {
         ArgumentNullException.ThrowIfNull(validatedSvg);
+        ArgumentNullException.ThrowIfNull(bridgeToken);
+        if (bridgeToken.Length != 32 || bridgeToken.Any(character => !Uri.IsHexDigit(character)))
+        {
+            throw new ArgumentException(
+                "The preview bridge token must contain exactly 32 hexadecimal characters.",
+                nameof(bridgeToken));
+        }
         if (!double.IsFinite(renderedWidth) || renderedWidth <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(renderedWidth));
@@ -247,7 +264,9 @@ public sealed class PreviewHtmlBuilder
                 }
               </style>
             </head>
-            <body data-initial-scroll-left="{{initialScrollLeft}}" data-initial-scroll-top="{{initialScrollTop}}">
+            <body data-bridge-token="{{bridgeToken}}"
+                  data-initial-scroll-left="{{initialScrollLeft}}"
+                  data-initial-scroll-top="{{initialScrollTop}}">
               <div class="preview-viewport">
                 <main aria-label="SVG preview">
                   <img alt="Rendered SVG preview" draggable="false" src="data:image/svg+xml;base64,{{encodedSvg}}">

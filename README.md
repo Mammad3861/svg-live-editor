@@ -2,7 +2,7 @@
 
 SvgLiveEditor is an open-source Windows desktop application for editing SVG/XML source and viewing the result immediately. The editor keeps source on the left, renders a security-restricted preview on the right, and preserves the user's UTF-8 text exactly when saving.
 
-Planned repository: [github.com/Mammad3861/svg-live-editor](https://github.com/Mammad3861/svg-live-editor)
+Repository: [github.com/Mammad3861/svg-live-editor](https://github.com/Mammad3861/svg-live-editor)
 
 ## Screenshot
 
@@ -18,12 +18,15 @@ Planned repository: [github.com/Mammad3861/svg-live-editor](https://github.com/M
 - Strict UTF-8 reading and UTF-8-without-BOM writing without source reformatting.
 - Secure XML validation with useful line and column errors.
 - An original English/Persian welcome SVG included as the new-document template.
+- An original multi-resolution application icon embedded in the executable, title bar, taskbar, and Alt+Tab presentation.
+
+The trusted interaction bridge has automated browser integration coverage. Physical Ctrl+Wheel and the two drag-to-pan gestures should still be confirmed on the target release machine before v0.1.0 is published.
 
 ## Security model and limitations
 
 Opened files are untrusted. SvgLiveEditor prohibits DTDs, entity declarations, and external entity resolution; requires a standard SVG root; and rejects scripts, inline event handlers, `foreignObject`, active embedded content, processing instructions, style elements, navigation links, and non-fragment resources.
 
-Validated SVG is UTF-8/Base64 encoded into an HTML `<img>` data URL. Raw SVG is never inserted into host markup. The host uses a restrictive Content Security Policy. One fixed, app-owned interaction script is authorized by its exact CSP SHA-256 hash for wheel and pan handling; it can send only a strictly validated zoom request. User SVG scripts remain non-executable, and native host objects, arbitrary messages, permissions, downloads, pop-ups, external navigation, external requests, developer tools, and context menus are disabled or blocked. Invalid edits keep the last valid preview visible.
+Validated SVG is UTF-8/Base64 encoded into an HTML `<img>` data URL. Raw SVG is never inserted into host markup. The host uses a restrictive Content Security Policy. One fixed, app-owned interaction script is authorized by its exact CSP SHA-256 hash for wheel and pan handling; it can send only a strictly validated, per-navigation-token-bound zoom request. Native browser/document zoom stays pinned to 100%, so only the SVG image dimensions change. User SVG scripts remain non-executable, and native host objects, arbitrary messages, permissions, downloads, pop-ups, external navigation, external requests, developer tools, and context menus are disabled or blocked. Invalid edits keep the last valid preview visible.
 
 This conservative MVP intentionally supports only a restricted safe SVG subset and does not render every valid SVG feature. In particular, external images/fonts/styles, embedded data resources, hyperlinks, `<style>`, `foreignObject`, scripts, and event handlers are rejected. Because exporter output varies, SvgLiveEditor is not guaranteed to open every SVG produced by tools such as Adobe Illustrator or Inkscape. The preview is not a general-purpose web browser or a replacement for reviewing SVG before distribution. See [docs/security-model.md](docs/security-model.md).
 
@@ -72,6 +75,16 @@ Output is written to `dist/win-x64`. To publish and create the intended `release
 
 Publishing is folder-based and intentionally not trimmed or forced into a single file, which is safer for WPF, WebView2 native dependencies, and startup reliability. These commands do not create a GitHub Release.
 
+## Application icon
+
+The editable original is `assets/app-icon.svg`; the committed Windows icon is `src/SvgLiveEditor/Assets/SvgLiveEditor.ico`. The ICO embeds 16, 24, 32, 48, 64, 128, and 256 pixel frames and is compiled into the executable. To regenerate it deterministically on Windows:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/Generate-AppIcon.ps1
+```
+
+The development-only generator uses Windows' built-in `System.Drawing`; it adds no application runtime dependency.
+
 ## Download
 
 > Download placeholder — no public binary or GitHub Release is produced automatically.
@@ -82,6 +95,7 @@ Publishing is folder-based and intentionally not trimmed or forced into a single
 src/SvgLiveEditor/          WPF application
 tests/SvgLiveEditor.Tests/ Automated logic and security tests
 samples/welcome.svg        Original safe starter document
+assets/                    Original editable artwork
 docs/                      Architecture and security notes
 .github/workflows/         Windows build-and-test workflow
 scripts/                   Local publish helper

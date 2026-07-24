@@ -4,6 +4,7 @@
         xmlns:avalonEdit="http://icsharpcode.net/sharpdevelop/avalonedit"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         Title="{Binding WindowTitle}"
+        Icon="Assets/SvgLiveEditor.ico"
         Width="1280"
         Height="800"
         MinWidth="900"
@@ -171,8 +172,9 @@
 
           <Grid Grid.Row="1" Background="#F8FAFC">
             <wv2:WebView2 x:Name="PreviewWebView"
-                          DefaultBackgroundColor="#FFF8FAFC"
-                          SizeChanged="OnPreviewWebViewSizeChanged" />
+                           DefaultBackgroundColor="#FFF8FAFC"
+                           ZoomFactorChanged="OnPreviewWebViewZoomFactorChanged"
+                           SizeChanged="OnPreviewWebViewSizeChanged" />
             <Border x:Name="PreviewMessagePanel" Background="#F8FAFC" Padding="32">
               <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="520">
                 <ProgressBar x:Name="PreviewLoadingIndicator" Width="220" Height="4" Margin="0,0,0,20" IsIndeterminate="True" />

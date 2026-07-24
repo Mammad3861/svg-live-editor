@@ -11,6 +11,8 @@ public sealed class PreviewNavigationPolicyTests
     public void IsAllowed_AllowsInitialBlankNavigation()
     {
         Assert.IsTrue(_policy.IsAllowed("about:blank", isHostPreviewRequested: false));
+        Assert.IsTrue(_policy.IsTrustedWebMessageSource("about:blank"));
+        Assert.IsFalse(_policy.IsTrustedWebMessageSource("https://example.test/"));
     }
 
     [TestMethod]
@@ -20,11 +22,13 @@ public sealed class PreviewNavigationPolicyTests
 
         Assert.IsFalse(_policy.IsAllowed(previewUri, isHostPreviewRequested: false));
         Assert.IsTrue(_policy.IsAllowed(previewUri, isHostPreviewRequested: true));
+        Assert.IsTrue(_policy.IsTrustedPreviewDocument(previewUri));
     }
 
     [TestMethod]
     [DataRow("https://example.test/")]
     [DataRow("file:///C:/secret.svg")]
+    [DataRow("data:text/html,<script>bad()</script>")]
     [DataRow("data:image/svg+xml;base64,PHN2Zy8+")]
     public void IsAllowed_RejectsOtherNavigationEvenDuringHostPreview(string uri)
     {
