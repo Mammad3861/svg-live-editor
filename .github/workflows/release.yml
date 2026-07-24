@@ -1,0 +1,185 @@
+name: Package release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable release tag to package (for example, v0.1.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out release tooling
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate and check out the exact tag
+        id: release
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MANUAL_TAG: ${{ github.event.inputs.tag }}
+          PUSHED_TAG: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = if ($env:EVENT_NAME -eq 'workflow_dispatch') {
+            $env:MANUAL_TAG
+          }
+          else {
+            $env:PUSHED_TAG
+          }
+
+          if ($tag -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+            throw "Release tag '$tag' must be a stable semantic version such as v0.1.0."
+          }
+
+          git show-ref --verify --quiet "refs/tags/$tag"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Tag '$tag' does not exist in this repository."
+          }
+
+          $packagingScript = Join-Path $env:RUNNER_TEMP 'Publish-WinX64.ps1'
+          Copy-Item -LiteralPath 'scripts/Publish-WinX64.ps1' -Destination $packagingScript -Force
+
+          $tagCommit = (git rev-list -n 1 "refs/tags/$tag").Trim()
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($tagCommit)) {
+            throw "Could not resolve tag '$tag'."
+          }
+
+          git checkout --detach "refs/tags/$tag"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not check out tag '$tag'."
+          }
+
+          $checkedOutCommit = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $checkedOutCommit -cne $tagCommit) {
+            throw "HEAD is not the commit referenced by tag '$tag'."
+          }
+
+          $version = $tag.Substring(1)
+          $utf8 = [Text.UTF8Encoding]::new($false)
+          [IO.File]::AppendAllText($env:GITHUB_OUTPUT, "tag=$tag`n", $utf8)
+          [IO.File]::AppendAllText($env:GITHUB_OUTPUT, "version=$version`n", $utf8)
+
+      - name: Confirm project version matches tag
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          [xml]$project = Get-Content -LiteralPath 'src/SvgLiveEditor/SvgLiveEditor.csproj' -Raw
+          $projectVersions = @(
+            $project.Project.PropertyGroup |
+              ForEach-Object { [string]$_.Version } |
+              Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+          )
+
+          if ($projectVersions.Count -ne 1 -or $projectVersions[0] -cne $env:RELEASE_VERSION) {
+            throw "Project version '$($projectVersions -join ', ')' does not match tag version '$env:RELEASE_VERSION'."
+          }
+
+      - name: Set up .NET 10 SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore dependencies
+        run: dotnet restore SvgLiveEditor.sln
+
+      - name: Build Release
+        run: dotnet build SvgLiveEditor.sln --configuration Release --no-restore
+
+      - name: Run deterministic tests
+        run: dotnet test SvgLiveEditor.sln --configuration Release --no-build --filter "TestCategory!=DesktopIntegration" --logger "trx;LogFileName=test-results.trx"
+
+      - name: Build and audit release package
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $packagingScript = Join-Path $env:RUNNER_TEMP 'Publish-WinX64.ps1'
+          & $packagingScript -Version $env:RELEASE_VERSION -RepositoryRoot $env:GITHUB_WORKSPACE
+
+          $archiveName = "SvgLiveEditor-$env:RELEASE_TAG-win-x64.zip"
+          $checksumName = "SvgLiveEditor-$env:RELEASE_TAG-win-x64.sha256"
+          $archivePath = Join-Path $env:GITHUB_WORKSPACE "releases\$archiveName"
+          $checksumPath = Join-Path $env:GITHUB_WORKSPACE "releases\$checksumName"
+
+          if (-not (Test-Path -LiteralPath $archivePath -PathType Leaf) -or
+              -not (Test-Path -LiteralPath $checksumPath -PathType Leaf)) {
+            throw 'The expected release files were not created.'
+          }
+
+          $archiveHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          $expectedChecksum = "$archiveHash  $archiveName"
+          $actualChecksum = (Get-Content -LiteralPath $checksumPath -Raw).Trim()
+          if ($actualChecksum -cne $expectedChecksum) {
+            throw 'The generated SHA-256 file does not match the release archive.'
+          }
+
+      - name: Upload package for troubleshooting
+        uses: actions/upload-artifact@v6
+        with:
+          name: SvgLiveEditor-${{ steps.release.outputs.tag }}-win-x64
+          path: |
+            releases/SvgLiveEditor-${{ steps.release.outputs.tag }}-win-x64.zip
+            releases/SvgLiveEditor-${{ steps.release.outputs.tag }}-win-x64.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+      - name: Attach assets to the matching GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $tag = $env:RELEASE_TAG
+          $archivePath = "releases/SvgLiveEditor-$tag-win-x64.zip"
+          $checksumPath = "releases/SvgLiveEditor-$tag-win-x64.sha256"
+
+          $lookupOutput = (& gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" 2>&1 | Out-String)
+          $lookupExitCode = $LASTEXITCODE
+          if ($lookupExitCode -ne 0) {
+            if ($lookupOutput -notmatch '(?i)(HTTP 404|Not Found)') {
+              throw "Could not query the GitHub Release for '$tag': $lookupOutput"
+            }
+
+            gh release create $tag `
+              --repo $env:GITHUB_REPOSITORY `
+              --verify-tag `
+              --draft `
+              --title "SvgLiveEditor $tag" `
+              --notes "Automated binary package for $tag."
+            if ($LASTEXITCODE -ne 0) {
+              throw "Could not create a draft GitHub Release for '$tag'."
+            }
+          }
+
+          gh release upload $tag $archivePath $checksumPath `
+            --repo $env:GITHUB_REPOSITORY `
+            --clobber
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not attach release assets for '$tag'."
+          }

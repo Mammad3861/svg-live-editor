@@ -37,9 +37,12 @@ dotnet build SvgLiveEditor.sln --configuration Release --no-restore
 dotnet test SvgLiveEditor.sln --configuration Release --no-build
 dotnet run --project src/SvgLiveEditor/SvgLiveEditor.csproj
 dotnet publish src/SvgLiveEditor/SvgLiveEditor.csproj --configuration Release --runtime win-x64 --self-contained true --property:PublishProfile=win-x64
+./scripts/Publish-WinX64.ps1 -Version 0.1.0
 ```
 
-The publish output is under `dist/win-x64/`. `./scripts/Publish-WinX64.ps1` also creates `releases/SvgLiveEditor-v0.1.0-win-x64.zip` locally.
+The publish output is under `dist/win-x64/`. The publish script audits the self-contained win-x64 package and creates both `releases/SvgLiveEditor-vX.Y.Z-win-x64.zip` and its `.sha256` file locally. Packaged users do not need a separate .NET installation, but they must install Microsoft Edge WebView2 Evergreen Runtime and extract the full ZIP before running `SvgLiveEditor.exe`.
+
+`.github/workflows/release.yml` runs for pushed stable `vX.Y.Z` tags and by manual dispatch for an existing tag. It validates and checks out the exact tag, confirms the project version, runs the deterministic non-desktop-integration tests, invokes the same audited packaging script, uploads both files as a workflow artifact, and attaches them to the matching GitHub Release. Identically named assets are replaced; a missing Release is created only as a draft.
 
 ## Coding conventions
 

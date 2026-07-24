@@ -20,7 +20,7 @@ Repository: [github.com/Mammad3861/svg-live-editor](https://github.com/Mammad386
 - An original English/Persian welcome SVG included as the new-document template.
 - An original multi-resolution application icon embedded in the executable, title bar, taskbar, and Alt+Tab presentation.
 
-The trusted interaction bridge has automated browser integration coverage. Physical Ctrl+Wheel and the two drag-to-pan gestures should still be confirmed on the target release machine before v0.1.0 is published.
+The trusted interaction bridge has automated browser integration coverage. Physical Ctrl+Wheel and the two drag-to-pan gestures should still be confirmed on the target machine for each release.
 
 ## Security model and limitations
 
@@ -67,13 +67,19 @@ Create the self-contained output:
 dotnet publish src/SvgLiveEditor/SvgLiveEditor.csproj --configuration Release --runtime win-x64 --self-contained true --property:PublishProfile=win-x64
 ```
 
-Output is written to `dist/win-x64`. To publish and create the intended `releases/SvgLiveEditor-v0.1.0-win-x64.zip` archive locally:
+Output is written to `dist/win-x64`. To publish, audit, and create versioned ZIP and SHA-256 files locally:
 
 ```powershell
-./scripts/Publish-WinX64.ps1
+./scripts/Publish-WinX64.ps1 -Version 0.1.0
 ```
 
-Publishing is folder-based and intentionally not trimmed or forced into a single file, which is safer for WPF, WebView2 native dependencies, and startup reliability. These commands do not create a GitHub Release.
+This creates `releases/SvgLiveEditor-v0.1.0-win-x64.zip` and `releases/SvgLiveEditor-v0.1.0-win-x64.sha256`. Publishing is folder-based and intentionally not trimmed or forced into a single file, which is safer for WPF, WebView2 native dependencies, and startup reliability. This local command does not create or modify a GitHub Release.
+
+## Automated GitHub Releases
+
+The [release workflow](.github/workflows/release.yml) runs automatically when a stable semantic-version tag such as `v0.1.0` is pushed. It can also be started manually with an existing tag, which allows binary assets to be added to an existing Release. The workflow validates the tag, checks out its exact commit, confirms the project version, restores and builds in Release mode, runs tests excluding `TestCategory=DesktopIntegration`, and uses the same publish script to build and audit the package.
+
+Both the ZIP and its `.sha256` file are retained as a GitHub Actions artifact and attached to the matching GitHub Release with safe replacement of identically named assets. An existing published Release remains published and only its matching binary assets are replaced. If no matching Release exists, the workflow creates a draft Release and does not publish it automatically.
 
 ## Application icon
 
@@ -87,7 +93,9 @@ The development-only generator uses Windows' built-in `System.Drawing`; it adds 
 
 ## Download
 
-> Download placeholder — no public binary or GitHub Release is produced automatically.
+Download both `SvgLiveEditor-vX.Y.Z-win-x64.zip` and `SvgLiveEditor-vX.Y.Z-win-x64.sha256` from the matching GitHub Release. Use the attached `.sha256` file to verify the ZIP; no checksum is hardcoded in this documentation.
+
+Extract the **entire** ZIP into a new folder before running `SvgLiveEditor.exe`. The package is self-contained for win-x64 and does not require a separate .NET installation. Microsoft Edge WebView2 Evergreen Runtime remains an external requirement and must be installed on the computer.
 
 ## Repository structure
 
@@ -97,7 +105,7 @@ tests/SvgLiveEditor.Tests/ Automated logic and security tests
 samples/welcome.svg        Original safe starter document
 assets/                    Original editable artwork
 docs/                      Architecture and security notes
-.github/workflows/         Windows build-and-test workflow
+.github/workflows/         Windows build, test, and release workflows
 scripts/                   Local publish helper
 ```
 
