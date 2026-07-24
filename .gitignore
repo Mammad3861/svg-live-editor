@@ -1,0 +1,48 @@
+## Build output
+[Bb]in/
+[Oo]bj/
+[Dd]ist/
+[Aa]rtifacts/
+[Rr]eleases/
+TestResults/
+*.zip
+*.rar
+*.7z
+
+## Visual Studio and editors
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## Secrets and machine-local configuration
+.env
+.env.*
+!.env.example
+secrets.json
+appsettings.*.local.json
+*.pfx
+*.p12
+*.snk
+
+## Local SDK and package caches
+.dotnet/
+.dotnet-home/
+.nuget/
+packages/
+
+## Runtime and logs
+*.log
+*.dmp
+*.tmp
+*.temp
+*.WebView2/
+EBWebView/
+
+## OS files
+Thumbs.db
+Desktop.ini
+.DS_Store

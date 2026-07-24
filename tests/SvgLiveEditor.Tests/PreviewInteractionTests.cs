@@ -1,0 +1,78 @@
+using SvgLiveEditor.Models;
+using SvgLiveEditor.Services;
+
+namespace SvgLiveEditor.Tests;
+
+[TestClass]
+public sealed class PreviewInteractionTests
+{
+    private readonly PreviewInteractionMessageParser _parser = new();
+    private readonly PreviewScrollCalculator _scrollCalculator = new();
+
+    [TestMethod]
+    public void ZoomMessage_ParsesOnlyTheNarrowTrustedShape()
+    {
+        const string json = """
+            {
+              "type":"zoom",
+              "direction":"in",
+              "contentX":0.5,
+              "contentY":0.25,
+              "anchorX":300,
+              "anchorY":200,
+              "viewportWidth":600,
+              "viewportHeight":400
+            }
+            """;
+
+        Assert.IsTrue(_parser.TryParseZoomRequest(json, out PreviewZoomRequest request));
+        Assert.AreEqual(PreviewZoomDirection.In, request.Direction);
+        Assert.AreEqual(0.5, request.ContentX, 0.0001);
+        Assert.AreEqual(300, request.AnchorX, 0.0001);
+    }
+
+    [TestMethod]
+    public void ZoomMessage_RejectsUnknownCommandsAndExtraProperties()
+    {
+        const string unknown = """
+            {"type":"navigate","direction":"in","contentX":0.5,"contentY":0.5,
+             "anchorX":1,"anchorY":1,"viewportWidth":10,"viewportHeight":10}
+            """;
+        const string extra = """
+            {"type":"zoom","direction":"out","contentX":0.5,"contentY":0.5,
+             "anchorX":1,"anchorY":1,"viewportWidth":10,"viewportHeight":10,
+             "url":"https://example.test"}
+            """;
+
+        Assert.IsFalse(_parser.TryParseZoomRequest(unknown, out _));
+        Assert.IsFalse(_parser.TryParseZoomRequest(extra, out _));
+    }
+
+    [TestMethod]
+    public void AnchorScrollCalculation_KeepsPointerContentStableAndClamps()
+    {
+        PreviewZoomRequest centered = new(
+            PreviewZoomDirection.In,
+            ContentX: 0.5,
+            ContentY: 0.5,
+            AnchorX: 300,
+            AnchorY: 200,
+            ViewportWidth: 600,
+            ViewportHeight: 400);
+
+        PreviewScrollPosition position = _scrollCalculator.KeepAnchorStable(
+            centered,
+            contentWidth: 1200,
+            contentHeight: 800);
+
+        Assert.AreEqual(300, position.Left, 0.0001);
+        Assert.AreEqual(200, position.Top, 0.0001);
+
+        PreviewScrollPosition clamped = _scrollCalculator.KeepAnchorStable(
+            centered with { ContentX = 1, ContentY = 1, AnchorX = 0, AnchorY = 0 },
+            contentWidth: 1200,
+            contentHeight: 800);
+        Assert.AreEqual(600, clamped.Left, 0.0001);
+        Assert.AreEqual(400, clamped.Top, 0.0001);
+    }
+}

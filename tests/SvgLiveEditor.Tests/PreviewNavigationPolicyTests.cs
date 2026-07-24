@@ -1,0 +1,33 @@
+using SvgLiveEditor.Services;
+
+namespace SvgLiveEditor.Tests;
+
+[TestClass]
+public sealed class PreviewNavigationPolicyTests
+{
+    private readonly PreviewNavigationPolicy _policy = new();
+
+    [TestMethod]
+    public void IsAllowed_AllowsInitialBlankNavigation()
+    {
+        Assert.IsTrue(_policy.IsAllowed("about:blank", isHostPreviewRequested: false));
+    }
+
+    [TestMethod]
+    public void IsAllowed_AllowsDataHtmlOnlyForPendingHostPreview()
+    {
+        const string previewUri = "data:text/html;charset=utf-8;base64,PGh0bWw+PC9odG1sPg==";
+
+        Assert.IsFalse(_policy.IsAllowed(previewUri, isHostPreviewRequested: false));
+        Assert.IsTrue(_policy.IsAllowed(previewUri, isHostPreviewRequested: true));
+    }
+
+    [TestMethod]
+    [DataRow("https://example.test/")]
+    [DataRow("file:///C:/secret.svg")]
+    [DataRow("data:image/svg+xml;base64,PHN2Zy8+")]
+    public void IsAllowed_RejectsOtherNavigationEvenDuringHostPreview(string uri)
+    {
+        Assert.IsFalse(_policy.IsAllowed(uri, isHostPreviewRequested: true));
+    }
+}

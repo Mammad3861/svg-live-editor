@@ -1,0 +1,98 @@
+# SvgLiveEditor
+
+SvgLiveEditor یک برنامهٔ دسکتاپ متن‌باز برای ویندوز است که ویرایش کد SVG/XML و مشاهدهٔ هم‌زمان نتیجه را فراهم می‌کند. کد در سمت چپ، پیش‌نمایش امن در سمت راست و وضعیت فایل و اعتبار XML در پایین پنجره نمایش داده می‌شود. متن UTF-8، از جمله فارسی، هنگام ذخیره بدون قالب‌بندی یا تغییر ناخواسته حفظ می‌شود.
+
+مخزن برنامه‌ریزی‌شده: [github.com/Mammad3861/svg-live-editor](https://github.com/Mammad3861/svg-live-editor)
+
+## تصویر برنامه
+
+> محل تصویر — پس از نخستین بازبینی رابط کاربری در ویندوز، تصویر برنامه افزوده می‌شود.
+
+## امکانات
+
+- ویرایشگر AvalonEdit با رنگ‌آمیزی XML، شمارهٔ خطوط، برجسته‌سازی خط جاری، Undo/Redo، جست‌وجو و جایگزینی و شکستن غیرمخرب خطوط. برای تغییر وضعیت Word Wrap از `Alt+Z` یا `Ctrl+Alt+W` استفاده کنید.
+- پیش‌نمایش خودکار با تأخیر تقریبی ۳۰۰ میلی‌ثانیه و دکمهٔ بازخوانی دستی.
+- بزرگ‌نمایی، کوچک‌نمایی، بازنشانی و تطبیق تصویر با فضای پیش‌نمایش روی پس‌زمینهٔ شطرنجی ثابت. حالت بزرگ‌نمایی در اجرای بعدی بازیابی می‌شود؛ `Ctrl` همراه چرخ ماوس در نقطهٔ نشانگر زوم می‌کند، چرخ عادی پیمایش عمودی و `Shift` همراه چرخ پیمایش افقی را انجام می‌دهد و پیش‌نمایش قابل پیمایش با کشیدن دکمهٔ میانی یا Space همراه دکمهٔ چپ جابه‌جا می‌شود.
+- New، Open، Save، Save As، Exit و کشیدن و رها کردن فایل‌های `.svg` و `.txt`.
+- هشدار تغییرات ذخیره‌نشده پیش از بستن یا جایگزین کردن سند.
+- خواندن UTF-8 معتبر و ذخیرهٔ UTF-8 بدون BOM، بدون بازآرایی کد کاربر.
+- اعتبارسنجی امن XML همراه با پیام، شمارهٔ خط و ستون.
+- نمونهٔ کاملاً جدید و امن انگلیسی/فارسی به‌عنوان محتوای سند تازه.
+
+## مدل امنیتی و محدودیت‌ها
+
+همهٔ فایل‌های بازشده غیرقابل اعتماد فرض می‌شوند. DTD، تعریف entity و دسترسی entity خارجی ممنوع است. عنصر ریشه باید `svg` با فضای نام استاندارد باشد. اسکریپت، رخدادهای inline، `foreignObject`، محتوای فعال، processing instruction، عنصر `<style>`، لینک و منبع غیرمحلی رد می‌شوند.
+
+SVG معتبر به UTF-8/Base64 تبدیل و فقط به‌صورت data image در HTML نمایش داده می‌شود؛ کد خام SVG هرگز داخل HTML میزبان قرار نمی‌گیرد. سیاست CSP سخت‌گیرانه فعال است. تنها یک اسکریپت ثابت متعلق به برنامه با هش دقیق SHA-256 در CSP برای کنترل چرخ ماوس و جابه‌جایی اجرا می‌شود و فقط می‌تواند درخواست زوم با ساختار کاملاً اعتبارسنجی‌شده بفرستد. اسکریپت SVG کاربر همچنان اجرا نمی‌شود و host object، پیام دلخواه، مجوزها، دانلود، پنجرهٔ جدید، پیمایش خارجی، درخواست شبکه، ابزار توسعه و منوی زمینه غیرفعال یا مسدود هستند. هنگام نامعتبر شدن کد، آخرین پیش‌نمایش معتبر باقی می‌ماند.
+
+این نسخهٔ MVP عمداً فقط زیرمجموعه‌ای امن و محدود از SVG را پشتیبانی می‌کند و همهٔ قابلیت‌های معتبر SVG را نمایش نمی‌دهد. تصویر، فونت و استایل خارجی، data resource، لینک، `<style>`، `foreignObject`، اسکریپت و event handler قابل پیش‌نمایش نیستند. چون خروجی ابزارهای مختلف یکسان نیست، باز شدن همهٔ SVGهای ساخته‌شده با ابزارهایی مانند Adobe Illustrator یا Inkscape تضمین نمی‌شود. جزئیات بیشتر در [docs/security-model.md](docs/security-model.md) آمده است.
+
+## محدودهٔ فعلی
+
+در حال حاضر خروجی PNG، خروجی PDF، نصب‌کننده و به‌روزرسانی خودکار ارائه نمی‌شود.
+
+## پیش‌نیازها
+
+برای ساخت:
+
+- Windows 10 یا Windows 11
+- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)، نسخهٔ `10.0.302` یا feature band جدیدتر سازگار با .NET 10
+
+برای اجرا:
+
+- Windows 10 یا Windows 11
+- [Microsoft Edge WebView2 Evergreen Runtime](https://developer.microsoft.com/microsoft-edge/webview2/#download-section)
+
+خروجی self-contained شامل .NET Desktop Runtime است؛ بنابراین کاربر فایل ZIP بسته‌بندی‌شده نیازی به نصب جداگانهٔ .NET Desktop Runtime ندارد. این بسته WebView2 Evergreen Runtime را همراه خود ندارد.
+
+نسخه‌های ثابت بسته‌ها: AvalonEdit `6.3.1.120`، Microsoft.Web.WebView2 `1.0.4078.44`، MSTest `4.3.2` و Microsoft.NET.Test.Sdk `18.8.1`.
+
+## ساخت، آزمون و اجرا
+
+```powershell
+dotnet restore SvgLiveEditor.sln
+dotnet build SvgLiveEditor.sln --configuration Release --no-restore
+dotnet test SvgLiveEditor.sln --configuration Release --no-build
+dotnet run --project src/SvgLiveEditor/SvgLiveEditor.csproj
+```
+
+## انتشار win-x64
+
+```powershell
+dotnet publish src/SvgLiveEditor/SvgLiveEditor.csproj --configuration Release --runtime win-x64 --self-contained true --property:PublishProfile=win-x64
+```
+
+خروجی در `dist/win-x64` قرار می‌گیرد. برای ساخت خروجی و فایل `releases/SvgLiveEditor-v0.1.0-win-x64.zip` در سیستم محلی:
+
+```powershell
+./scripts/Publish-WinX64.ps1
+```
+
+این فرایند هیچ GitHub Release عمومی ایجاد نمی‌کند. برای پایداری WPF و وابستگی‌های بومی WebView2، trimming و single-file اجباری نیست.
+
+## دریافت
+
+> محل دریافت — در حال حاضر فایل عمومی یا GitHub Release به‌صورت خودکار ساخته نمی‌شود.
+
+## ساختار مخزن
+
+```text
+src/SvgLiveEditor/          برنامهٔ WPF
+tests/SvgLiveEditor.Tests/ آزمون‌های منطق و امنیت
+samples/welcome.svg        نمونهٔ جدید و امن
+docs/                      مستندات معماری و امنیت
+.github/workflows/         گردش‌کار ساخت و آزمون ویندوز
+scripts/                   ابزار انتشار محلی
+```
+
+## مشارکت
+
+پیش از ارسال تغییرات، [CONTRIBUTING.md](CONTRIBUTING.md) را بخوانید. فقط نمونه‌ها و دارایی‌هایی را اضافه کنید که خودتان ساخته‌اید یا مجوز روشن برای بازنشر آن‌ها دارید. افزودن SVG، متن، چیدمان، مختصات یا آرشیو کپی‌شده و دارای مجوز نامشخص مجاز نیست.
+
+## گزارش مشکلات امنیتی
+
+مشکل امنیتی قابل سوءاستفاده را پیش از بررسی در issue عمومی منتشر نکنید. راهنمای گزارش خصوصی در [CONTRIBUTING.md](CONTRIBUTING.md#security-issues) را دنبال کنید.
+
+## مجوز
+
+کد ایجادشده برای این مخزن با [مجوز MIT](LICENSE) منتشر می‌شود.

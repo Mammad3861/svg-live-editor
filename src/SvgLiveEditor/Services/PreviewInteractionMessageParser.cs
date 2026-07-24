@@ -1,0 +1,95 @@
+using System.Text.Json;
+using SvgLiveEditor.Models;
+
+namespace SvgLiveEditor.Services;
+
+public sealed class PreviewInteractionMessageParser
+{
+    private const double MaximumViewportDimension = 100_000;
+
+    public bool TryParseZoomRequest(string json, out PreviewZoomRequest request)
+    {
+        request = default;
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || root.EnumerateObject().Count() != 8
+                || !TryReadString(root, "type", out string? type)
+                || type != "zoom"
+                || !TryReadString(root, "direction", out string? directionText)
+                || !TryReadNumber(root, "contentX", 0, 1, out double contentX)
+                || !TryReadNumber(root, "contentY", 0, 1, out double contentY)
+                || !TryReadNumber(root, "anchorX", 0, MaximumViewportDimension, out double anchorX)
+                || !TryReadNumber(root, "anchorY", 0, MaximumViewportDimension, out double anchorY)
+                || !TryReadNumber(root, "viewportWidth", 1, MaximumViewportDimension, out double viewportWidth)
+                || !TryReadNumber(root, "viewportHeight", 1, MaximumViewportDimension, out double viewportHeight)
+                || anchorX > viewportWidth
+                || anchorY > viewportHeight)
+            {
+                return false;
+            }
+
+            PreviewZoomDirection direction;
+            if (directionText == "in")
+            {
+                direction = PreviewZoomDirection.In;
+            }
+            else if (directionText == "out")
+            {
+                direction = PreviewZoomDirection.Out;
+            }
+            else
+            {
+                return false;
+            }
+
+            request = new PreviewZoomRequest(
+                direction,
+                contentX,
+                contentY,
+                anchorX,
+                anchorY,
+                viewportWidth,
+                viewportHeight);
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryReadString(
+        JsonElement root,
+        string propertyName,
+        out string? value)
+    {
+        value = null;
+        if (!root.TryGetProperty(propertyName, out JsonElement property)
+            || property.ValueKind != JsonValueKind.String)
+        {
+            return false;
+        }
+
+        value = property.GetString();
+        return value is not null;
+    }
+
+    private static bool TryReadNumber(
+        JsonElement root,
+        string propertyName,
+        double minimum,
+        double maximum,
+        out double value)
+    {
+        value = 0;
+        return root.TryGetProperty(propertyName, out JsonElement property)
+            && property.ValueKind == JsonValueKind.Number
+            && property.TryGetDouble(out value)
+            && double.IsFinite(value)
+            && value >= minimum
+            && value <= maximum;
+    }
+}
