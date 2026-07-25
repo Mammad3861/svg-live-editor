@@ -19,3 +19,8 @@ public readonly record struct PreviewScrollPosition(double Left, double Top)
 {
     public static PreviewScrollPosition Origin { get; } = new(0, 0);
 }
+
+public readonly record struct PreviewViewportPosition(double CenterX, double CenterY)
+{
+    public static PreviewViewportPosition Center { get; } = new(0.5, 0.5);
+}

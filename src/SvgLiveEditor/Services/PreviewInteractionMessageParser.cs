@@ -66,6 +66,37 @@ public sealed class PreviewInteractionMessageParser
         }
     }
 
+    public bool TryParseViewportPosition(
+        string json,
+        string expectedToken,
+        out PreviewViewportPosition viewport)
+    {
+        viewport = PreviewViewportPosition.Center;
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || root.EnumerateObject().Count() != 4
+                || !TryReadString(root, "type", out string? type)
+                || type != "viewport"
+                || !TryReadString(root, "token", out string? token)
+                || !string.Equals(token, expectedToken, StringComparison.Ordinal)
+                || !TryReadNumber(root, "centerX", 0, 1, out double centerX)
+                || !TryReadNumber(root, "centerY", 0, 1, out double centerY))
+            {
+                return false;
+            }
+
+            viewport = new PreviewViewportPosition(centerX, centerY);
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
     private static bool TryReadString(
         JsonElement root,
         string propertyName,

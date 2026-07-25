@@ -11,15 +11,21 @@ public sealed class PreviewHtmlBuilder
         (() => {
           'use strict';
           const viewport = document.querySelector('.preview-viewport');
+          const stage = document.querySelector('main');
           const image = document.querySelector('img');
           const bridge = window.chrome && window.chrome.webview;
           const bridgeToken = document.body.dataset.bridgeToken;
           let spaceHeld = false;
           let activePointerId = null;
+          let activePanButton = null;
           let startX = 0;
           let startY = 0;
           let startScrollLeft = 0;
           let startScrollTop = 0;
+          let lastPointerX = viewport.clientWidth / 2;
+          let lastPointerY = viewport.clientHeight / 2;
+          let viewportPostScheduled = false;
+          let initialViewportApplied = false;
 
           const canPan = () =>
             viewport.scrollWidth > viewport.clientWidth ||
@@ -39,34 +45,129 @@ public sealed class PreviewHtmlBuilder
               viewport.releasePointerCapture(activePointerId);
             }
             activePointerId = null;
+            activePanButton = null;
             viewport.classList.remove('panning');
             refreshCursor();
           };
 
-          const handleWheel = event => {
-            if (event.ctrlKey) {
-              event.preventDefault();
-              if (!bridge) {
+          const rememberPointer = event => {
+            const rect = viewport.getBoundingClientRect();
+            lastPointerX = Math.max(0, Math.min(
+              viewport.clientWidth,
+              event.clientX - rect.left));
+            lastPointerY = Math.max(0, Math.min(
+              viewport.clientHeight,
+              event.clientY - rect.top));
+          };
+
+          const postZoomRequest = (direction, anchorX, anchorY) => {
+            if (!bridge) {
+              return;
+            }
+
+            const safeAnchorX = Math.max(
+              0,
+              Math.min(viewport.clientWidth, anchorX));
+            const safeAnchorY = Math.max(
+              0,
+              Math.min(viewport.clientHeight, anchorY));
+            bridge.postMessage({
+              type: 'zoom',
+              token: bridgeToken,
+              direction,
+              contentX: Math.max(0, Math.min(1,
+                (viewport.scrollLeft + safeAnchorX) / Math.max(1, viewport.scrollWidth))),
+              contentY: Math.max(0, Math.min(1,
+                (viewport.scrollTop + safeAnchorY) / Math.max(1, viewport.scrollHeight))),
+              anchorX: safeAnchorX,
+              anchorY: safeAnchorY,
+              viewportWidth: viewport.clientWidth,
+              viewportHeight: viewport.clientHeight
+            });
+          };
+
+          const postViewportState = () => {
+            viewportPostScheduled = false;
+            if (!bridge || !initialViewportApplied) {
+              return;
+            }
+
+            bridge.postMessage({
+              type: 'viewport',
+              token: bridgeToken,
+              centerX: Math.max(0, Math.min(1,
+                (viewport.scrollLeft + (viewport.clientWidth / 2)) /
+                Math.max(1, viewport.scrollWidth))),
+              centerY: Math.max(0, Math.min(1,
+                (viewport.scrollTop + (viewport.clientHeight / 2)) /
+                Math.max(1, viewport.scrollHeight)))
+            });
+          };
+
+          const scheduleViewportState = () => {
+            if (!viewportPostScheduled) {
+              viewportPostScheduled = true;
+              requestAnimationFrame(postViewportState);
+            }
+          };
+
+          const restoreViewportCenter = (centerX, centerY) => {
+            const safeCenterX = Number.isFinite(centerX)
+              ? Math.max(0, Math.min(1, centerX))
+              : 0.5;
+            const safeCenterY = Number.isFinite(centerY)
+              ? Math.max(0, Math.min(1, centerY))
+              : 0.5;
+            viewport.scrollLeft = Math.max(0, Math.min(
+              viewport.scrollWidth - viewport.clientWidth,
+              (safeCenterX * viewport.scrollWidth) - (viewport.clientWidth / 2)));
+            viewport.scrollTop = Math.max(0, Math.min(
+              viewport.scrollHeight - viewport.clientHeight,
+              (safeCenterY * viewport.scrollHeight) - (viewport.clientHeight / 2)));
+            refreshCursor();
+            scheduleViewportState();
+          };
+
+          if (bridge) {
+            bridge.addEventListener('message', event => {
+              const message = event.data;
+              if (!message ||
+                  typeof message !== 'object' ||
+                  Object.keys(message).length !== 6 ||
+                  message.type !== 'zoomState' ||
+                  message.token !== bridgeToken ||
+                  !Number.isFinite(message.renderedWidth) ||
+                  message.renderedWidth <= 0 ||
+                  message.renderedWidth > 10000000 ||
+                  !Number.isFinite(message.renderedHeight) ||
+                  message.renderedHeight <= 0 ||
+                  message.renderedHeight > 10000000 ||
+                  !Number.isFinite(message.centerX) ||
+                  message.centerX < 0 ||
+                  message.centerX > 1 ||
+                  !Number.isFinite(message.centerY) ||
+                  message.centerY < 0 ||
+                  message.centerY > 1) {
                 return;
               }
-              const rect = viewport.getBoundingClientRect();
-              const anchorX = Math.max(0, Math.min(viewport.clientWidth, event.clientX - rect.left));
-              const anchorY = Math.max(0, Math.min(viewport.clientHeight, event.clientY - rect.top));
-              const contentX = Math.max(0, Math.min(1,
-                (viewport.scrollLeft + anchorX) / Math.max(1, viewport.scrollWidth)));
-              const contentY = Math.max(0, Math.min(1,
-                (viewport.scrollTop + anchorY) / Math.max(1, viewport.scrollHeight)));
-              bridge.postMessage({
-                type: 'zoom',
-                token: bridgeToken,
-                direction: event.deltaY < 0 ? 'in' : 'out',
-                contentX,
-                contentY,
-                anchorX,
-                anchorY,
-                viewportWidth: viewport.clientWidth,
-                viewportHeight: viewport.clientHeight
-              });
+
+              image.style.width = `${message.renderedWidth}px`;
+              image.style.height = `${message.renderedHeight}px`;
+              stage.style.width = `${message.renderedWidth + 48}px`;
+              stage.style.height = `${message.renderedHeight + 48}px`;
+              requestAnimationFrame(() =>
+                restoreViewportCenter(message.centerX, message.centerY));
+            });
+          }
+
+          const handleWheel = event => {
+            rememberPointer(event);
+            if (event.ctrlKey) {
+              event.preventDefault();
+              postZoomRequest(
+                event.deltaY < 0 ? 'in' : 'out',
+                lastPointerX,
+                lastPointerY);
               return;
             }
 
@@ -87,6 +188,7 @@ public sealed class PreviewHtmlBuilder
             { capture: true, passive: false });
 
           viewport.addEventListener('pointerdown', event => {
+            rememberPointer(event);
             const isMiddlePan = event.button === 1;
             const isSpacePan = event.button === 0 && spaceHeld;
             if ((!isMiddlePan && !isSpacePan) || !canPan()) {
@@ -95,6 +197,7 @@ public sealed class PreviewHtmlBuilder
 
             event.preventDefault();
             activePointerId = event.pointerId;
+            activePanButton = event.button;
             startX = event.clientX;
             startY = event.clientY;
             startScrollLeft = viewport.scrollLeft;
@@ -104,7 +207,14 @@ public sealed class PreviewHtmlBuilder
           });
 
           viewport.addEventListener('pointermove', event => {
+            rememberPointer(event);
             if (event.pointerId !== activePointerId) {
+              return;
+            }
+
+            const requiredButtonMask = activePanButton === 1 ? 4 : 1;
+            if ((event.buttons & requiredButtonMask) === 0) {
+              stopPan(event);
               return;
             }
 
@@ -117,6 +227,9 @@ public sealed class PreviewHtmlBuilder
           viewport.addEventListener('pointercancel', stopPan);
           viewport.addEventListener('lostpointercapture', stopPan);
           viewport.addEventListener('pointerleave', stopPan);
+          viewport.addEventListener('scroll', scheduleViewportState);
+          window.addEventListener('pointerup', stopPan, true);
+          window.addEventListener('pointercancel', stopPan, true);
           viewport.addEventListener('dragstart', event => event.preventDefault());
           viewport.addEventListener('selectstart', event => event.preventDefault());
           viewport.addEventListener('auxclick', event => {
@@ -147,17 +260,27 @@ public sealed class PreviewHtmlBuilder
             refreshCursor();
           });
 
-          const applyInitialScroll = () => {
-            const left = Number.parseFloat(document.body.dataset.initialScrollLeft || '0');
-            const top = Number.parseFloat(document.body.dataset.initialScrollTop || '0');
-            viewport.scrollLeft = Number.isFinite(left) ? left : 0;
-            viewport.scrollTop = Number.isFinite(top) ? top : 0;
-            refreshCursor();
+          const applyInitialViewport = () => {
+            const centerX = Number.parseFloat(
+              document.body.dataset.initialCenterX || '0.5');
+            const centerY = Number.parseFloat(
+              document.body.dataset.initialCenterY || '0.5');
+            initialViewportApplied = true;
+            restoreViewportCenter(centerX, centerY);
           };
 
-          image.addEventListener('load', refreshCursor, { once: true });
-          new ResizeObserver(refreshCursor).observe(viewport);
-          requestAnimationFrame(applyInitialScroll);
+          const initializeViewport = () =>
+            requestAnimationFrame(() => requestAnimationFrame(applyInitialViewport));
+          if (image.complete) {
+            initializeViewport();
+          } else {
+            image.addEventListener('load', initializeViewport, { once: true });
+          }
+          new ResizeObserver(() => {
+            refreshCursor();
+            scheduleViewportState();
+          }).observe(viewport);
+          document.body.dataset.hostScriptReady = 'true';
         })();
         """;
 
@@ -166,7 +289,7 @@ public sealed class PreviewHtmlBuilder
         double renderedWidth,
         double renderedHeight,
         string bridgeToken,
-        PreviewScrollPosition? initialScroll = null)
+        PreviewViewportPosition? initialViewport = null)
     {
         ArgumentNullException.ThrowIfNull(validatedSvg);
         ArgumentNullException.ThrowIfNull(bridgeToken);
@@ -192,11 +315,18 @@ public sealed class PreviewHtmlBuilder
             .ToString("0.###", CultureInfo.InvariantCulture);
         string stageHeightCss = (renderedHeight + (PreviewZoomCalculator.CanvasPadding * 2))
             .ToString("0.###", CultureInfo.InvariantCulture);
-        PreviewScrollPosition scroll = initialScroll ?? PreviewScrollPosition.Origin;
-        string initialScrollLeft = ToSafeScrollCss(scroll.Left);
-        string initialScrollTop = ToSafeScrollCss(scroll.Top);
+        PreviewViewportPosition viewport =
+            initialViewport ?? PreviewViewportPosition.Center;
+        string initialCenterX = ToSafeNormalized(viewport.CenterX);
+        string initialCenterY = ToSafeNormalized(viewport.CenterY);
+        // HTML parsers normalize inline-script line endings to LF before CSP hash
+        // verification. Normalize once and use the exact same bytes for the hash
+        // and script body so Windows CRLF checkouts cannot disable the host script.
+        string normalizedHostScript = HostScript
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n');
         string scriptHash = Convert.ToBase64String(
-            SHA256.HashData(Encoding.UTF8.GetBytes(HostScript)));
+            SHA256.HashData(Encoding.UTF8.GetBytes(normalizedHostScript)));
 
         return $$"""
             <!doctype html>
@@ -265,22 +395,22 @@ public sealed class PreviewHtmlBuilder
               </style>
             </head>
             <body data-bridge-token="{{bridgeToken}}"
-                  data-initial-scroll-left="{{initialScrollLeft}}"
-                  data-initial-scroll-top="{{initialScrollTop}}">
+                  data-initial-center-x="{{initialCenterX}}"
+                  data-initial-center-y="{{initialCenterY}}">
               <div class="preview-viewport">
                 <main aria-label="SVG preview">
                   <img alt="Rendered SVG preview" draggable="false" src="data:image/svg+xml;base64,{{encodedSvg}}">
                 </main>
               </div>
-              <script>{{HostScript}}</script>
+              <script>{{normalizedHostScript}}</script>
             </body>
             </html>
             """;
     }
 
-    private static string ToSafeScrollCss(double value)
+    private static string ToSafeNormalized(double value)
     {
-        return (double.IsFinite(value) ? Math.Max(0, value) : 0)
+        return (double.IsFinite(value) ? Math.Clamp(value, 0, 1) : 0.5)
             .ToString("0.###", CultureInfo.InvariantCulture);
     }
 }

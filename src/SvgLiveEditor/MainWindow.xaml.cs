@@ -23,7 +23,7 @@ public partial class MainWindow : Window
     private static readonly string[] SupportedExtensions = [".svg", ".txt"];
 
     private readonly MainViewModel _viewModel = new();
-    private readonly SvgValidationService _validationService = new();
+    private readonly SvgDocumentIndexService _documentIndexService = new();
     private readonly PreviewHtmlBuilder _previewHtmlBuilder = new();
     private readonly PreviewNavigationPolicy _previewNavigationPolicy = new();
     private readonly Utf8FileService _fileService = new();
@@ -33,9 +33,16 @@ public partial class MainWindow : Window
     private readonly PreviewZoomCalculator _previewZoomCalculator = new();
     private readonly PreviewZoomBridge _previewZoomBridge = new();
     private readonly PreviewInteractionMessageParser _previewInteractionMessageParser = new();
+    private readonly PreviewViewportCalculator _previewViewportCalculator = new();
+    private readonly PreviewNavigationCoordinator _previewNavigationCoordinator = new();
+    private readonly PreviewPageMessageBuilder _previewPageMessageBuilder = new();
+    private readonly PreviewUpdatePolicy _previewUpdatePolicy = new();
     private readonly SvgCanvasSizeReader _svgCanvasSizeReader = new();
     private readonly UserPreferencesService _userPreferencesService = new();
+    private readonly LastDocumentService _lastDocumentService = new();
     private readonly WebView2UserDataFolderProvider _webView2UserDataFolderProvider = new();
+    private readonly SourceRevisionTracker _sourceRevisionTracker = new();
+    private readonly ApplicationInfoService _applicationInfoService = new();
     private readonly DispatcherTimer _fitResizeTimer = new()
     {
         Interval = TimeSpan.FromMilliseconds(150)
@@ -43,14 +50,16 @@ public partial class MainWindow : Window
 
     private bool _isUpdatingEditor;
     private bool _isWebViewReady;
+    private bool _hasVisiblePreview;
     private bool _isPreviewNavigationRequested;
     private string _previewPresentationState = "Loading";
     private UserPreferences _userPreferences = UserPreferences.Default;
     private PreviewZoomState _previewZoomState = PreviewZoomState.Fit;
-    private PreviewScrollPosition? _pendingPreviewScroll;
+    private PreviewViewportPosition _previewViewport = PreviewViewportPosition.Center;
     private string? _lastValidSvg;
     private SvgCanvasSize? _lastValidCanvasSize;
     private ulong? _activePreviewNavigationId;
+    private long? _activePreviewRevision;
     private string? _activePreviewBridgeToken;
     private CoreWebView2? _configuredCoreWebView;
     private Task<bool>? _webViewInitializationTask;
@@ -70,13 +79,16 @@ public partial class MainWindow : Window
         SourceEditor.TextArea.Caret.PositionChanged += OnCaretPositionChanged;
         PreviewWebView.CoreWebView2InitializationCompleted += OnCoreWebView2InitializationCompleted;
         _fitResizeTimer.Tick += OnFitResizeTimerTick;
+        InitializeDocumentInspector();
 
         _userPreferences = _userPreferencesService.Load();
         _previewZoomState = _userPreferences.PreviewZoom;
         ApplyWordWrap(_userPreferences.WordWrap, persist: false);
+        ReopenLastDocumentMenuItem.IsChecked =
+            _userPreferences.ReopenLastDocumentOnStartup;
         UpdatePreviewStateText(_previewPresentationState);
 
-        LoadIntoEditor(_welcomeSvgProvider.Load(), path: null);
+        LoadStartupDocument();
     }
 
     private async void OnWindowLoaded(object sender, RoutedEventArgs e)
@@ -228,15 +240,29 @@ public partial class MainWindow : Window
 
     private void OnPreviewNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
     {
-        if (_activePreviewNavigationId != e.NavigationId)
+        if (_activePreviewNavigationId != e.NavigationId
+            || _activePreviewRevision is not long revision)
         {
             return;
         }
 
         _activePreviewNavigationId = null;
-        if (e.IsSuccess)
+        _activePreviewRevision = null;
+        if (!_previewNavigationCoordinator.TryComplete(revision, out bool wasLatest))
+        {
+            return;
+        }
+
+        if (_previewNavigationCoordinator.HasPending)
+        {
+            StartPendingPreviewNavigation();
+            return;
+        }
+
+        if (e.IsSuccess && wasLatest)
         {
             ShowPreviewReady();
+            TryUpdatePreviewZoomInPlace();
             return;
         }
 
@@ -251,7 +277,9 @@ public partial class MainWindow : Window
         _isWebViewReady = false;
         _isPreviewNavigationRequested = false;
         _activePreviewNavigationId = null;
+        _activePreviewRevision = null;
         _activePreviewBridgeToken = null;
+        _previewNavigationCoordinator.Reset();
         ShowPreviewError(
             "Preview process failed",
             $"WebView2 reported {e.ProcessFailedKind} ({e.Reason}, exit code {e.ExitCode}). Click Refresh Preview to retry.");
@@ -262,9 +290,25 @@ public partial class MainWindow : Window
         CoreWebView2WebMessageReceivedEventArgs e)
     {
         if (!_isWebViewReady
-            || _lastValidCanvasSize is not SvgCanvasSize canvasSize
             || _activePreviewBridgeToken is not string bridgeToken
-            || !_previewNavigationPolicy.IsTrustedWebMessageSource(e.Source)
+            || !_previewNavigationPolicy.IsTrustedWebMessageSource(e.Source))
+        {
+            return;
+        }
+
+        if (_previewInteractionMessageParser.TryParseViewportPosition(
+                e.WebMessageAsJson,
+                bridgeToken,
+                out PreviewViewportPosition viewport))
+        {
+            if (_previewZoomState.Mode == PreviewZoomMode.Manual)
+            {
+                _previewViewport = viewport;
+            }
+            return;
+        }
+
+        if (_lastValidCanvasSize is not SvgCanvasSize canvasSize
             || !_previewInteractionMessageParser.TryParseZoomRequest(
                 e.WebMessageAsJson,
                 bridgeToken,
@@ -283,7 +327,18 @@ public partial class MainWindow : Window
             return;
         }
 
-        _pendingPreviewScroll = transition.Scroll;
+        double contentWidth = Math.Max(
+            request.ViewportWidth,
+            transition.RenderedWidth + (PreviewZoomCalculator.CanvasPadding * 2));
+        double contentHeight = Math.Max(
+            request.ViewportHeight,
+            transition.RenderedHeight + (PreviewZoomCalculator.CanvasPadding * 2));
+        _previewViewport = _previewViewportCalculator.Capture(
+            transition.Scroll,
+            contentWidth,
+            contentHeight,
+            request.ViewportWidth,
+            request.ViewportHeight);
         ApplyPreviewZoomState(transition.State);
     }
 
@@ -311,6 +366,7 @@ public partial class MainWindow : Window
 
     private void ShowPreviewLoading(string message)
     {
+        _hasVisiblePreview = false;
         _previewPresentationState = "Loading";
         UpdatePreviewStateText("Loading");
         PreviewStateText.Foreground = Brushes.SlateGray;
@@ -322,8 +378,18 @@ public partial class MainWindow : Window
         PreviewWebView.Visibility = Visibility.Hidden;
     }
 
+    private void ShowPreviewRefreshing()
+    {
+        _previewPresentationState = "Loading";
+        UpdatePreviewStateText("Loading");
+        PreviewStateText.Foreground = Brushes.SlateGray;
+        PreviewMessagePanel.Visibility = Visibility.Collapsed;
+        PreviewWebView.Visibility = Visibility.Visible;
+    }
+
     private void ShowPreviewReady()
     {
+        _hasVisiblePreview = true;
         _previewPresentationState = "Ready";
         UpdatePreviewStateText("Ready");
         PreviewStateText.Foreground = Brushes.DarkGreen;
@@ -334,6 +400,7 @@ public partial class MainWindow : Window
     private void ShowPreviewError(string title, string message, bool showRuntimeLink = false)
     {
         _isWebViewReady = false;
+        _hasVisiblePreview = false;
         _previewPresentationState = "Error";
         UpdatePreviewStateText("Error");
         PreviewStateText.Foreground = Brushes.Firebrick;
@@ -357,20 +424,24 @@ public partial class MainWindow : Window
             return;
         }
 
+        _sourceRevisionTracker.Advance();
         _viewModel.UpdateTextFromEditor(SourceEditor.Text);
+        MarkDocumentInspectorSourceChanged();
         QueuePreviewUpdate();
     }
 
     private void QueuePreviewUpdate()
     {
         string sourceSnapshot = SourceEditor.Text;
+        long sourceRevision = _sourceRevisionTracker.Current;
         _ = _previewDebouncer.DebounceAsync(async cancellationToken =>
         {
-            SvgValidationResult result = await Task.Run(
-                () => _validationService.Validate(sourceSnapshot),
+            SvgDocumentIndexResult result = await Task.Run(
+                () => _documentIndexService.Build(sourceSnapshot),
                 cancellationToken).ConfigureAwait(false);
 
-            await Dispatcher.InvokeAsync(() => ApplyValidationResult(sourceSnapshot, result),
+            await Dispatcher.InvokeAsync(
+                () => ApplyValidationResult(sourceSnapshot, sourceRevision, result),
                 System.Windows.Threading.DispatcherPriority.Background,
                 cancellationToken);
         });
@@ -380,20 +451,32 @@ public partial class MainWindow : Window
     {
         _previewDebouncer.Cancel();
         string sourceSnapshot = SourceEditor.Text;
-        SvgValidationResult result = await Task.Run(() => _validationService.Validate(sourceSnapshot));
-        ApplyValidationResult(sourceSnapshot, result);
+        long sourceRevision = _sourceRevisionTracker.Current;
+        SvgDocumentIndexResult result = await Task.Run(
+            () => _documentIndexService.Build(sourceSnapshot));
+        ApplyValidationResult(sourceSnapshot, sourceRevision, result);
     }
 
-    private void ApplyValidationResult(string sourceSnapshot, SvgValidationResult result)
+    private void ApplyValidationResult(
+        string sourceSnapshot,
+        long sourceRevision,
+        SvgDocumentIndexResult indexResult)
     {
-        if (!SourceEditor.Text.Equals(sourceSnapshot, StringComparison.Ordinal))
+        if (!_sourceRevisionTracker.IsCurrent(sourceRevision)
+            || !SourceEditor.Text.Equals(sourceSnapshot, StringComparison.Ordinal))
         {
             return;
         }
 
+        SvgValidationResult result = indexResult.Validation;
         _viewModel.ApplyValidation(result);
+        ApplyDocumentInspectorResult(indexResult);
         if (!result.IsValid)
         {
+            if (!_hasVisiblePreview)
+            {
+                ShowLastValidPreview();
+            }
             return;
         }
 
@@ -407,32 +490,59 @@ public partial class MainWindow : Window
         if (!_isWebViewReady
             || _lastValidSvg is null
             || _lastValidCanvasSize is not SvgCanvasSize canvasSize
-            || PreviewWebView.CoreWebView2 is not CoreWebView2 core)
+            || PreviewWebView.CoreWebView2 is null)
+        {
+            return;
+        }
+
+        _previewNavigationCoordinator.Enqueue(
+            _lastValidSvg,
+            canvasSize,
+            _previewZoomState,
+            _previewZoomState.Mode == PreviewZoomMode.Manual
+                ? _previewViewport
+                : PreviewViewportPosition.Center);
+        PreviewUpdateDecision decision = _previewUpdatePolicy.Decide(
+            PreviewUpdateKind.Source,
+            _hasVisiblePreview);
+        if (decision.ShowsFullLoadingState)
+        {
+            ShowPreviewLoading("Rendering the current valid SVG...");
+        }
+        else
+        {
+            ShowPreviewRefreshing();
+        }
+        StartPendingPreviewNavigation();
+    }
+
+    private void StartPendingPreviewNavigation()
+    {
+        if (!_isWebViewReady
+            || PreviewWebView.CoreWebView2 is not CoreWebView2 core
+            || _previewNavigationCoordinator.TryBeginNext() is not PreviewRenderRequest request)
         {
             return;
         }
 
         try
         {
-            double fitScale = GetFitScale(canvasSize);
-            double scale = _previewZoomCalculator.ResolveScale(_previewZoomState, fitScale);
-            double renderedWidth = canvasSize.Width * scale;
-            double renderedHeight = canvasSize.Height * scale;
-            PreviewScrollPosition? initialScroll = _pendingPreviewScroll;
+            double fitScale = GetFitScale(request.CanvasSize);
+            double scale = _previewZoomCalculator.ResolveScale(request.ZoomState, fitScale);
+            double renderedWidth = request.CanvasSize.Width * scale;
+            double renderedHeight = request.CanvasSize.Height * scale;
             string bridgeToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
             string html = _previewHtmlBuilder.Build(
-                _lastValidSvg,
+                request.Svg,
                 renderedWidth,
                 renderedHeight,
                 bridgeToken,
-                initialScroll);
-            _pendingPreviewScroll = null;
-            ShowPreviewLoading("Rendering the current valid SVG...");
+                request.Viewport);
             PreviewWebView.UpdateLayout();
             PreviewWebView.ZoomFactor = 1.0;
 
-            core.Stop();
             _activePreviewNavigationId = null;
+            _activePreviewRevision = request.Revision;
             _activePreviewBridgeToken = bridgeToken;
             _isPreviewNavigationRequested = true;
             core.NavigateToString(html);
@@ -441,10 +551,19 @@ public partial class MainWindow : Window
         {
             _isPreviewNavigationRequested = false;
             _activePreviewNavigationId = null;
+            _activePreviewRevision = null;
             _activePreviewBridgeToken = null;
-            ShowPreviewError(
-                "Preview could not be rendered",
-                $"WebView2 could not start the preview navigation: {exception.Message}");
+            _previewNavigationCoordinator.TryComplete(request.Revision, out _);
+            if (_previewNavigationCoordinator.HasPending)
+            {
+                StartPendingPreviewNavigation();
+            }
+            else
+            {
+                ShowPreviewError(
+                    "Preview could not be rendered",
+                    $"WebView2 could not start the preview navigation: {exception.Message}");
+            }
         }
     }
 
@@ -465,13 +584,18 @@ public partial class MainWindow : Window
     private void LoadIntoEditor(string text, string? path)
     {
         _previewDebouncer.Cancel();
+        _previewViewport = PreviewViewportPosition.Center;
         _isUpdatingEditor = true;
         try
         {
             SourceEditor.Text = text;
+            _sourceRevisionTracker.Advance();
             SourceEditor.CaretOffset = 0;
             _viewModel.LoadDocument(text, path);
             _viewModel.UpdateCaret(1, 1);
+            MarkDocumentInspectorSourceChanged();
+            _viewModel.Inspector.ShowUnavailable(
+                "Waiting for secure SVG validation.");
         }
         finally
         {
@@ -481,9 +605,36 @@ public partial class MainWindow : Window
         QueuePreviewUpdate();
     }
 
+    private void LoadStartupDocument()
+    {
+        string welcomeSource = _welcomeSvgProvider.Load();
+        _lastValidSvg = welcomeSource;
+        _lastValidCanvasSize = _svgCanvasSizeReader.Read(welcomeSource);
+
+        LastDocumentRestoreResult restore =
+            _lastDocumentService.TryRestore(_userPreferences);
+        if (restore.IsRestored
+            && restore.Source is string source
+            && restore.Path is string path)
+        {
+            LoadIntoEditor(source, path);
+            return;
+        }
+
+        if (restore.ShouldClearPath)
+        {
+            _userPreferences =
+                _lastDocumentService.Forget(_userPreferences);
+            _userPreferencesService.TrySave(_userPreferences);
+        }
+
+        LoadIntoEditor(welcomeSource, path: null);
+    }
+
     private void OnCaretPositionChanged(object? sender, EventArgs e)
     {
         _viewModel.UpdateCaret(SourceEditor.TextArea.Caret.Line, SourceEditor.TextArea.Caret.Column);
+        QueueInspectorCaretSynchronization();
     }
 
     private void OnNewClick(object sender, RoutedEventArgs e)
@@ -528,7 +679,9 @@ public partial class MainWindow : Window
         try
         {
             string text = _fileService.ReadAllText(path);
-            LoadIntoEditor(text, Path.GetFullPath(path));
+            string fullPath = Path.GetFullPath(path);
+            LoadIntoEditor(text, fullPath);
+            RememberLastDocument(fullPath);
             return true;
         }
         catch (DecoderFallbackException)
@@ -583,7 +736,9 @@ public partial class MainWindow : Window
         try
         {
             _fileService.WriteAllText(path, SourceEditor.Text);
-            _viewModel.MarkSaved(Path.GetFullPath(path));
+            string fullPath = Path.GetFullPath(path);
+            _viewModel.MarkSaved(fullPath);
+            RememberLastDocument(fullPath);
             return true;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
@@ -631,6 +786,16 @@ public partial class MainWindow : Window
     }
 
     private void OnExitClick(object sender, RoutedEventArgs e) => Close();
+
+    private void OnAboutClick(object sender, RoutedEventArgs e)
+    {
+        AboutWindow dialog = new(
+            _applicationInfoService.Create(typeof(App).Assembly))
+        {
+            Owner = this
+        };
+        dialog.ShowDialog();
+    }
 
     private void OnUndoClick(object sender, RoutedEventArgs e)
     {
@@ -797,23 +962,66 @@ public partial class MainWindow : Window
 
     private void OnResetZoomClick(object sender, RoutedEventArgs e)
     {
+        _previewViewport = PreviewViewportPosition.Center;
         ApplyPreviewZoomState(_previewZoomCalculator.Reset());
     }
 
     private void OnFitPreviewClick(object sender, RoutedEventArgs e)
     {
+        _previewViewport = PreviewViewportPosition.Center;
         ApplyPreviewZoomState(_previewZoomCalculator.Fit());
     }
 
     private void ApplyPreviewZoomState(PreviewZoomState state)
     {
+        PreviewUpdateDecision decision = _previewUpdatePolicy.Decide(
+            PreviewUpdateKind.Zoom,
+            _hasVisiblePreview);
         _previewZoomState = state;
         _userPreferences = _userPreferences with { PreviewZoom = state };
         _userPreferencesService.TrySave(_userPreferences);
         UpdatePreviewStateText(_previewPresentationState);
-        if (_isWebViewReady)
+        if (_isWebViewReady && !decision.RequiresNavigation)
         {
-            ShowLastValidPreview();
+            TryUpdatePreviewZoomInPlace();
+        }
+    }
+
+    private bool TryUpdatePreviewZoomInPlace()
+    {
+        if (!_isWebViewReady
+            || !_hasVisiblePreview
+            || _isPreviewNavigationRequested
+            || _activePreviewNavigationId is not null
+            || _activePreviewRevision is not null
+            || _activePreviewBridgeToken is not string bridgeToken
+            || _lastValidCanvasSize is not SvgCanvasSize canvasSize
+            || PreviewWebView.CoreWebView2 is not CoreWebView2 core)
+        {
+            return false;
+        }
+
+        double scale = _previewZoomCalculator.ResolveScale(
+            _previewZoomState,
+            GetFitScale(canvasSize));
+        double renderedWidth = canvasSize.Width * scale;
+        double renderedHeight = canvasSize.Height * scale;
+        try
+        {
+            PreviewWebView.ZoomFactor = 1.0;
+            core.PostWebMessageAsJson(
+                _previewPageMessageBuilder.BuildZoomStateMessage(
+                    bridgeToken,
+                    renderedWidth,
+                    renderedHeight,
+                    _previewZoomState.Mode == PreviewZoomMode.Manual
+                        ? _previewViewport
+                        : PreviewViewportPosition.Center));
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
         }
     }
 
@@ -833,7 +1041,7 @@ public partial class MainWindow : Window
     private void OnPreviewWebViewZoomFactorChanged(object sender, object e)
     {
         // Native document zoom would scale the checkerboard and host HTML. Keep it
-        // pinned while the trusted script implements artwork-only zoom.
+        // pinned while the CSP-authorized DOM handler performs artwork-only zoom.
         if (Math.Abs(PreviewWebView.ZoomFactor - 1.0) > 0.0001)
         {
             PreviewWebView.ZoomFactor = 1.0;
@@ -845,13 +1053,32 @@ public partial class MainWindow : Window
         _fitResizeTimer.Stop();
         if (_previewZoomState.Mode == PreviewZoomMode.Fit && _isWebViewReady)
         {
-            ShowLastValidPreview();
+            TryUpdatePreviewZoomInPlace();
         }
     }
 
     private void OnWordWrapClick(object sender, RoutedEventArgs e)
     {
         ApplyWordWrap(WordWrapMenuItem.IsChecked, persist: true);
+    }
+
+    private void OnReopenLastDocumentClick(
+        object sender,
+        RoutedEventArgs e)
+    {
+        _userPreferences = _userPreferences with
+        {
+            ReopenLastDocumentOnStartup =
+                ReopenLastDocumentMenuItem.IsChecked
+        };
+        _userPreferencesService.TrySave(_userPreferences);
+    }
+
+    private void RememberLastDocument(string path)
+    {
+        _userPreferences =
+            _lastDocumentService.Remember(_userPreferences, path);
+        _userPreferencesService.TrySave(_userPreferences);
     }
 
     private void ApplyWordWrap(bool enabled, bool persist)
@@ -995,6 +1222,7 @@ public partial class MainWindow : Window
         SourceEditor.Document.TextChanged -= OnEditorDocumentTextChanged;
         SourceEditor.TextArea.Caret.PositionChanged -= OnCaretPositionChanged;
         PreviewWebView.CoreWebView2InitializationCompleted -= OnCoreWebView2InitializationCompleted;
+        DisposeDocumentInspector();
         _fitResizeTimer.Stop();
         _fitResizeTimer.Tick -= OnFitResizeTimerTick;
         DetachCoreWebViewEvents();

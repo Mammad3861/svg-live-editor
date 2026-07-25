@@ -43,6 +43,7 @@ public sealed class PreviewHtmlBuilderTests
         string actualHash = Convert.ToBase64String(
             SHA256.HashData(Encoding.UTF8.GetBytes(script.Groups[1].Value)));
         Assert.AreEqual(cspHash.Groups[1].Value, actualHash);
+        Assert.IsFalse(script.Groups[1].Value.Contains('\r'));
         Assert.AreEqual(1, Regex.Matches(html, "<script>").Count);
         StringAssert.Contains(script.Groups[1].Value, "bridge.postMessage({");
         StringAssert.Contains(script.Groups[1].Value, "event.ctrlKey");
@@ -51,10 +52,90 @@ public sealed class PreviewHtmlBuilderTests
         StringAssert.Contains(script.Groups[1].Value, "{ capture: true, passive: false }");
         StringAssert.Contains(script.Groups[1].Value, "event.button === 1");
         StringAssert.Contains(script.Groups[1].Value, "event.button === 0 && spaceHeld");
+        StringAssert.Contains(script.Groups[1].Value, "type: 'viewport'");
+        StringAssert.Contains(script.Groups[1].Value, "token: bridgeToken");
+        StringAssert.Contains(script.Groups[1].Value, "message.type !== 'zoomState'");
+        StringAssert.Contains(script.Groups[1].Value, "Object.keys(message).length !== 6");
+        StringAssert.Contains(script.Groups[1].Value, "message.token !== bridgeToken");
+        StringAssert.Contains(script.Groups[1].Value, "message.renderedWidth > 10000000");
+        StringAssert.Contains(script.Groups[1].Value, "message.centerX > 1");
+        StringAssert.Contains(script.Groups[1].Value, "document.body.dataset.hostScriptReady = 'true'");
+        Assert.IsFalse(script.Groups[1].Value.Contains(
+            "nativeZoomFallback",
+            StringComparison.Ordinal));
     }
 
     [TestMethod]
-    public void Build_EmbedsOnlySanitizedInMemoryScrollCoordinates()
+    public void Build_SeparatesZoomWheelFromNormalAndShiftWheel()
+    {
+        const string svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" />";
+
+        string script = ExtractHostScript(
+            _builder.Build(svg, 1000, 500, BridgeToken));
+
+        StringAssert.Contains(script, "if (event.ctrlKey)");
+        StringAssert.Contains(script, "event.deltaY < 0 ? 'in' : 'out'");
+        StringAssert.Contains(script, "if (event.shiftKey)");
+        StringAssert.Contains(script, "viewport.scrollLeft += horizontalDelta");
+        StringAssert.Contains(script, "postZoomRequest(");
+        Assert.IsFalse(script.Contains(
+            "viewport.scrollTop += horizontalDelta",
+            StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void Build_PanStateAcceptsOnlyMiddleOrSpaceLeftAndAlwaysTerminates()
+    {
+        const string svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" />";
+
+        string script = ExtractHostScript(
+            _builder.Build(svg, 2000, 1000, BridgeToken));
+
+        StringAssert.Contains(script, "const isMiddlePan = event.button === 1");
+        StringAssert.Contains(script, "const isSpacePan = event.button === 0 && spaceHeld");
+        StringAssert.Contains(script, "if ((!isMiddlePan && !isSpacePan) || !canPan())");
+        StringAssert.Contains(script, "viewport.setPointerCapture(activePointerId)");
+        StringAssert.Contains(script, "activePanButton = event.button");
+        StringAssert.Contains(script, "const requiredButtonMask = activePanButton === 1 ? 4 : 1");
+        StringAssert.Contains(script, "viewport.addEventListener('pointerup', stopPan)");
+        StringAssert.Contains(script, "viewport.addEventListener('pointercancel', stopPan)");
+        StringAssert.Contains(script, "viewport.addEventListener('lostpointercapture', stopPan)");
+        StringAssert.Contains(script, "viewport.addEventListener('pointerleave', stopPan)");
+        StringAssert.Contains(script, "window.addEventListener('pointerup', stopPan, true)");
+        StringAssert.Contains(script, "window.addEventListener('blur'");
+        StringAssert.Contains(script, "activePointerId = null");
+        StringAssert.Contains(script, "activePanButton = null");
+    }
+
+    [TestMethod]
+    public void Build_CapturesAndRestoresOnlyNormalizedViewportCenters()
+    {
+        const string svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" />";
+
+        string script = ExtractHostScript(
+            _builder.Build(svg, 1000, 500, BridgeToken));
+
+        StringAssert.Contains(script, "const rememberPointer = event =>");
+        StringAssert.Contains(script, "lastPointerX");
+        StringAssert.Contains(script, "lastPointerY");
+        StringAssert.Contains(script, "anchorX: safeAnchorX");
+        StringAssert.Contains(script, "anchorY: safeAnchorY");
+        StringAssert.Contains(script, "const postViewportState = () =>");
+        StringAssert.Contains(script, "if (!bridge || !initialViewportApplied)");
+        StringAssert.Contains(script, "initialViewportApplied = true");
+        StringAssert.Contains(script, "type: 'viewport'");
+        StringAssert.Contains(script, "centerX:");
+        StringAssert.Contains(script, "centerY:");
+        StringAssert.Contains(script, "viewport.addEventListener('scroll', scheduleViewportState)");
+        StringAssert.Contains(script, "image.addEventListener('load', initializeViewport");
+        StringAssert.Contains(script, "requestAnimationFrame(() => requestAnimationFrame(applyInitialViewport))");
+        StringAssert.Contains(script, "image.style.width = `${message.renderedWidth}px`");
+        StringAssert.Contains(script, "stage.style.width = `${message.renderedWidth + 48}px`");
+        StringAssert.Contains(script, "restoreViewportCenter(message.centerX, message.centerY)");
+    }
+
+    [TestMethod]
+    public void Build_EmbedsOnlyClampedNormalizedViewportCoordinates()
     {
         const string svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" />";
         string html = _builder.Build(
@@ -62,10 +143,10 @@ public sealed class PreviewHtmlBuilderTests
             300,
             150,
             BridgeToken,
-            new PreviewScrollPosition(123.5, double.NaN));
+            new PreviewViewportPosition(1.5, double.NaN));
 
-        StringAssert.Contains(html, "data-initial-scroll-left=\"123.5\"");
-        StringAssert.Contains(html, "data-initial-scroll-top=\"0\"");
+        StringAssert.Contains(html, "data-initial-center-x=\"1\"");
+        StringAssert.Contains(html, "data-initial-center-y=\"0.5\"");
     }
 
     [TestMethod]
@@ -134,5 +215,15 @@ public sealed class PreviewHtmlBuilderTests
 
         Assert.Throws<ArgumentException>(
             () => _builder.Build(svg, 300, 150, "not-a-token"));
+    }
+
+    private static string ExtractHostScript(string html)
+    {
+        Match match = Regex.Match(
+            html,
+            @"<script>(.*?)</script>",
+            RegexOptions.Singleline);
+        Assert.IsTrue(match.Success);
+        return match.Groups[1].Value;
     }
 }

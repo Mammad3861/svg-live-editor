@@ -2,15 +2,15 @@
 
 ## Project purpose and scope
 
-SvgLiveEditor is an open-source Windows desktop application for editing UTF-8 SVG/XML source and viewing a live, security-restricted preview. The MVP covers source editing, file operations, validation, preview zoom/fit, and local publishing. It does not cover image/PDF export, installers, updates, cloud features, visual SVG editing, BPMN, or AI generation.
+SvgLiveEditor is an open-source Windows desktop application for editing UTF-8 SVG/XML source and viewing a live, security-restricted preview. Version 0.2 adds a validated document tree and minimal supported-attribute editing while keeping source text as the single source of truth. It does not cover direct canvas manipulation, image/PDF export, installers, updates, cloud features, full visual SVG editing, BPMN, or AI generation.
 
 ## Architecture overview
 
 - `src/SvgLiveEditor`: one WPF application targeting `net10.0-windows`.
-- `ViewModels`: window state and presentation-friendly document metadata.
-- `Services`: testable SVG validation, secure preview HTML generation, UTF-8 file access, debounce behavior, sample loading, and unsaved-change policy.
-- `Models`: small immutable results and decisions shared by services and the view model.
-- `MainWindow`: WPF-only integration for AvalonEdit, dialogs, WebView2, keyboard input, and drag/drop.
+- `ViewModels`: window state, inspector tree/property state, and presentation-friendly document metadata.
+- `Services`: testable SVG validation, validated source indexing, minimal attribute edits, secure preview HTML generation, UTF-8 file access, debounce behavior, sample loading, and unsaved-change policy.
+- `Models`: immutable results, source spans, indexed SVG nodes, text edits, and decisions shared by services and view models.
+- `MainWindow`: WPF-only integration for AvalonEdit, the document inspector, dialogs, WebView2, keyboard input, and drag/drop. Inspector-specific code stays in the `MainWindow.Inspector.cs` partial.
 - `tests/SvgLiveEditor.Tests`: tests for security-sensitive and document logic that does not require launching WPF.
 - `samples/welcome.svg`: the repository's original, safe starter SVG.
 
@@ -37,7 +37,7 @@ dotnet build SvgLiveEditor.sln --configuration Release --no-restore
 dotnet test SvgLiveEditor.sln --configuration Release --no-build
 dotnet run --project src/SvgLiveEditor/SvgLiveEditor.csproj
 dotnet publish src/SvgLiveEditor/SvgLiveEditor.csproj --configuration Release --runtime win-x64 --self-contained true --property:PublishProfile=win-x64
-./scripts/Publish-WinX64.ps1 -Version 0.1.0
+./scripts/Publish-WinX64.ps1 -Version 0.2.0
 ```
 
 The publish output is under `dist/win-x64/`. The publish script audits the self-contained win-x64 package and creates both `releases/SvgLiveEditor-vX.Y.Z-win-x64.zip` and its `.sha256` file locally. Packaged users do not need a separate .NET installation, but they must install Microsoft Edge WebView2 Evergreen Runtime and extract the full ZIP before running `SvgLiveEditor.exe`.

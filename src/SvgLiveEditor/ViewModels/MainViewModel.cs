@@ -35,6 +35,8 @@ public sealed class MainViewModel : ObservableObject
 
     public bool IsSvgValid => _isSvgValid;
 
+    public DocumentInspectorViewModel Inspector { get; } = new();
+
     public void LoadDocument(string text, string? path)
     {
         _documentText = text;

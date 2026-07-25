@@ -19,11 +19,16 @@ public sealed class PreviewBridgeIntegrationTests
         double ImageWidth,
         double ImageHeight,
         double WebViewZoomFactor,
-        string BackgroundSize);
+        string BackgroundSize,
+        int ZoomMessageCount,
+        bool CtrlWheelCanceled,
+        bool ShiftWheelScrolled,
+        bool SourceRefreshPreservedViewport,
+        int ZoomNavigationCount);
 
     [TestMethod]
     [TestCategory("DesktopIntegration")]
-    public async Task TrustedPage_CdpCtrlWheel_TraversesBridgeAndUpdatesOnlyImage()
+    public async Task TrustedPage_CtrlWheelDomHandler_TraversesBridgeOnceAndUpdatesOnlyImage()
     {
         TaskCompletionSource<BridgeResult> completion = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -46,6 +51,11 @@ public sealed class PreviewBridgeIntegrationTests
         Assert.AreEqual(
             "24px 24px, 24px 24px, 24px 24px, 24px 24px",
             result.BackgroundSize);
+        Assert.AreEqual(1, result.ZoomMessageCount);
+        Assert.IsTrue(result.CtrlWheelCanceled);
+        Assert.IsTrue(result.ShiftWheelScrolled);
+        Assert.IsTrue(result.SourceRefreshPreservedViewport);
+        Assert.AreEqual(0, result.ZoomNavigationCount);
         Assert.IsTrue(thread.Join(TimeSpan.FromSeconds(5)));
     }
 
@@ -90,29 +100,121 @@ public sealed class PreviewBridgeIntegrationTests
             PreviewHtmlBuilder htmlBuilder = new();
             const string svg =
                 "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 300 150\"><rect width=\"300\" height=\"150\" fill=\"white\" /></svg>";
-            await NavigateAsync(core, htmlBuilder.Build(svg, 300, 150, BridgeToken));
+            PreviewViewportPosition preservedViewport = new(0.75, 0.75);
+            await NavigateAsync(
+                core,
+                htmlBuilder.Build(
+                    svg,
+                    1200,
+                    600,
+                    BridgeToken,
+                    preservedViewport));
+            string hostScriptReady = await core.ExecuteScriptAsync(
+                "document.body.dataset.hostScriptReady || 'false'");
+            if (!hostScriptReady.Equals("\"true\"", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"The CSP-authorized host script did not run: {hostScriptReady}");
+            }
+
+            await Task.Delay(100);
+            const string refreshedSvg =
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 300 150\"><circle cx=\"150\" cy=\"75\" r=\"70\" fill=\"blue\" /></svg>";
+            await NavigateAsync(
+                core,
+                htmlBuilder.Build(
+                    refreshedSvg,
+                    1800,
+                    900,
+                    BridgeToken,
+                    preservedViewport));
+            await Task.Delay(100);
+            string restoredJson = JsonSerializer.Deserialize<string>(
+                await core.ExecuteScriptAsync(
+                    """
+                    JSON.stringify((() => {
+                      const viewport = document.querySelector('.preview-viewport');
+                      return {
+                        left: viewport.scrollLeft,
+                        top: viewport.scrollTop,
+                        centerX: (viewport.scrollLeft + viewport.clientWidth / 2) / viewport.scrollWidth,
+                        centerY: (viewport.scrollTop + viewport.clientHeight / 2) / viewport.scrollHeight
+                      };
+                    })())
+                    """))
+                ?? throw new InvalidOperationException("WebView2 returned no viewport metrics.");
+            using JsonDocument restoredMetrics = JsonDocument.Parse(restoredJson);
+            JsonElement restored = restoredMetrics.RootElement;
+            bool sourceRefreshPreservedViewport =
+                restored.GetProperty("left").GetDouble() > 0
+                && restored.GetProperty("top").GetDouble() > 0
+                && Math.Abs(restored.GetProperty("centerX").GetDouble() - 0.75) < 0.02
+                && Math.Abs(restored.GetProperty("centerY").GetDouble() - 0.75) < 0.02;
 
             TaskCompletionSource<(string Source, string Json)> messageReceived = new(
                 TaskCreationOptions.RunContinuationsAsynchronously);
+            int zoomMessageCount = 0;
+            int zoomNavigationCount = 0;
+            core.NavigationStarting += (_, _) => zoomNavigationCount++;
             core.WebMessageReceived += (_, args) =>
-                messageReceived.TrySetResult((args.Source, args.WebMessageAsJson));
-
-            await core.CallDevToolsProtocolMethodAsync(
-                "Input.dispatchMouseEvent",
-                """
+            {
+                using JsonDocument message = JsonDocument.Parse(args.WebMessageAsJson);
+                if (message.RootElement.TryGetProperty("type", out JsonElement type)
+                    && type.GetString() == "zoom")
                 {
-                  "type": "mouseWheel",
-                  "x": 320,
-                  "y": 240,
-                  "deltaX": 0,
-                  "deltaY": -120,
-                  "modifiers": 2,
-                  "pointerType": "mouse"
+                    zoomMessageCount++;
+                    messageReceived.TrySetResult((args.Source, args.WebMessageAsJson));
                 }
+            };
+
+            await core.ExecuteScriptAsync(
+                """
+                window.dispatchEvent(new WheelEvent('wheel', {
+                  deltaY: 120,
+                  clientX: 320,
+                  clientY: 240,
+                  bubbles: true,
+                  cancelable: true
+                }))
+                """);
+            await Task.Delay(50);
+            if (zoomMessageCount != 0)
+            {
+                throw new InvalidOperationException(
+                    "A normal wheel event unexpectedly requested preview zoom.");
+            }
+
+            double scrollBeforeShift = ParseScriptNumber(await core.ExecuteScriptAsync(
+                "document.querySelector('.preview-viewport').scrollLeft"));
+            await core.ExecuteScriptAsync(
+                """
+                window.dispatchEvent(new WheelEvent('wheel', {
+                  deltaY: 120,
+                  shiftKey: true,
+                  clientX: 320,
+                  clientY: 240,
+                  bubbles: true,
+                  cancelable: true
+                }))
+                """);
+            double scrollAfterShift = ParseScriptNumber(await core.ExecuteScriptAsync(
+                "document.querySelector('.preview-viewport').scrollLeft"));
+
+            string dispatchResult = await core.ExecuteScriptAsync(
+                """
+                window.dispatchEvent(new WheelEvent('wheel', {
+                  deltaY: -120,
+                  ctrlKey: true,
+                  clientX: 320,
+                  clientY: 240,
+                  bubbles: true,
+                  cancelable: true
+                }))
                 """);
 
             (string source, string json) =
                 await messageReceived.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await Task.Delay(150);
             PreviewNavigationPolicy navigationPolicy = new();
             if (!navigationPolicy.IsTrustedWebMessageSource(source))
             {
@@ -135,14 +237,25 @@ public sealed class PreviewBridgeIntegrationTests
                 new SvgCanvasSize(300, 150),
                 fitScale: 1.0,
                 request);
-            await NavigateAsync(
-                core,
-                htmlBuilder.Build(
-                    svg,
+            double contentWidth = Math.Max(
+                request.ViewportWidth,
+                transition.RenderedWidth + (PreviewZoomCalculator.CanvasPadding * 2));
+            double contentHeight = Math.Max(
+                request.ViewportHeight,
+                transition.RenderedHeight + (PreviewZoomCalculator.CanvasPadding * 2));
+            PreviewViewportPosition viewport = new PreviewViewportCalculator().Capture(
+                transition.Scroll,
+                contentWidth,
+                contentHeight,
+                request.ViewportWidth,
+                request.ViewportHeight);
+            core.PostWebMessageAsJson(
+                new PreviewPageMessageBuilder().BuildZoomStateMessage(
+                    BridgeToken,
                     transition.RenderedWidth,
                     transition.RenderedHeight,
-                    BridgeToken,
-                    transition.Scroll));
+                    viewport));
+            await Task.Delay(100);
 
             string scriptResult = await core.ExecuteScriptAsync(
                 """
@@ -163,7 +276,12 @@ public sealed class PreviewBridgeIntegrationTests
                 root.GetProperty("width").GetDouble(),
                 root.GetProperty("height").GetDouble(),
                 webView.ZoomFactor,
-                root.GetProperty("backgroundSize").GetString() ?? string.Empty));
+                root.GetProperty("backgroundSize").GetString() ?? string.Empty,
+                zoomMessageCount,
+                dispatchResult.Equals("false", StringComparison.Ordinal),
+                scrollAfterShift > scrollBeforeShift,
+                sourceRefreshPreservedViewport,
+                zoomNavigationCount));
         }
         catch (Exception exception)
         {
@@ -178,6 +296,11 @@ public sealed class PreviewBridgeIntegrationTests
             Dispatcher.CurrentDispatcher.BeginInvokeShutdown(
                 DispatcherPriority.Background);
         }
+    }
+
+    private static double ParseScriptNumber(string json)
+    {
+        return JsonSerializer.Deserialize<double>(json);
     }
 
     private static async Task NavigateAsync(CoreWebView2 core, string html)

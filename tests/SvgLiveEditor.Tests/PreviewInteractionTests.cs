@@ -68,6 +68,37 @@ public sealed class PreviewInteractionTests
     }
 
     [TestMethod]
+    public void ViewportMessage_RequiresTheExactTokenBoundFiniteShape()
+    {
+        const string valid = """
+            {"type":"viewport","token":"00112233445566778899AABBCCDDEEFF",
+             "centerX":0.75,"centerY":0.25}
+            """;
+        const string stale = """
+            {"type":"viewport","token":"FFEEDDCCBBAA99887766554433221100",
+             "centerX":0.75,"centerY":0.25}
+            """;
+        const string outOfRange = """
+            {"type":"viewport","token":"00112233445566778899AABBCCDDEEFF",
+             "centerX":1.1,"centerY":0.25}
+            """;
+        const string extra = """
+            {"type":"viewport","token":"00112233445566778899AABBCCDDEEFF",
+             "centerX":0.75,"centerY":0.25,"selector":"body"}
+            """;
+
+        Assert.IsTrue(_parser.TryParseViewportPosition(
+            valid,
+            BridgeToken,
+            out PreviewViewportPosition viewport));
+        Assert.AreEqual(0.75, viewport.CenterX, 0.0001);
+        Assert.AreEqual(0.25, viewport.CenterY, 0.0001);
+        Assert.IsFalse(_parser.TryParseViewportPosition(stale, BridgeToken, out _));
+        Assert.IsFalse(_parser.TryParseViewportPosition(outOfRange, BridgeToken, out _));
+        Assert.IsFalse(_parser.TryParseViewportPosition(extra, BridgeToken, out _));
+    }
+
+    [TestMethod]
     public void AnchorScrollCalculation_KeepsPointerContentStableAndClamps()
     {
         PreviewZoomRequest centered = new(

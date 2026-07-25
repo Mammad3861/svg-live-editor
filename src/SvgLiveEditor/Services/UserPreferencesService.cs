@@ -45,7 +45,25 @@ public sealed class UserPreferencesService
                 && value.ValueKind is JsonValueKind.True or JsonValueKind.False
                     ? value.GetBoolean()
                     : true;
-            return new UserPreferences(wordWrap, ReadPreviewZoom(root));
+            bool reopenLastDocument = root.TryGetProperty(
+                    "reopenLastDocumentOnStartup",
+                    out JsonElement reopenValue)
+                && reopenValue.ValueKind is JsonValueKind.True or JsonValueKind.False
+                    ? reopenValue.GetBoolean()
+                    : true;
+            string? lastDocumentPath = root.TryGetProperty(
+                    "lastDocumentPath",
+                    out JsonElement pathValue)
+                && pathValue.ValueKind == JsonValueKind.String
+                    ? pathValue.GetString()
+                    : null;
+            return new UserPreferences(wordWrap, ReadPreviewZoom(root))
+            {
+                ReopenLastDocumentOnStartup = reopenLastDocument,
+                LastDocumentPath = string.IsNullOrWhiteSpace(lastDocumentPath)
+                    ? null
+                    : lastDocumentPath
+            };
         }
         catch (Exception exception) when (exception is IOException
             or UnauthorizedAccessException
@@ -71,7 +89,10 @@ public sealed class UserPreferencesService
             {
                 wordWrap = preferences.WordWrap,
                 previewZoomMode = preferences.PreviewZoom.Mode.ToString(),
-                previewZoomPercent = preferences.PreviewZoom.ManualScale * 100
+                previewZoomPercent = preferences.PreviewZoom.ManualScale * 100,
+                reopenLastDocumentOnStartup =
+                    preferences.ReopenLastDocumentOnStartup,
+                lastDocumentPath = preferences.LastDocumentPath
             });
             File.WriteAllText(_settingsPath, json, Utf8WithoutBom);
             return true;
