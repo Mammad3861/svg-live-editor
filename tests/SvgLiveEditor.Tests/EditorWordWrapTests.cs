@@ -61,16 +61,24 @@ public sealed class EditorWordWrapTests
             UserPreferences defaults = service.Load();
             Assert.IsTrue(defaults.WordWrap);
             Assert.AreEqual(PreviewZoomMode.Fit, defaults.PreviewZoom.Mode);
+            Assert.IsTrue(defaults.ReopenLastDocumentOnStartup);
+            Assert.IsNull(defaults.LastDocumentPath);
 
             UserPreferences changed = new(
                 WordWrap: false,
-                PreviewZoom: new PreviewZoomState(PreviewZoomMode.Manual, 1.25));
+                PreviewZoom: new PreviewZoomState(PreviewZoomMode.Manual, 1.25))
+            {
+                ReopenLastDocumentOnStartup = false,
+                LastDocumentPath = Path.Combine(directory, "sample.svg")
+            };
             Assert.IsTrue(service.TrySave(changed));
 
             UserPreferences restored = service.Load();
             Assert.IsFalse(restored.WordWrap);
             Assert.AreEqual(PreviewZoomMode.Manual, restored.PreviewZoom.Mode);
             Assert.AreEqual(1.25, restored.PreviewZoom.ManualScale, 0.0001);
+            Assert.IsFalse(restored.ReopenLastDocumentOnStartup);
+            Assert.AreEqual(changed.LastDocumentPath, restored.LastDocumentPath);
         }
         finally
         {
@@ -88,6 +96,8 @@ public sealed class EditorWordWrapTests
         {
             Assert.IsFalse(preferences.WordWrap);
             Assert.AreEqual(PreviewZoomState.Fit, preferences.PreviewZoom);
+            Assert.IsTrue(preferences.ReopenLastDocumentOnStartup);
+            Assert.IsNull(preferences.LastDocumentPath);
         });
     }
 
@@ -112,6 +122,24 @@ public sealed class EditorWordWrapTests
         RunWithSettings(
             """{"wordWrap":false,"previewZoomMode":""",
             preferences => Assert.AreEqual(UserPreferences.Default, preferences));
+    }
+
+    [TestMethod]
+    public void MalformedRecentDocumentSettings_AreIgnoredSafely()
+    {
+        RunWithSettings(
+            """
+            {
+              "wordWrap": true,
+              "reopenLastDocumentOnStartup": "sometimes",
+              "lastDocumentPath": 42
+            }
+            """,
+            preferences =>
+            {
+                Assert.IsTrue(preferences.ReopenLastDocumentOnStartup);
+                Assert.IsNull(preferences.LastDocumentPath);
+            });
     }
 
     [TestMethod]

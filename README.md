@@ -10,12 +10,13 @@ Repository: [github.com/Mammad3861/svg-live-editor](https://github.com/Mammad386
 
 ## Features
 
-- Validated hierarchical SVG element tree with source selection and debounced caret synchronization.
+- Validated hierarchical SVG element tree with explicit tree-to-source navigation and non-destructive debounced caret-to-tree synchronization.
 - Properties inspector for common safe attributes and shape geometry. Changes are minimal source edits, participate in Undo/Redo, and never reserialize the full XML document; path `d` is read-only in v0.2.
 - AvalonEdit source editor with XML highlighting, line numbers, current-line highlighting, undo/redo, find/replace, and non-destructive word wrap. Toggle wrapping with `Alt+Z` or `Ctrl+Alt+W`.
 - Automatic live preview after a 300 ms debounce, plus manual refresh.
 - Preview zoom in/out, reset, and fit-to-area controls on a fixed checkerboard transparency canvas. The selected zoom mode is restored at the next launch; `Ctrl`+mouse wheel zooms around the pointer, normal wheel scrolling remains vertical, `Shift`+wheel scrolls horizontally, and a scrollable preview can be panned with middle-button drag or Space+left-button drag.
 - New, Open, Save, Save As, Exit, and drag/drop for `.svg` and `.txt` files.
+- The most recently opened or saved named document reopens by default at the next startup. The checkable View-menu preference and full path are stored only in the current user's LocalAppData settings; missing, inaccessible, or unsupported paths safely fall back to the welcome document.
 - Unsaved-change prompts before replacing or closing a document.
 - Strict UTF-8 reading and UTF-8-without-BOM writing without source reformatting.
 - Secure XML validation with useful line and column errors.
@@ -24,13 +25,15 @@ Repository: [github.com/Mammad3861/svg-live-editor](https://github.com/Mammad386
 
 The trusted interaction bridge has automated browser integration coverage. Physical Ctrl+Wheel and the two drag-to-pan gestures should still be confirmed on the target machine for each release.
 
+The XML code editor intentionally remains left-to-right so markup punctuation and tag structure stay predictable. Persian text is preserved logically and as exact UTF-8, but mixed RTL/LTR caret movement and visual ordering are subject to AvalonEdit/WPF BiDi limitations; the saved source and SVG preview remain the authoritative checks.
+
 ## Security model and limitations
 
 Opened files are untrusted. SvgLiveEditor prohibits DTDs, entity declarations, and external entity resolution; requires a standard SVG root; and rejects scripts, inline event handlers, `foreignObject`, active embedded content, processing instructions, style elements, navigation links, and non-fragment resources.
 
-Validated SVG is UTF-8/Base64 encoded into an HTML `<img>` data URL. Raw SVG is never inserted into host markup. The host uses a restrictive Content Security Policy. One fixed, app-owned interaction script is authorized by its exact CSP SHA-256 hash for wheel and pan handling; it can send only a strictly validated, per-navigation-token-bound zoom request. Native browser/document zoom stays pinned to 100%, so only the SVG image dimensions change. User SVG scripts remain non-executable, and native host objects, arbitrary messages, permissions, downloads, pop-ups, external navigation, external requests, developer tools, and context menus are disabled or blocked. Invalid edits keep the last valid preview visible.
+Validated SVG is UTF-8/Base64 encoded into an HTML `<img>` data URL. Raw SVG is never inserted into host markup. The host uses a restrictive Content Security Policy. One fixed, app-owned interaction script is authorized by its exact CSP SHA-256 hash for wheel and pan handling. The trusted page and host exchange only exact-schema, per-navigation-token-bound zoom and viewport messages; the host may update only the existing image dimensions and normalized viewport for smooth zoom. Native browser/document zoom stays pinned to 100%, so only the SVG image dimensions change. User SVG scripts remain non-executable, and native host objects, arbitrary messages, permissions, downloads, pop-ups, external navigation, external requests, developer tools, and context menus are disabled or blocked. Invalid edits keep the last valid preview visible.
 
-The document inspector is built only from source accepted by the same secure validator. Selecting a tree node reveals its source start tag. Supported property edits update the AvalonEdit document—the source remains the single source of truth—and then use the existing validation and preview pipeline. No SVG DOM is exposed to WebView2 or JavaScript.
+The document inspector is built only from source accepted by the same secure validator. An explicit mouse or keyboard action in the tree reveals the corresponding source start tag; validation, reindexing, selection restoration, and caret-to-tree synchronization never change the editor selection. Supported property edits update the AvalonEdit document—the source remains the single source of truth—and then use the existing validation and preview pipeline. No SVG DOM is exposed to WebView2 or JavaScript.
 
 This conservative MVP intentionally supports only a restricted safe SVG subset and does not render every valid SVG feature. In particular, external images/fonts/styles, embedded data resources, hyperlinks, `<style>`, `foreignObject`, scripts, and event handlers are rejected. Because exporter output varies, SvgLiveEditor is not guaranteed to open every SVG produced by tools such as Adobe Illustrator or Inkscape. The preview is not a general-purpose web browser or a replacement for reviewing SVG before distribution. See [docs/security-model.md](docs/security-model.md).
 
@@ -116,6 +119,8 @@ scripts/                   Local publish helper
 ## Contributing
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a change. Only contribute samples and assets you created yourself or have explicit permission to redistribute. Do not add copied, copyrighted, or ambiguously licensed SVG files, layouts, text, coordinates, or archives.
+
+When reporting a bug, include the version and Windows architecture shown under **Help > About SvgLiveEditor**, together with the steps needed to reproduce the problem.
 
 ## Reporting security problems
 

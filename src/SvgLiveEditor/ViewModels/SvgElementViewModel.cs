@@ -7,6 +7,7 @@ public sealed class SvgElementViewModel : ObservableObject
 {
     private bool _isSelected;
     private bool _isExpanded;
+    private InspectorSelectionOrigin? _pendingSelectionOrigin;
 
     public SvgElementViewModel(
         SvgElementNode element,
@@ -29,12 +30,35 @@ public sealed class SvgElementViewModel : ObservableObject
     public bool IsSelected
     {
         get => _isSelected;
-        set => SetProperty(ref _isSelected, value);
+        set
+        {
+            if (!value)
+            {
+                _pendingSelectionOrigin = null;
+            }
+
+            SetProperty(ref _isSelected, value);
+        }
     }
 
     public bool IsExpanded
     {
         get => _isExpanded;
         set => SetProperty(ref _isExpanded, value);
+    }
+
+    public void SetSelected(
+        bool isSelected,
+        InspectorSelectionOrigin origin)
+    {
+        _pendingSelectionOrigin = isSelected ? origin : null;
+        IsSelected = isSelected;
+    }
+
+    public InspectorSelectionOrigin? ConsumePendingSelectionOrigin()
+    {
+        InspectorSelectionOrigin? origin = _pendingSelectionOrigin;
+        _pendingSelectionOrigin = null;
+        return origin;
     }
 }

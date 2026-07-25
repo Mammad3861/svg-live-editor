@@ -45,6 +45,12 @@
                   IsCheckable="True"
                   IsChecked="True"
                   Click="OnWordWrapClick" />
+        <Separator />
+        <MenuItem x:Name="ReopenLastDocumentMenuItem"
+                  Header="_Reopen last document on startup"
+                  IsCheckable="True"
+                  IsChecked="True"
+                  Click="OnReopenLastDocumentClick" />
       </MenuItem>
       <MenuItem Header="_Preview">
         <MenuItem Header="_Refresh" Click="OnRefreshPreviewClick" />
@@ -53,6 +59,9 @@
         <MenuItem Header="Zoom _Out" Click="OnZoomOutClick" />
         <MenuItem Header="_Reset Zoom" Click="OnResetZoomClick" />
         <MenuItem Header="_Fit to Preview" Click="OnFitPreviewClick" />
+      </MenuItem>
+      <MenuItem Header="_Help">
+        <MenuItem Header="_About SvgLiveEditor" Click="OnAboutClick" />
       </MenuItem>
     </Menu>
 
@@ -149,6 +158,10 @@
             <TreeView x:Name="InspectorTree"
                       ItemsSource="{Binding Inspector.Roots}"
                       SelectedItemChanged="OnInspectorTreeSelectionChanged"
+                      PreviewMouseLeftButtonDown="OnInspectorTreePreviewMouseLeftButtonDown"
+                      PreviewKeyDown="OnInspectorTreePreviewKeyDown"
+                      PreviewKeyUp="OnInspectorTreePreviewKeyUp"
+                      LostKeyboardFocus="OnInspectorTreeLostKeyboardFocus"
                       BorderThickness="0"
                       Padding="4"
                       AutomationProperties.Name="SVG element tree">

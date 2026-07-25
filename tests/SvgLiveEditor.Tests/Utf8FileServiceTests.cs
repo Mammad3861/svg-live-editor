@@ -68,4 +68,22 @@ public sealed class Utf8FileServiceTests
 
         Assert.ThrowsExactly<DecoderFallbackException>(() => _service.ReadAllText(path));
     }
+
+    [TestMethod]
+    public void SaveCloseAndReopen_PreservesExactPersianUtf8WithoutNormalization()
+    {
+        string path = Path.Combine(_temporaryDirectory, "persian.svg");
+        const string source = """
+            <svg xmlns="http://www.w3.org/2000/svg">
+              <text direction="rtl">سلام، متن فارسی با نیم‌فاصله</text>
+            </svg>
+            """;
+
+        _service.WriteAllText(path, source);
+
+        Assert.AreEqual(source, _service.ReadAllText(path));
+        CollectionAssert.AreEqual(
+            Encoding.UTF8.GetBytes(source),
+            File.ReadAllBytes(path));
+    }
 }

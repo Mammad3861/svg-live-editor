@@ -11,6 +11,7 @@ public sealed class PreviewHtmlBuilder
         (() => {
           'use strict';
           const viewport = document.querySelector('.preview-viewport');
+          const stage = document.querySelector('main');
           const image = document.querySelector('img');
           const bridge = window.chrome && window.chrome.webview;
           const bridgeToken = document.body.dataset.bridgeToken;
@@ -109,6 +110,55 @@ public sealed class PreviewHtmlBuilder
               requestAnimationFrame(postViewportState);
             }
           };
+
+          const restoreViewportCenter = (centerX, centerY) => {
+            const safeCenterX = Number.isFinite(centerX)
+              ? Math.max(0, Math.min(1, centerX))
+              : 0.5;
+            const safeCenterY = Number.isFinite(centerY)
+              ? Math.max(0, Math.min(1, centerY))
+              : 0.5;
+            viewport.scrollLeft = Math.max(0, Math.min(
+              viewport.scrollWidth - viewport.clientWidth,
+              (safeCenterX * viewport.scrollWidth) - (viewport.clientWidth / 2)));
+            viewport.scrollTop = Math.max(0, Math.min(
+              viewport.scrollHeight - viewport.clientHeight,
+              (safeCenterY * viewport.scrollHeight) - (viewport.clientHeight / 2)));
+            refreshCursor();
+            scheduleViewportState();
+          };
+
+          if (bridge) {
+            bridge.addEventListener('message', event => {
+              const message = event.data;
+              if (!message ||
+                  typeof message !== 'object' ||
+                  Object.keys(message).length !== 6 ||
+                  message.type !== 'zoomState' ||
+                  message.token !== bridgeToken ||
+                  !Number.isFinite(message.renderedWidth) ||
+                  message.renderedWidth <= 0 ||
+                  message.renderedWidth > 10000000 ||
+                  !Number.isFinite(message.renderedHeight) ||
+                  message.renderedHeight <= 0 ||
+                  message.renderedHeight > 10000000 ||
+                  !Number.isFinite(message.centerX) ||
+                  message.centerX < 0 ||
+                  message.centerX > 1 ||
+                  !Number.isFinite(message.centerY) ||
+                  message.centerY < 0 ||
+                  message.centerY > 1) {
+                return;
+              }
+
+              image.style.width = `${message.renderedWidth}px`;
+              image.style.height = `${message.renderedHeight}px`;
+              stage.style.width = `${message.renderedWidth + 48}px`;
+              stage.style.height = `${message.renderedHeight + 48}px`;
+              requestAnimationFrame(() =>
+                restoreViewportCenter(message.centerX, message.centerY));
+            });
+          }
 
           const handleWheel = event => {
             rememberPointer(event);
@@ -215,21 +265,8 @@ public sealed class PreviewHtmlBuilder
               document.body.dataset.initialCenterX || '0.5');
             const centerY = Number.parseFloat(
               document.body.dataset.initialCenterY || '0.5');
-            const safeCenterX = Number.isFinite(centerX)
-              ? Math.max(0, Math.min(1, centerX))
-              : 0.5;
-            const safeCenterY = Number.isFinite(centerY)
-              ? Math.max(0, Math.min(1, centerY))
-              : 0.5;
-            viewport.scrollLeft = Math.max(0, Math.min(
-              viewport.scrollWidth - viewport.clientWidth,
-              (safeCenterX * viewport.scrollWidth) - (viewport.clientWidth / 2)));
-            viewport.scrollTop = Math.max(0, Math.min(
-              viewport.scrollHeight - viewport.clientHeight,
-              (safeCenterY * viewport.scrollHeight) - (viewport.clientHeight / 2)));
             initialViewportApplied = true;
-            refreshCursor();
-            scheduleViewportState();
+            restoreViewportCenter(centerX, centerY);
           };
 
           const initializeViewport = () =>

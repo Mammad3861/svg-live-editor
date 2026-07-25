@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
 using SvgLiveEditor.Models;
 using SvgLiveEditor.Services;
@@ -12,6 +13,8 @@ public partial class MainWindow
 {
     private readonly SvgAttributeEditService _svgAttributeEditService = new();
     private readonly AvalonEditDocumentEditService _documentEditService = new();
+    private readonly InspectorSourceGuard _inspectorSourceGuard = new();
+    private readonly InspectorSelectionCoordinator _inspectorSelectionCoordinator = new();
     private readonly DispatcherTimer _inspectorCaretTimer = new()
     {
         Interval = TimeSpan.FromMilliseconds(160)
@@ -19,16 +22,35 @@ public partial class MainWindow
 
     private bool _isSynchronizingInspectorSelection;
     private bool _isInspectorIndexCurrent;
+    private bool _isEditorTextCompositionActive;
+    private bool _isExplicitInspectorKeyboardNavigation;
+    private long _inspectorSourceRevision = -1;
 
     private void InitializeDocumentInspector()
     {
         _inspectorCaretTimer.Tick += OnInspectorCaretTimerTick;
+        TextCompositionManager.AddPreviewTextInputStartHandler(
+            SourceEditor,
+            OnEditorTextCompositionStarted);
+        TextCompositionManager.AddPreviewTextInputUpdateHandler(
+            SourceEditor,
+            OnEditorTextCompositionUpdated);
+        SourceEditor.PreviewTextInput += OnEditorTextCompositionCompleted;
+        SourceEditor.LostKeyboardFocus += OnEditorLostKeyboardFocus;
     }
 
     private void DisposeDocumentInspector()
     {
         _inspectorCaretTimer.Stop();
         _inspectorCaretTimer.Tick -= OnInspectorCaretTimerTick;
+        TextCompositionManager.RemovePreviewTextInputStartHandler(
+            SourceEditor,
+            OnEditorTextCompositionStarted);
+        TextCompositionManager.RemovePreviewTextInputUpdateHandler(
+            SourceEditor,
+            OnEditorTextCompositionUpdated);
+        SourceEditor.PreviewTextInput -= OnEditorTextCompositionCompleted;
+        SourceEditor.LostKeyboardFocus -= OnEditorLostKeyboardFocus;
     }
 
     private void ApplyDocumentInspectorResult(SvgDocumentIndexResult result)
@@ -43,12 +65,16 @@ public partial class MainWindow
         SvgElementIdentity? preferredSelection)
     {
         _isInspectorIndexCurrent = true;
+        _inspectorSourceRevision = _sourceRevisionTracker.Current;
         _isSynchronizingInspectorSelection = true;
         try
         {
             if (result.Document is SvgDocumentIndex document)
             {
-                _viewModel.Inspector.Load(document, preferredSelection);
+                _viewModel.Inspector.Load(
+                    document,
+                    preferredSelection,
+                    InspectorSelectionOrigin.InspectorRestore);
             }
             else
             {
@@ -67,7 +93,11 @@ public partial class MainWindow
     private void QueueInspectorCaretSynchronization()
     {
         if (_isSynchronizingInspectorSelection
-            || !_isInspectorIndexCurrent
+            || !_inspectorSourceGuard.CanUseIndex(
+                _isInspectorIndexCurrent,
+                _inspectorSourceRevision,
+                _sourceRevisionTracker.Current,
+                _isEditorTextCompositionActive)
             || _viewModel.Inspector.DocumentIndex is null)
         {
             return;
@@ -80,6 +110,7 @@ public partial class MainWindow
     private void MarkDocumentInspectorSourceChanged()
     {
         _isInspectorIndexCurrent = false;
+        _inspectorSourceRevision = -1;
         _inspectorCaretTimer.Stop();
     }
 
@@ -87,7 +118,12 @@ public partial class MainWindow
     {
         _inspectorCaretTimer.Stop();
         SvgDocumentIndex? documentIndex = _viewModel.Inspector.DocumentIndex;
-        if (documentIndex is null)
+        if (!_inspectorSourceGuard.CanUseIndex(
+                _isInspectorIndexCurrent,
+                _inspectorSourceRevision,
+                _sourceRevisionTracker.Current,
+                _isEditorTextCompositionActive)
+            || documentIndex is null)
         {
             return;
         }
@@ -104,7 +140,9 @@ public partial class MainWindow
         _isSynchronizingInspectorSelection = true;
         try
         {
-            _viewModel.Inspector.SelectNode(element);
+            _viewModel.Inspector.SelectNode(
+                element,
+                InspectorSelectionOrigin.SourceCaretSync);
         }
         finally
         {
@@ -121,16 +159,105 @@ public partial class MainWindow
             return;
         }
 
-        _viewModel.Inspector.SelectElement(element);
-        if (_isSynchronizingInspectorSelection)
+        InspectorSelectionOrigin origin =
+            element.ConsumePendingSelectionOrigin()
+            ?? (_isExplicitInspectorKeyboardNavigation
+                ? InspectorSelectionOrigin.ExplicitTreeNavigation
+                : InspectorSelectionOrigin.InspectorRestore);
+        _isExplicitInspectorKeyboardNavigation = false;
+        _viewModel.Inspector.AcceptTreeSelection(element);
+        NavigateToInspectorElement(element, origin);
+    }
+
+    private void OnInspectorTreePreviewMouseLeftButtonDown(
+        object sender,
+        MouseButtonEventArgs e)
+    {
+        if (e.OriginalSource is not DependencyObject originalSource
+            || FindNearestTreeElement(originalSource)
+                is not SvgElementViewModel element)
         {
             return;
         }
 
-        SourceSpan span = element.Element.StartTagSpan;
-        if (span.Start < 0
-            || span.Length <= 0
-            || span.Start > SourceEditor.Document.TextLength - span.Length)
+        NavigateToInspectorElement(
+            element,
+            InspectorSelectionOrigin.ExplicitTreeNavigation);
+    }
+
+    private static SvgElementViewModel? FindNearestTreeElement(
+        DependencyObject originalSource)
+    {
+        for (DependencyObject? current = originalSource;
+             current is not null;
+             current = VisualTreeHelper.GetParent(current))
+        {
+            if (current is TreeViewItem
+                {
+                    DataContext: SvgElementViewModel element
+                })
+            {
+                return element;
+            }
+
+            if (current is TreeView)
+            {
+                break;
+            }
+        }
+
+        return null;
+    }
+
+    private void OnInspectorTreePreviewKeyDown(
+        object sender,
+        KeyEventArgs e)
+    {
+        Key key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (key is Key.Enter or Key.Space)
+        {
+            if (InspectorTree.SelectedItem is SvgElementViewModel element)
+            {
+                NavigateToInspectorElement(
+                    element,
+                    InspectorSelectionOrigin.ExplicitTreeNavigation);
+                e.Handled = true;
+            }
+            return;
+        }
+
+        _isExplicitInspectorKeyboardNavigation = key is
+            Key.Up or Key.Down or Key.Left or Key.Right
+            or Key.Home or Key.End or Key.PageUp or Key.PageDown;
+    }
+
+    private void OnInspectorTreePreviewKeyUp(
+        object sender,
+        KeyEventArgs e)
+    {
+        _isExplicitInspectorKeyboardNavigation = false;
+    }
+
+    private void OnInspectorTreeLostKeyboardFocus(
+        object sender,
+        KeyboardFocusChangedEventArgs e)
+    {
+        _isExplicitInspectorKeyboardNavigation = false;
+    }
+
+    private void NavigateToInspectorElement(
+        SvgElementViewModel element,
+        InspectorSelectionOrigin origin)
+    {
+        if (!_inspectorSelectionCoordinator.TryGetNavigationSpan(
+                origin,
+                element.Element.StartTagSpan,
+                _isInspectorIndexCurrent,
+                _inspectorSourceRevision,
+                _sourceRevisionTracker.Current,
+                _isEditorTextCompositionActive,
+                SourceEditor.Document.TextLength,
+                out SourceSpan span))
         {
             return;
         }
@@ -192,11 +319,24 @@ public partial class MainWindow
             return;
         }
 
+        long expectedRevision = _inspectorSourceRevision;
+        if (!_inspectorSourceGuard.CanUseIndex(
+                _isInspectorIndexCurrent,
+                expectedRevision,
+                _sourceRevisionTracker.Current,
+                isEditorTextCompositionActive: false))
+        {
+            property.ErrorMessage =
+                "The source changed; select the element again.";
+            return;
+        }
+
+        string sourceSnapshot = SourceEditor.Text;
         SvgAttributeEditResult result;
         try
         {
             result = _svgAttributeEditService.CreateEdit(
-                SourceEditor.Text,
+                sourceSnapshot,
                 property.Element,
                 property.Name,
                 property.Value);
@@ -220,6 +360,14 @@ public partial class MainWindow
             return;
         }
 
+        if (!_sourceRevisionTracker.IsCurrent(expectedRevision)
+            || !SourceEditor.Text.Equals(sourceSnapshot, StringComparison.Ordinal))
+        {
+            property.ErrorMessage =
+                "The source changed; select the element again.";
+            return;
+        }
+
         SvgElementIdentity preferredSelection = property.Element.Identity;
         _documentEditService.Apply(SourceEditor.Document, result.Edit);
         property.MarkApplied();
@@ -227,5 +375,49 @@ public partial class MainWindow
         SvgDocumentIndexResult rebuilt =
             _documentIndexService.Build(SourceEditor.Text);
         ApplyDocumentInspectorResult(rebuilt, preferredSelection);
+    }
+
+    private void OnEditorTextCompositionStarted(
+        object sender,
+        TextCompositionEventArgs e)
+    {
+        _isEditorTextCompositionActive = true;
+        _inspectorCaretTimer.Stop();
+    }
+
+    private void OnEditorTextCompositionUpdated(
+        object sender,
+        TextCompositionEventArgs e)
+    {
+        _isEditorTextCompositionActive = true;
+        _inspectorCaretTimer.Stop();
+    }
+
+    private void OnEditorTextCompositionCompleted(
+        object sender,
+        TextCompositionEventArgs e)
+    {
+        Dispatcher.BeginInvoke(
+            DispatcherPriority.Input,
+            new Action(() =>
+            {
+                _isEditorTextCompositionActive = false;
+                QueueInspectorCaretSynchronization();
+            }));
+    }
+
+    private void OnEditorLostKeyboardFocus(
+        object sender,
+        KeyboardFocusChangedEventArgs e)
+    {
+        Dispatcher.BeginInvoke(
+            DispatcherPriority.Input,
+            new Action(() =>
+            {
+                if (!SourceEditor.IsKeyboardFocusWithin)
+                {
+                    _isEditorTextCompositionActive = false;
+                }
+            }));
     }
 }

@@ -23,7 +23,8 @@ public sealed class PreviewBridgeIntegrationTests
         int ZoomMessageCount,
         bool CtrlWheelCanceled,
         bool ShiftWheelScrolled,
-        bool SourceRefreshPreservedViewport);
+        bool SourceRefreshPreservedViewport,
+        int ZoomNavigationCount);
 
     [TestMethod]
     [TestCategory("DesktopIntegration")]
@@ -54,6 +55,7 @@ public sealed class PreviewBridgeIntegrationTests
         Assert.IsTrue(result.CtrlWheelCanceled);
         Assert.IsTrue(result.ShiftWheelScrolled);
         Assert.IsTrue(result.SourceRefreshPreservedViewport);
+        Assert.AreEqual(0, result.ZoomNavigationCount);
         Assert.IsTrue(thread.Join(TimeSpan.FromSeconds(5)));
     }
 
@@ -152,6 +154,8 @@ public sealed class PreviewBridgeIntegrationTests
             TaskCompletionSource<(string Source, string Json)> messageReceived = new(
                 TaskCreationOptions.RunContinuationsAsynchronously);
             int zoomMessageCount = 0;
+            int zoomNavigationCount = 0;
+            core.NavigationStarting += (_, _) => zoomNavigationCount++;
             core.WebMessageReceived += (_, args) =>
             {
                 using JsonDocument message = JsonDocument.Parse(args.WebMessageAsJson);
@@ -245,14 +249,13 @@ public sealed class PreviewBridgeIntegrationTests
                 contentHeight,
                 request.ViewportWidth,
                 request.ViewportHeight);
-            await NavigateAsync(
-                core,
-                htmlBuilder.Build(
-                    svg,
+            core.PostWebMessageAsJson(
+                new PreviewPageMessageBuilder().BuildZoomStateMessage(
+                    BridgeToken,
                     transition.RenderedWidth,
                     transition.RenderedHeight,
-                    BridgeToken,
                     viewport));
+            await Task.Delay(100);
 
             string scriptResult = await core.ExecuteScriptAsync(
                 """
@@ -277,7 +280,8 @@ public sealed class PreviewBridgeIntegrationTests
                 zoomMessageCount,
                 dispatchResult.Equals("false", StringComparison.Ordinal),
                 scrollAfterShift > scrollBeforeShift,
-                sourceRefreshPreservedViewport));
+                sourceRefreshPreservedViewport,
+                zoomNavigationCount));
         }
         catch (Exception exception)
         {

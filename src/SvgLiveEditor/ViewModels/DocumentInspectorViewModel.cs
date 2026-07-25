@@ -59,7 +59,9 @@ public sealed class DocumentInspectorViewModel : ObservableObject
 
     public void Load(
         SvgDocumentIndex documentIndex,
-        SvgElementIdentity? preferredSelection)
+        SvgElementIdentity? preferredSelection,
+        InspectorSelectionOrigin selectionOrigin =
+            InspectorSelectionOrigin.InspectorRestore)
     {
         ArgumentNullException.ThrowIfNull(documentIndex);
 
@@ -80,7 +82,7 @@ public sealed class DocumentInspectorViewModel : ObservableObject
         SvgElementNode? selectedNode = preferredSelection is null
             ? documentIndex.Roots.FirstOrDefault()
             : documentIndex.FindBestMatch(preferredSelection);
-        SelectNode(selectedNode);
+        SelectNode(selectedNode, selectionOrigin);
         OnPropertyChanged(nameof(DocumentIndex));
     }
 
@@ -106,15 +108,25 @@ public sealed class DocumentInspectorViewModel : ObservableObject
         return _elementsByPath.GetValueOrDefault(node.StructuralPath);
     }
 
-    public void SelectNode(SvgElementNode? node)
+    public void SelectNode(
+        SvgElementNode? node,
+        InspectorSelectionOrigin origin =
+            InspectorSelectionOrigin.SourceCaretSync)
     {
         SvgElementViewModel? viewModel = node is null
             ? null
             : FindViewModel(node);
-        SelectElement(viewModel);
+        SelectElementCore(viewModel, origin);
     }
 
-    public void SelectElement(SvgElementViewModel? element)
+    public void AcceptTreeSelection(SvgElementViewModel? element)
+    {
+        SelectElementCore(element, selectionOrigin: null);
+    }
+
+    private void SelectElementCore(
+        SvgElementViewModel? element,
+        InspectorSelectionOrigin? selectionOrigin)
     {
         if (ReferenceEquals(_selectedElement, element))
         {
@@ -123,7 +135,9 @@ public sealed class DocumentInspectorViewModel : ObservableObject
 
         if (_selectedElement is not null)
         {
-            _selectedElement.IsSelected = false;
+            _selectedElement.SetSelected(
+                isSelected: false,
+                selectionOrigin ?? InspectorSelectionOrigin.InspectorRestore);
         }
 
         _selectedElement = element;
@@ -143,7 +157,17 @@ public sealed class DocumentInspectorViewModel : ObservableObject
                 ancestor.IsExpanded = true;
             }
 
-            element.IsSelected = true;
+            if (!element.IsSelected)
+            {
+                if (selectionOrigin is InspectorSelectionOrigin origin)
+                {
+                    element.SetSelected(isSelected: true, origin);
+                }
+                else
+                {
+                    element.IsSelected = true;
+                }
+            }
             HasSelection = true;
             SelectedElementSummary = element.Element.DisplayLabel;
 

@@ -35,9 +35,14 @@ public partial class MainWindow : Window
     private readonly PreviewInteractionMessageParser _previewInteractionMessageParser = new();
     private readonly PreviewViewportCalculator _previewViewportCalculator = new();
     private readonly PreviewNavigationCoordinator _previewNavigationCoordinator = new();
+    private readonly PreviewPageMessageBuilder _previewPageMessageBuilder = new();
+    private readonly PreviewUpdatePolicy _previewUpdatePolicy = new();
     private readonly SvgCanvasSizeReader _svgCanvasSizeReader = new();
     private readonly UserPreferencesService _userPreferencesService = new();
+    private readonly LastDocumentService _lastDocumentService = new();
     private readonly WebView2UserDataFolderProvider _webView2UserDataFolderProvider = new();
+    private readonly SourceRevisionTracker _sourceRevisionTracker = new();
+    private readonly ApplicationInfoService _applicationInfoService = new();
     private readonly DispatcherTimer _fitResizeTimer = new()
     {
         Interval = TimeSpan.FromMilliseconds(150)
@@ -45,6 +50,7 @@ public partial class MainWindow : Window
 
     private bool _isUpdatingEditor;
     private bool _isWebViewReady;
+    private bool _hasVisiblePreview;
     private bool _isPreviewNavigationRequested;
     private string _previewPresentationState = "Loading";
     private UserPreferences _userPreferences = UserPreferences.Default;
@@ -78,9 +84,11 @@ public partial class MainWindow : Window
         _userPreferences = _userPreferencesService.Load();
         _previewZoomState = _userPreferences.PreviewZoom;
         ApplyWordWrap(_userPreferences.WordWrap, persist: false);
+        ReopenLastDocumentMenuItem.IsChecked =
+            _userPreferences.ReopenLastDocumentOnStartup;
         UpdatePreviewStateText(_previewPresentationState);
 
-        LoadIntoEditor(_welcomeSvgProvider.Load(), path: null);
+        LoadStartupDocument();
     }
 
     private async void OnWindowLoaded(object sender, RoutedEventArgs e)
@@ -254,6 +262,7 @@ public partial class MainWindow : Window
         if (e.IsSuccess && wasLatest)
         {
             ShowPreviewReady();
+            TryUpdatePreviewZoomInPlace();
             return;
         }
 
@@ -357,6 +366,7 @@ public partial class MainWindow : Window
 
     private void ShowPreviewLoading(string message)
     {
+        _hasVisiblePreview = false;
         _previewPresentationState = "Loading";
         UpdatePreviewStateText("Loading");
         PreviewStateText.Foreground = Brushes.SlateGray;
@@ -368,8 +378,18 @@ public partial class MainWindow : Window
         PreviewWebView.Visibility = Visibility.Hidden;
     }
 
+    private void ShowPreviewRefreshing()
+    {
+        _previewPresentationState = "Loading";
+        UpdatePreviewStateText("Loading");
+        PreviewStateText.Foreground = Brushes.SlateGray;
+        PreviewMessagePanel.Visibility = Visibility.Collapsed;
+        PreviewWebView.Visibility = Visibility.Visible;
+    }
+
     private void ShowPreviewReady()
     {
+        _hasVisiblePreview = true;
         _previewPresentationState = "Ready";
         UpdatePreviewStateText("Ready");
         PreviewStateText.Foreground = Brushes.DarkGreen;
@@ -380,6 +400,7 @@ public partial class MainWindow : Window
     private void ShowPreviewError(string title, string message, bool showRuntimeLink = false)
     {
         _isWebViewReady = false;
+        _hasVisiblePreview = false;
         _previewPresentationState = "Error";
         UpdatePreviewStateText("Error");
         PreviewStateText.Foreground = Brushes.Firebrick;
@@ -403,6 +424,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        _sourceRevisionTracker.Advance();
         _viewModel.UpdateTextFromEditor(SourceEditor.Text);
         MarkDocumentInspectorSourceChanged();
         QueuePreviewUpdate();
@@ -411,13 +433,15 @@ public partial class MainWindow : Window
     private void QueuePreviewUpdate()
     {
         string sourceSnapshot = SourceEditor.Text;
+        long sourceRevision = _sourceRevisionTracker.Current;
         _ = _previewDebouncer.DebounceAsync(async cancellationToken =>
         {
             SvgDocumentIndexResult result = await Task.Run(
                 () => _documentIndexService.Build(sourceSnapshot),
                 cancellationToken).ConfigureAwait(false);
 
-            await Dispatcher.InvokeAsync(() => ApplyValidationResult(sourceSnapshot, result),
+            await Dispatcher.InvokeAsync(
+                () => ApplyValidationResult(sourceSnapshot, sourceRevision, result),
                 System.Windows.Threading.DispatcherPriority.Background,
                 cancellationToken);
         });
@@ -427,16 +451,19 @@ public partial class MainWindow : Window
     {
         _previewDebouncer.Cancel();
         string sourceSnapshot = SourceEditor.Text;
+        long sourceRevision = _sourceRevisionTracker.Current;
         SvgDocumentIndexResult result = await Task.Run(
             () => _documentIndexService.Build(sourceSnapshot));
-        ApplyValidationResult(sourceSnapshot, result);
+        ApplyValidationResult(sourceSnapshot, sourceRevision, result);
     }
 
     private void ApplyValidationResult(
         string sourceSnapshot,
+        long sourceRevision,
         SvgDocumentIndexResult indexResult)
     {
-        if (!SourceEditor.Text.Equals(sourceSnapshot, StringComparison.Ordinal))
+        if (!_sourceRevisionTracker.IsCurrent(sourceRevision)
+            || !SourceEditor.Text.Equals(sourceSnapshot, StringComparison.Ordinal))
         {
             return;
         }
@@ -446,6 +473,10 @@ public partial class MainWindow : Window
         ApplyDocumentInspectorResult(indexResult);
         if (!result.IsValid)
         {
+            if (!_hasVisiblePreview)
+            {
+                ShowLastValidPreview();
+            }
             return;
         }
 
@@ -471,7 +502,17 @@ public partial class MainWindow : Window
             _previewZoomState.Mode == PreviewZoomMode.Manual
                 ? _previewViewport
                 : PreviewViewportPosition.Center);
-        ShowPreviewLoading("Rendering the current valid SVG...");
+        PreviewUpdateDecision decision = _previewUpdatePolicy.Decide(
+            PreviewUpdateKind.Source,
+            _hasVisiblePreview);
+        if (decision.ShowsFullLoadingState)
+        {
+            ShowPreviewLoading("Rendering the current valid SVG...");
+        }
+        else
+        {
+            ShowPreviewRefreshing();
+        }
         StartPendingPreviewNavigation();
     }
 
@@ -548,6 +589,7 @@ public partial class MainWindow : Window
         try
         {
             SourceEditor.Text = text;
+            _sourceRevisionTracker.Advance();
             SourceEditor.CaretOffset = 0;
             _viewModel.LoadDocument(text, path);
             _viewModel.UpdateCaret(1, 1);
@@ -561,6 +603,32 @@ public partial class MainWindow : Window
         }
 
         QueuePreviewUpdate();
+    }
+
+    private void LoadStartupDocument()
+    {
+        string welcomeSource = _welcomeSvgProvider.Load();
+        _lastValidSvg = welcomeSource;
+        _lastValidCanvasSize = _svgCanvasSizeReader.Read(welcomeSource);
+
+        LastDocumentRestoreResult restore =
+            _lastDocumentService.TryRestore(_userPreferences);
+        if (restore.IsRestored
+            && restore.Source is string source
+            && restore.Path is string path)
+        {
+            LoadIntoEditor(source, path);
+            return;
+        }
+
+        if (restore.ShouldClearPath)
+        {
+            _userPreferences =
+                _lastDocumentService.Forget(_userPreferences);
+            _userPreferencesService.TrySave(_userPreferences);
+        }
+
+        LoadIntoEditor(welcomeSource, path: null);
     }
 
     private void OnCaretPositionChanged(object? sender, EventArgs e)
@@ -611,7 +679,9 @@ public partial class MainWindow : Window
         try
         {
             string text = _fileService.ReadAllText(path);
-            LoadIntoEditor(text, Path.GetFullPath(path));
+            string fullPath = Path.GetFullPath(path);
+            LoadIntoEditor(text, fullPath);
+            RememberLastDocument(fullPath);
             return true;
         }
         catch (DecoderFallbackException)
@@ -666,7 +736,9 @@ public partial class MainWindow : Window
         try
         {
             _fileService.WriteAllText(path, SourceEditor.Text);
-            _viewModel.MarkSaved(Path.GetFullPath(path));
+            string fullPath = Path.GetFullPath(path);
+            _viewModel.MarkSaved(fullPath);
+            RememberLastDocument(fullPath);
             return true;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
@@ -714,6 +786,16 @@ public partial class MainWindow : Window
     }
 
     private void OnExitClick(object sender, RoutedEventArgs e) => Close();
+
+    private void OnAboutClick(object sender, RoutedEventArgs e)
+    {
+        AboutWindow dialog = new(
+            _applicationInfoService.Create(typeof(App).Assembly))
+        {
+            Owner = this
+        };
+        dialog.ShowDialog();
+    }
 
     private void OnUndoClick(object sender, RoutedEventArgs e)
     {
@@ -892,13 +974,54 @@ public partial class MainWindow : Window
 
     private void ApplyPreviewZoomState(PreviewZoomState state)
     {
+        PreviewUpdateDecision decision = _previewUpdatePolicy.Decide(
+            PreviewUpdateKind.Zoom,
+            _hasVisiblePreview);
         _previewZoomState = state;
         _userPreferences = _userPreferences with { PreviewZoom = state };
         _userPreferencesService.TrySave(_userPreferences);
         UpdatePreviewStateText(_previewPresentationState);
-        if (_isWebViewReady)
+        if (_isWebViewReady && !decision.RequiresNavigation)
         {
-            ShowLastValidPreview();
+            TryUpdatePreviewZoomInPlace();
+        }
+    }
+
+    private bool TryUpdatePreviewZoomInPlace()
+    {
+        if (!_isWebViewReady
+            || !_hasVisiblePreview
+            || _isPreviewNavigationRequested
+            || _activePreviewNavigationId is not null
+            || _activePreviewRevision is not null
+            || _activePreviewBridgeToken is not string bridgeToken
+            || _lastValidCanvasSize is not SvgCanvasSize canvasSize
+            || PreviewWebView.CoreWebView2 is not CoreWebView2 core)
+        {
+            return false;
+        }
+
+        double scale = _previewZoomCalculator.ResolveScale(
+            _previewZoomState,
+            GetFitScale(canvasSize));
+        double renderedWidth = canvasSize.Width * scale;
+        double renderedHeight = canvasSize.Height * scale;
+        try
+        {
+            PreviewWebView.ZoomFactor = 1.0;
+            core.PostWebMessageAsJson(
+                _previewPageMessageBuilder.BuildZoomStateMessage(
+                    bridgeToken,
+                    renderedWidth,
+                    renderedHeight,
+                    _previewZoomState.Mode == PreviewZoomMode.Manual
+                        ? _previewViewport
+                        : PreviewViewportPosition.Center));
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
         }
     }
 
@@ -930,13 +1053,32 @@ public partial class MainWindow : Window
         _fitResizeTimer.Stop();
         if (_previewZoomState.Mode == PreviewZoomMode.Fit && _isWebViewReady)
         {
-            ShowLastValidPreview();
+            TryUpdatePreviewZoomInPlace();
         }
     }
 
     private void OnWordWrapClick(object sender, RoutedEventArgs e)
     {
         ApplyWordWrap(WordWrapMenuItem.IsChecked, persist: true);
+    }
+
+    private void OnReopenLastDocumentClick(
+        object sender,
+        RoutedEventArgs e)
+    {
+        _userPreferences = _userPreferences with
+        {
+            ReopenLastDocumentOnStartup =
+                ReopenLastDocumentMenuItem.IsChecked
+        };
+        _userPreferencesService.TrySave(_userPreferences);
+    }
+
+    private void RememberLastDocument(string path)
+    {
+        _userPreferences =
+            _lastDocumentService.Remember(_userPreferences, path);
+        _userPreferencesService.TrySave(_userPreferences);
     }
 
     private void ApplyWordWrap(bool enabled, bool persist)

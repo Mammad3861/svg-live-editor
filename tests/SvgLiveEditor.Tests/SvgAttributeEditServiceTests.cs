@@ -121,6 +121,27 @@ public sealed class SvgAttributeEditServiceTests
     }
 
     [TestMethod]
+    public void CreateEdit_RejectsAnElementSpanFromAnOlderSourceRevision()
+    {
+        const string original =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><text fill=\"red\">سلام</text></svg>";
+        SvgElementNode text = FindElement(original, "text");
+        const string current =
+            "<!-- user typed before validation completed -->\n<svg xmlns=\"http://www.w3.org/2000/svg\"><text fill=\"red\">سلام</text></svg>";
+
+        SvgAttributeEditResult result = _editService.CreateEdit(
+            current,
+            text,
+            "fill",
+            "blue");
+
+        Assert.IsFalse(result.IsSuccess);
+        Assert.IsNull(result.Edit);
+        StringAssert.Contains(result.ErrorMessage, "source changed");
+        StringAssert.Contains(current, "سلام");
+    }
+
+    [TestMethod]
     public void CreateEdit_AllowsInternalPaintReferenceAndRejectsExternalResource()
     {
         const string source = """

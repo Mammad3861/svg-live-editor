@@ -54,6 +54,11 @@ public sealed class PreviewHtmlBuilderTests
         StringAssert.Contains(script.Groups[1].Value, "event.button === 0 && spaceHeld");
         StringAssert.Contains(script.Groups[1].Value, "type: 'viewport'");
         StringAssert.Contains(script.Groups[1].Value, "token: bridgeToken");
+        StringAssert.Contains(script.Groups[1].Value, "message.type !== 'zoomState'");
+        StringAssert.Contains(script.Groups[1].Value, "Object.keys(message).length !== 6");
+        StringAssert.Contains(script.Groups[1].Value, "message.token !== bridgeToken");
+        StringAssert.Contains(script.Groups[1].Value, "message.renderedWidth > 10000000");
+        StringAssert.Contains(script.Groups[1].Value, "message.centerX > 1");
         StringAssert.Contains(script.Groups[1].Value, "document.body.dataset.hostScriptReady = 'true'");
         Assert.IsFalse(script.Groups[1].Value.Contains(
             "nativeZoomFallback",
@@ -124,6 +129,9 @@ public sealed class PreviewHtmlBuilderTests
         StringAssert.Contains(script, "viewport.addEventListener('scroll', scheduleViewportState)");
         StringAssert.Contains(script, "image.addEventListener('load', initializeViewport");
         StringAssert.Contains(script, "requestAnimationFrame(() => requestAnimationFrame(applyInitialViewport))");
+        StringAssert.Contains(script, "image.style.width = `${message.renderedWidth}px`");
+        StringAssert.Contains(script, "stage.style.width = `${message.renderedWidth + 48}px`");
+        StringAssert.Contains(script, "restoreViewportCenter(message.centerX, message.centerY)");
     }
 
     [TestMethod]
