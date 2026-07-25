@@ -15,6 +15,10 @@ SvgLiveEditor treats source files as hostile input and uses several independent 
 
 These rules are conservative. Unsupported content produces a visible validation error and does not replace the last valid preview.
 
+## Document inspector boundary
+
+The element tree is built only after `SvgValidationService` accepts the current source. The index stores source offsets and hierarchy; it does not expose a browser DOM and does not add IDs or metadata. Supported property changes replace one existing attribute value or insert one missing attribute in the selected start tag, then pass through the same validator and preview pipeline. The application never serializes the full XML document for an inspector edit, so unrelated whitespace, comments, attribute order, and UTF-8 text remain untouched.
+
 ## Rendering boundary
 
 Validated source is encoded as UTF-8 and then Base64. A trusted, fixed HTML host loads it through an `<img src="data:image/svg+xml;base64,...">`; raw source is never concatenated into markup or an iframe `srcdoc`. Image-mode SVG does not provide an interactive document scripting surface.

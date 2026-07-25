@@ -7,7 +7,7 @@
         Icon="Assets/SvgLiveEditor.ico"
         Width="1280"
         Height="800"
-        MinWidth="900"
+        MinWidth="1020"
         MinHeight="560"
         AllowDrop="True"
         Background="#F8FAFC"
@@ -16,6 +16,10 @@
         PreviewKeyDown="OnWindowPreviewKeyDown"
         PreviewDragOver="OnWindowPreviewDragOver"
         Drop="OnWindowDrop">
+  <Window.Resources>
+    <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+  </Window.Resources>
+
   <DockPanel LastChildFill="True">
     <Menu DockPanel.Dock="Top" Background="White">
       <MenuItem Header="_File">
@@ -100,12 +104,198 @@
 
     <Grid Margin="10">
       <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="270" MinWidth="220" MaxWidth="460" />
+        <ColumnDefinition Width="7" />
         <ColumnDefinition Width="*" MinWidth="320" />
         <ColumnDefinition Width="7" />
         <ColumnDefinition Width="*" MinWidth="320" />
       </Grid.ColumnDefinitions>
 
-      <Border Grid.Column="0" Background="White" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="6">
+      <Border Grid.Column="0"
+              Background="White"
+              BorderBrush="#CBD5E1"
+              BorderThickness="1"
+              CornerRadius="6"
+              AutomationProperties.Name="Document Inspector">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="2*" MinHeight="150" />
+            <RowDefinition Height="6" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="3*" MinHeight="180" />
+          </Grid.RowDefinitions>
+
+          <Border Grid.Row="0"
+                  Padding="12,8"
+                  Background="#F1F5F9"
+                  BorderBrush="#CBD5E1"
+                  BorderThickness="0,0,0,1">
+            <DockPanel>
+              <TextBlock Text="Document Inspector"
+                         FontSize="15"
+                         FontWeight="SemiBold"
+                         Foreground="#0F172A" />
+              <TextBlock Text="{Binding Inspector.StateMessage}"
+                         Margin="8,0,0,0"
+                         HorizontalAlignment="Right"
+                         Foreground="#64748B"
+                         TextTrimming="CharacterEllipsis"
+                         ToolTip="{Binding Inspector.StateMessage}" />
+            </DockPanel>
+          </Border>
+
+          <Grid Grid.Row="1">
+            <TreeView x:Name="InspectorTree"
+                      ItemsSource="{Binding Inspector.Roots}"
+                      SelectedItemChanged="OnInspectorTreeSelectionChanged"
+                      BorderThickness="0"
+                      Padding="4"
+                      AutomationProperties.Name="SVG element tree">
+              <TreeView.ItemContainerStyle>
+                <Style TargetType="TreeViewItem">
+                  <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                  <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}" />
+                  <Setter Property="Padding" Value="2" />
+                </Style>
+              </TreeView.ItemContainerStyle>
+              <TreeView.ItemTemplate>
+                <HierarchicalDataTemplate ItemsSource="{Binding Children}">
+                  <TextBlock Text="{Binding Label}" Foreground="#0F172A" />
+                </HierarchicalDataTemplate>
+              </TreeView.ItemTemplate>
+            </TreeView>
+
+            <Border Background="White" Padding="18">
+              <Border.Style>
+                <Style TargetType="Border">
+                  <Setter Property="Visibility" Value="Collapsed" />
+                  <Style.Triggers>
+                    <DataTrigger Binding="{Binding Inspector.HasIndex}" Value="False">
+                      <Setter Property="Visibility" Value="Visible" />
+                    </DataTrigger>
+                  </Style.Triggers>
+                </Style>
+              </Border.Style>
+              <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                <TextBlock Text="{Binding Inspector.StateTitle}"
+                           FontWeight="SemiBold"
+                           TextAlignment="Center"
+                           Foreground="#334155" />
+                <TextBlock Text="{Binding Inspector.StateMessage}"
+                           Margin="0,6,0,0"
+                           TextWrapping="Wrap"
+                           TextAlignment="Center"
+                           Foreground="#64748B" />
+              </StackPanel>
+            </Border>
+          </Grid>
+
+          <GridSplitter Grid.Row="2"
+                        Height="6"
+                        HorizontalAlignment="Stretch"
+                        VerticalAlignment="Stretch"
+                        Background="#CBD5E1"
+                        ShowsPreview="True"
+                        AutomationProperties.Name="Resize inspector sections" />
+
+          <Border Grid.Row="3"
+                  Padding="12,8"
+                  Background="#F8FAFC"
+                  BorderBrush="#CBD5E1"
+                  BorderThickness="0,1,0,1">
+            <DockPanel>
+              <TextBlock Text="Properties"
+                         FontWeight="SemiBold"
+                         Foreground="#0F172A" />
+              <TextBlock Text="{Binding Inspector.SelectedElementSummary}"
+                         Margin="8,0,0,0"
+                         HorizontalAlignment="Right"
+                         Foreground="#64748B"
+                         TextTrimming="CharacterEllipsis"
+                         ToolTip="{Binding Inspector.SelectedElementSummary}" />
+            </DockPanel>
+          </Border>
+
+          <Grid Grid.Row="4">
+            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled"
+                          Padding="8">
+              <ItemsControl ItemsSource="{Binding Inspector.Properties}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border Padding="3,6" BorderBrush="#E2E8F0" BorderThickness="0,0,0,1">
+                      <Grid>
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="92" />
+                          <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                          <RowDefinition Height="Auto" />
+                          <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0"
+                                   Grid.Column="0"
+                                   Margin="0,5,8,0"
+                                   Text="{Binding Name}"
+                                   Foreground="#334155"
+                                   ToolTip="{Binding PresenceText}" />
+                        <TextBox Grid.Row="0"
+                                 Grid.Column="1"
+                                 MinHeight="28"
+                                 Padding="5,3"
+                                 Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 IsReadOnly="{Binding IsReadOnly}"
+                                 Tag="{Binding}"
+                                 ToolTip="{Binding PresenceText}"
+                                 LostKeyboardFocus="OnInspectorPropertyLostKeyboardFocus"
+                                 KeyDown="OnInspectorPropertyKeyDown"
+                                 AutomationProperties.Name="{Binding Name}" />
+                        <TextBlock Grid.Row="1"
+                                   Grid.Column="1"
+                                   Margin="0,3,0,0"
+                                   Text="{Binding ErrorMessage}"
+                                   TextWrapping="Wrap"
+                                   Foreground="#B91C1C" />
+                      </Grid>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+
+            <Border Background="White" Padding="18">
+              <Border.Style>
+                <Style TargetType="Border">
+                  <Setter Property="Visibility" Value="Collapsed" />
+                  <Style.Triggers>
+                    <DataTrigger Binding="{Binding Inspector.HasSelection}" Value="False">
+                      <Setter Property="Visibility" Value="Visible" />
+                    </DataTrigger>
+                  </Style.Triggers>
+                </Style>
+              </Border.Style>
+              <TextBlock Text="Select an SVG element to inspect its supported attributes."
+                         HorizontalAlignment="Center"
+                         VerticalAlignment="Center"
+                         TextWrapping="Wrap"
+                         TextAlignment="Center"
+                         Foreground="#64748B" />
+            </Border>
+          </Grid>
+        </Grid>
+      </Border>
+
+      <GridSplitter Grid.Column="1"
+                    Width="7"
+                    HorizontalAlignment="Stretch"
+                    VerticalAlignment="Stretch"
+                    Background="#CBD5E1"
+                    ShowsPreview="True"
+                    AutomationProperties.Name="Resize Document Inspector" />
+
+      <Border Grid.Column="2" Background="White" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="6">
         <Grid>
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -149,14 +339,15 @@
         </Grid>
       </Border>
 
-      <GridSplitter Grid.Column="1"
+      <GridSplitter Grid.Column="3"
                     Width="7"
                     HorizontalAlignment="Stretch"
                     VerticalAlignment="Stretch"
                     Background="#CBD5E1"
-                    ShowsPreview="True" />
+                    ShowsPreview="True"
+                    AutomationProperties.Name="Resize Live Preview" />
 
-      <Border Grid.Column="2" Background="White" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="6">
+      <Border Grid.Column="4" Background="White" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="6">
         <Grid>
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />

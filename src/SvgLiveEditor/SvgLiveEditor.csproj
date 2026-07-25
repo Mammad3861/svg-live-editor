@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>SvgLiveEditor</AssemblyName>
     <RootNamespace>SvgLiveEditor</RootNamespace>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\SvgLiveEditor.ico</ApplicationIcon>
   </PropertyGroup>

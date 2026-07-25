@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing stable release tag to package (for example, v0.1.0)
+        description: Existing stable release tag to package (for example, v0.2.0)
         required: true
         type: string
 
@@ -47,7 +47,7 @@ jobs:
           }
 
           if ($tag -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
-            throw "Release tag '$tag' must be a stable semantic version such as v0.1.0."
+            throw "Release tag '$tag' must be a stable semantic version such as v0.2.0."
           }
 
           git show-ref --verify --quiet "refs/tags/$tag"

@@ -1,6 +1,6 @@
 # SvgLiveEditor
 
-SvgLiveEditor is an open-source Windows desktop application for editing SVG/XML source and viewing the result immediately. The editor keeps source on the left, renders a security-restricted preview on the right, and preserves the user's UTF-8 text exactly when saving.
+SvgLiveEditor is an open-source Windows desktop application for editing SVG/XML source and viewing the result immediately. Version 0.2 provides a document inspector on the left, source in the center, and a security-restricted preview on the right while preserving the user's UTF-8 text exactly when saving.
 
 Repository: [github.com/Mammad3861/svg-live-editor](https://github.com/Mammad3861/svg-live-editor)
 
@@ -10,6 +10,8 @@ Repository: [github.com/Mammad3861/svg-live-editor](https://github.com/Mammad386
 
 ## Features
 
+- Validated hierarchical SVG element tree with source selection and debounced caret synchronization.
+- Properties inspector for common safe attributes and shape geometry. Changes are minimal source edits, participate in Undo/Redo, and never reserialize the full XML document; path `d` is read-only in v0.2.
 - AvalonEdit source editor with XML highlighting, line numbers, current-line highlighting, undo/redo, find/replace, and non-destructive word wrap. Toggle wrapping with `Alt+Z` or `Ctrl+Alt+W`.
 - Automatic live preview after a 300 ms debounce, plus manual refresh.
 - Preview zoom in/out, reset, and fit-to-area controls on a fixed checkerboard transparency canvas. The selected zoom mode is restored at the next launch; `Ctrl`+mouse wheel zooms around the pointer, normal wheel scrolling remains vertical, `Shift`+wheel scrolls horizontally, and a scrollable preview can be panned with middle-button drag or Space+left-button drag.
@@ -28,11 +30,13 @@ Opened files are untrusted. SvgLiveEditor prohibits DTDs, entity declarations, a
 
 Validated SVG is UTF-8/Base64 encoded into an HTML `<img>` data URL. Raw SVG is never inserted into host markup. The host uses a restrictive Content Security Policy. One fixed, app-owned interaction script is authorized by its exact CSP SHA-256 hash for wheel and pan handling; it can send only a strictly validated, per-navigation-token-bound zoom request. Native browser/document zoom stays pinned to 100%, so only the SVG image dimensions change. User SVG scripts remain non-executable, and native host objects, arbitrary messages, permissions, downloads, pop-ups, external navigation, external requests, developer tools, and context menus are disabled or blocked. Invalid edits keep the last valid preview visible.
 
+The document inspector is built only from source accepted by the same secure validator. Selecting a tree node reveals its source start tag. Supported property edits update the AvalonEdit document—the source remains the single source of truth—and then use the existing validation and preview pipeline. No SVG DOM is exposed to WebView2 or JavaScript.
+
 This conservative MVP intentionally supports only a restricted safe SVG subset and does not render every valid SVG feature. In particular, external images/fonts/styles, embedded data resources, hyperlinks, `<style>`, `foreignObject`, scripts, and event handlers are rejected. Because exporter output varies, SvgLiveEditor is not guaranteed to open every SVG produced by tools such as Adobe Illustrator or Inkscape. The preview is not a general-purpose web browser or a replacement for reviewing SVG before distribution. See [docs/security-model.md](docs/security-model.md).
 
 ## Current scope
 
-SvgLiveEditor does not yet provide PNG export, PDF export, an installer, or automatic updates.
+Version 0.2 provides tree/property-based source editing, not direct canvas manipulation. It does not support selecting, dragging, resizing, creating, deleting, or reordering elements in the preview, and it does not provide freehand/path editing, PNG/PDF export, an installer, or automatic updates.
 
 ## Requirements
 
@@ -70,14 +74,14 @@ dotnet publish src/SvgLiveEditor/SvgLiveEditor.csproj --configuration Release --
 Output is written to `dist/win-x64`. To publish, audit, and create versioned ZIP and SHA-256 files locally:
 
 ```powershell
-./scripts/Publish-WinX64.ps1 -Version 0.1.0
+./scripts/Publish-WinX64.ps1 -Version 0.2.0
 ```
 
-This creates `releases/SvgLiveEditor-v0.1.0-win-x64.zip` and `releases/SvgLiveEditor-v0.1.0-win-x64.sha256`. Publishing is folder-based and intentionally not trimmed or forced into a single file, which is safer for WPF, WebView2 native dependencies, and startup reliability. This local command does not create or modify a GitHub Release.
+This creates `releases/SvgLiveEditor-v0.2.0-win-x64.zip` and `releases/SvgLiveEditor-v0.2.0-win-x64.sha256`. Publishing is folder-based and intentionally not trimmed or forced into a single file, which is safer for WPF, WebView2 native dependencies, and startup reliability. This local command does not create or modify a GitHub Release.
 
 ## Automated GitHub Releases
 
-The [release workflow](.github/workflows/release.yml) runs automatically when a stable semantic-version tag such as `v0.1.0` is pushed. It can also be started manually with an existing tag, which allows binary assets to be added to an existing Release. The workflow validates the tag, checks out its exact commit, confirms the project version, restores and builds in Release mode, runs tests excluding `TestCategory=DesktopIntegration`, and uses the same publish script to build and audit the package.
+The [release workflow](.github/workflows/release.yml) runs automatically when a stable semantic-version tag such as `v0.2.0` is pushed. It can also be started manually with an existing tag, which allows binary assets to be added to an existing Release. The workflow validates the tag, checks out its exact commit, confirms the project version, restores and builds in Release mode, runs tests excluding `TestCategory=DesktopIntegration`, and uses the same publish script to build and audit the package.
 
 Both the ZIP and its `.sha256` file are retained as a GitHub Actions artifact and attached to the matching GitHub Release with safe replacement of identically named assets. An existing published Release remains published and only its matching binary assets are replaced. If no matching Release exists, the workflow creates a draft Release and does not publish it automatically.
 
@@ -100,7 +104,7 @@ Extract the **entire** ZIP into a new folder before running `SvgLiveEditor.exe`.
 ## Repository structure
 
 ```text
-src/SvgLiveEditor/          WPF application
+src/SvgLiveEditor/          WPF application, inspector, and secure editing services
 tests/SvgLiveEditor.Tests/ Automated logic and security tests
 samples/welcome.svg        Original safe starter document
 assets/                    Original editable artwork

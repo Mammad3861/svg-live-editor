@@ -23,7 +23,7 @@ public partial class MainWindow : Window
     private static readonly string[] SupportedExtensions = [".svg", ".txt"];
 
     private readonly MainViewModel _viewModel = new();
-    private readonly SvgValidationService _validationService = new();
+    private readonly SvgDocumentIndexService _documentIndexService = new();
     private readonly PreviewHtmlBuilder _previewHtmlBuilder = new();
     private readonly PreviewNavigationPolicy _previewNavigationPolicy = new();
     private readonly Utf8FileService _fileService = new();
@@ -70,6 +70,7 @@ public partial class MainWindow : Window
         SourceEditor.TextArea.Caret.PositionChanged += OnCaretPositionChanged;
         PreviewWebView.CoreWebView2InitializationCompleted += OnCoreWebView2InitializationCompleted;
         _fitResizeTimer.Tick += OnFitResizeTimerTick;
+        InitializeDocumentInspector();
 
         _userPreferences = _userPreferencesService.Load();
         _previewZoomState = _userPreferences.PreviewZoom;
@@ -358,6 +359,7 @@ public partial class MainWindow : Window
         }
 
         _viewModel.UpdateTextFromEditor(SourceEditor.Text);
+        MarkDocumentInspectorSourceChanged();
         QueuePreviewUpdate();
     }
 
@@ -366,8 +368,8 @@ public partial class MainWindow : Window
         string sourceSnapshot = SourceEditor.Text;
         _ = _previewDebouncer.DebounceAsync(async cancellationToken =>
         {
-            SvgValidationResult result = await Task.Run(
-                () => _validationService.Validate(sourceSnapshot),
+            SvgDocumentIndexResult result = await Task.Run(
+                () => _documentIndexService.Build(sourceSnapshot),
                 cancellationToken).ConfigureAwait(false);
 
             await Dispatcher.InvokeAsync(() => ApplyValidationResult(sourceSnapshot, result),
@@ -380,18 +382,23 @@ public partial class MainWindow : Window
     {
         _previewDebouncer.Cancel();
         string sourceSnapshot = SourceEditor.Text;
-        SvgValidationResult result = await Task.Run(() => _validationService.Validate(sourceSnapshot));
+        SvgDocumentIndexResult result = await Task.Run(
+            () => _documentIndexService.Build(sourceSnapshot));
         ApplyValidationResult(sourceSnapshot, result);
     }
 
-    private void ApplyValidationResult(string sourceSnapshot, SvgValidationResult result)
+    private void ApplyValidationResult(
+        string sourceSnapshot,
+        SvgDocumentIndexResult indexResult)
     {
         if (!SourceEditor.Text.Equals(sourceSnapshot, StringComparison.Ordinal))
         {
             return;
         }
 
+        SvgValidationResult result = indexResult.Validation;
         _viewModel.ApplyValidation(result);
+        ApplyDocumentInspectorResult(indexResult);
         if (!result.IsValid)
         {
             return;
@@ -472,6 +479,9 @@ public partial class MainWindow : Window
             SourceEditor.CaretOffset = 0;
             _viewModel.LoadDocument(text, path);
             _viewModel.UpdateCaret(1, 1);
+            MarkDocumentInspectorSourceChanged();
+            _viewModel.Inspector.ShowUnavailable(
+                "Waiting for secure SVG validation.");
         }
         finally
         {
@@ -484,6 +494,7 @@ public partial class MainWindow : Window
     private void OnCaretPositionChanged(object? sender, EventArgs e)
     {
         _viewModel.UpdateCaret(SourceEditor.TextArea.Caret.Line, SourceEditor.TextArea.Caret.Column);
+        QueueInspectorCaretSynchronization();
     }
 
     private void OnNewClick(object sender, RoutedEventArgs e)
@@ -995,6 +1006,7 @@ public partial class MainWindow : Window
         SourceEditor.Document.TextChanged -= OnEditorDocumentTextChanged;
         SourceEditor.TextArea.Caret.PositionChanged -= OnCaretPositionChanged;
         PreviewWebView.CoreWebView2InitializationCompleted -= OnCoreWebView2InitializationCompleted;
+        DisposeDocumentInspector();
         _fitResizeTimer.Stop();
         _fitResizeTimer.Tick -= OnFitResizeTimerTick;
         DetachCoreWebViewEvents();
