@@ -1,10 +1,12 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Navigation;
@@ -38,6 +40,10 @@ public partial class MainWindow : Window
     private readonly PreviewPageMessageBuilder _previewPageMessageBuilder = new();
     private readonly PreviewUpdatePolicy _previewUpdatePolicy = new();
     private readonly SvgCanvasSizeReader _svgCanvasSizeReader = new();
+    private readonly PreviewPngCopyPolicy _previewPngCopyPolicy = new();
+    private readonly PreviewPngMessageParser _previewPngMessageParser = new();
+    private readonly ClipboardCopyService _clipboardCopyService =
+        new(new WindowsClipboardWriter());
     private readonly UserPreferencesService _userPreferencesService = new();
     private readonly LastDocumentService _lastDocumentService = new();
     private readonly WebView2UserDataFolderProvider _webView2UserDataFolderProvider = new();
@@ -52,6 +58,9 @@ public partial class MainWindow : Window
     private bool _isWebViewReady;
     private bool _hasVisiblePreview;
     private bool _isPreviewNavigationRequested;
+    private bool _isPanModeEnabled;
+    private PreviewPngSourceState _previewPngSourceState =
+        PreviewPngSourceState.PendingValidation;
     private string _previewPresentationState = "Loading";
     private UserPreferences _userPreferences = UserPreferences.Default;
     private PreviewZoomState _previewZoomState = PreviewZoomState.Fit;
@@ -63,6 +72,7 @@ public partial class MainWindow : Window
     private string? _activePreviewBridgeToken;
     private CoreWebView2? _configuredCoreWebView;
     private Task<bool>? _webViewInitializationTask;
+    private PendingPreviewPngCopy? _pendingPreviewPngCopy;
 
     public MainWindow()
     {
@@ -233,6 +243,8 @@ public partial class MainWindow : Window
 
         if (_isPreviewNavigationRequested)
         {
+            CancelPendingPreviewPngCopy(
+                "Preview changed before the PNG copy completed. Try again.");
             _isPreviewNavigationRequested = false;
             _activePreviewNavigationId = e.NavigationId;
         }
@@ -263,9 +275,11 @@ public partial class MainWindow : Window
         {
             ShowPreviewReady();
             TryUpdatePreviewZoomInPlace();
+            TryUpdatePreviewPanModeInPlace();
             return;
         }
 
+        CancelPendingPreviewPngCopy();
         _activePreviewBridgeToken = null;
         ShowPreviewError(
             "Preview could not be rendered",
@@ -279,13 +293,14 @@ public partial class MainWindow : Window
         _activePreviewNavigationId = null;
         _activePreviewRevision = null;
         _activePreviewBridgeToken = null;
+        CancelPendingPreviewPngCopy();
         _previewNavigationCoordinator.Reset();
         ShowPreviewError(
             "Preview process failed",
             $"WebView2 reported {e.ProcessFailedKind} ({e.Reason}, exit code {e.ExitCode}). Click Refresh Preview to retry.");
     }
 
-    private void OnPreviewWebMessageReceived(
+    private async void OnPreviewWebMessageReceived(
         object? sender,
         CoreWebView2WebMessageReceivedEventArgs e)
     {
@@ -296,8 +311,72 @@ public partial class MainWindow : Window
             return;
         }
 
+        string messageJson = e.WebMessageAsJson;
+        if (_pendingPreviewPngCopy is PendingPreviewPngCopy pending)
+        {
+            if (_previewPngMessageParser.IsMatchingError(
+                    messageJson,
+                    pending))
+            {
+                _pendingPreviewPngCopy = null;
+                _viewModel.SetCanCopyPreviewAsPng(_hasVisiblePreview);
+                _viewModel.SetOperationStatus(
+                    "The preview could not be converted to PNG.");
+                return;
+            }
+
+            PreviewPngPayload? pngPayload = null;
+            bool isPng = await Task.Run(() =>
+                _previewPngMessageParser.TryParse(
+                    messageJson,
+                    pending,
+                    out pngPayload));
+            if (isPng && pngPayload is not null)
+            {
+                if (!ReferenceEquals(_pendingPreviewPngCopy, pending))
+                {
+                    return;
+                }
+
+                _pendingPreviewPngCopy = null;
+                ClipboardWriteResult result =
+                    await _clipboardCopyService.CopyPngAsync(pngPayload);
+                _viewModel.SetCanCopyPreviewAsPng(_hasVisiblePreview);
+                if (result.Succeeded)
+                {
+                    string dimensions =
+                        $"{pngPayload.Size.Width} \u00D7 {pngPayload.Size.Height}";
+                    _viewModel.SetOperationStatus(
+                        pending.Plan.SourceState switch
+                        {
+                            PreviewPngSourceState.CurrentInvalid =>
+                                $"Copied the last valid preview; current source is invalid \u00B7 {dimensions}",
+                            PreviewPngSourceState.PendingValidation =>
+                                $"Copied the last validated preview; current source is still validating \u00B7 {dimensions}",
+                            _ =>
+                                $"Preview copied as PNG \u00B7 {dimensions}"
+                        });
+                }
+                else
+                {
+                    _viewModel.SetOperationStatus(
+                        $"Could not copy the preview: {result.ErrorMessage}");
+                }
+                return;
+            }
+
+            if (messageJson.Length > 16_384)
+            {
+                return;
+            }
+        }
+        else if (messageJson.Length > 16_384)
+        {
+            return;
+        }
+
         if (_previewInteractionMessageParser.TryParseViewportPosition(
-                e.WebMessageAsJson,
+                messageJson,
                 bridgeToken,
                 out PreviewViewportPosition viewport))
         {
@@ -308,9 +387,21 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_previewInteractionMessageParser.TryParsePanCommand(
+                messageJson,
+                bridgeToken,
+                out PreviewPanCommand panCommand))
+        {
+            SetPanMode(
+                panCommand == PreviewPanCommand.Toggle
+                    ? !_isPanModeEnabled
+                    : false);
+            return;
+        }
+
         if (_lastValidCanvasSize is not SvgCanvasSize canvasSize
             || !_previewInteractionMessageParser.TryParseZoomRequest(
-                e.WebMessageAsJson,
+                messageJson,
                 bridgeToken,
                 out PreviewZoomRequest request))
         {
@@ -367,6 +458,7 @@ public partial class MainWindow : Window
     private void ShowPreviewLoading(string message)
     {
         _hasVisiblePreview = false;
+        _viewModel.SetCanCopyPreviewAsPng(false);
         _previewPresentationState = "Loading";
         UpdatePreviewStateText("Loading");
         PreviewStateText.Foreground = Brushes.SlateGray;
@@ -380,6 +472,7 @@ public partial class MainWindow : Window
 
     private void ShowPreviewRefreshing()
     {
+        _viewModel.SetCanCopyPreviewAsPng(false);
         _previewPresentationState = "Loading";
         UpdatePreviewStateText("Loading");
         PreviewStateText.Foreground = Brushes.SlateGray;
@@ -390,6 +483,8 @@ public partial class MainWindow : Window
     private void ShowPreviewReady()
     {
         _hasVisiblePreview = true;
+        _viewModel.SetCanCopyPreviewAsPng(
+            _lastValidCanvasSize is not null);
         _previewPresentationState = "Ready";
         UpdatePreviewStateText("Ready");
         PreviewStateText.Foreground = Brushes.DarkGreen;
@@ -401,6 +496,8 @@ public partial class MainWindow : Window
     {
         _isWebViewReady = false;
         _hasVisiblePreview = false;
+        CancelPendingPreviewPngCopy();
+        _viewModel.SetCanCopyPreviewAsPng(false);
         _previewPresentationState = "Error";
         UpdatePreviewStateText("Error");
         PreviewStateText.Foreground = Brushes.Firebrick;
@@ -417,6 +514,96 @@ public partial class MainWindow : Window
         PreviewStateText.Text = $"{_previewZoomState.DisplayText} \u00B7 {state} \u00B7 Secure image mode";
     }
 
+    private async void OnCopyEntireSourceClick(
+        object sender,
+        RoutedEventArgs e)
+    {
+        ClipboardWriteResult result =
+            await _clipboardCopyService.CopyTextAsync(SourceEditor.Text);
+        _viewModel.SetOperationStatus(
+            result.Succeeded
+                ? "Entire SVG source copied"
+                : $"Could not copy the SVG source: {result.ErrorMessage}");
+    }
+
+    private void OnCopyPreviewAsPngClick(
+        object sender,
+        RoutedEventArgs e)
+    {
+        if (_pendingPreviewPngCopy is not null)
+        {
+            _viewModel.SetOperationStatus(
+                "A preview copy is already in progress.");
+            return;
+        }
+
+        if (!_previewPngCopyPolicy.TryCreatePlan(
+                _hasVisiblePreview,
+                _previewPngSourceState,
+                _lastValidCanvasSize,
+                out PreviewPngCopyPlan? plan)
+            || plan is null
+            || !_isWebViewReady
+            || _activePreviewBridgeToken is not string bridgeToken
+            || PreviewWebView.CoreWebView2 is not CoreWebView2 core)
+        {
+            _viewModel.SetOperationStatus(
+                "No valid preview is available to copy.");
+            return;
+        }
+
+        string requestId =
+            Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
+        PendingPreviewPngCopy pending =
+            new(bridgeToken, requestId, plan);
+        try
+        {
+            _pendingPreviewPngCopy = pending;
+            _viewModel.SetCanCopyPreviewAsPng(false);
+            _viewModel.SetOperationStatus("Preparing PNG for the clipboard...");
+            core.PostWebMessageAsJson(
+                _previewPageMessageBuilder.BuildPngRequestMessage(
+                    bridgeToken,
+                    requestId,
+                    plan.Size));
+            _ = ExpirePreviewPngCopyAsync(pending);
+        }
+        catch (Exception exception)
+            when (exception is InvalidOperationException or COMException)
+        {
+            _pendingPreviewPngCopy = null;
+            _viewModel.SetCanCopyPreviewAsPng(_hasVisiblePreview);
+            _viewModel.SetOperationStatus(
+                $"Could not request the PNG: {exception.Message}");
+        }
+    }
+
+    private async Task ExpirePreviewPngCopyAsync(
+        PendingPreviewPngCopy pending)
+    {
+        await Task.Delay(TimeSpan.FromSeconds(10));
+        if (ReferenceEquals(_pendingPreviewPngCopy, pending))
+        {
+            CancelPendingPreviewPngCopy(
+                "The PNG response was not received or failed validation. Try again.");
+        }
+    }
+
+    private void CancelPendingPreviewPngCopy(string? status = null)
+    {
+        if (_pendingPreviewPngCopy is null)
+        {
+            return;
+        }
+
+        _pendingPreviewPngCopy = null;
+        _viewModel.SetCanCopyPreviewAsPng(_hasVisiblePreview);
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            _viewModel.SetOperationStatus(status);
+        }
+    }
+
     private void OnEditorDocumentTextChanged(object? sender, EventArgs e)
     {
         if (_isUpdatingEditor)
@@ -425,6 +612,8 @@ public partial class MainWindow : Window
         }
 
         _sourceRevisionTracker.Advance();
+        _previewPngSourceState =
+            PreviewPngSourceState.PendingValidation;
         _viewModel.UpdateTextFromEditor(SourceEditor.Text);
         MarkDocumentInspectorSourceChanged();
         QueuePreviewUpdate();
@@ -469,6 +658,9 @@ public partial class MainWindow : Window
         }
 
         SvgValidationResult result = indexResult.Validation;
+        _previewPngSourceState = result.IsValid
+            ? PreviewPngSourceState.CurrentValid
+            : PreviewPngSourceState.CurrentInvalid;
         _viewModel.ApplyValidation(result);
         ApplyDocumentInspectorResult(indexResult);
         if (!result.IsValid)
@@ -584,6 +776,9 @@ public partial class MainWindow : Window
     private void LoadIntoEditor(string text, string? path)
     {
         _previewDebouncer.Cancel();
+        SetPanMode(enabled: false, announce: false);
+        _previewPngSourceState =
+            PreviewPngSourceState.PendingValidation;
         _previewViewport = PreviewViewportPosition.Center;
         _isUpdatingEditor = true;
         try
@@ -946,6 +1141,63 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnPanModeClick(object sender, RoutedEventArgs e)
+    {
+        SetPanMode(PanModeButton.IsChecked == true);
+    }
+
+    private void SetPanMode(bool enabled, bool announce = true)
+    {
+        _isPanModeEnabled = enabled;
+        PanModeButton.IsChecked = enabled;
+        PanModeButton.ToolTip = enabled
+            ? "Pan mode active; left drag an overflowing preview (Escape exits)"
+            : "Pan overflowing preview with left drag (H toggles, Escape exits)";
+        TryUpdatePreviewPanModeInPlace();
+        if (announce)
+        {
+            _viewModel.SetOperationStatus(
+                enabled ? "Pan mode enabled" : "Pan mode disabled");
+        }
+    }
+
+    private bool TryUpdatePreviewPanModeInPlace()
+    {
+        if (!_isWebViewReady
+            || _activePreviewBridgeToken is not string bridgeToken
+            || PreviewWebView.CoreWebView2 is not CoreWebView2 core)
+        {
+            return false;
+        }
+
+        try
+        {
+            core.PostWebMessageAsJson(
+                _previewPageMessageBuilder.BuildPanStateMessage(
+                    bridgeToken,
+                    _isPanModeEnabled));
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    private void OnWindowDeactivated(object? sender, EventArgs e)
+    {
+        // Re-sending the current state asks the trusted page to terminate any
+        // active pointer capture without changing whether Pan mode is enabled.
+        TryUpdatePreviewPanModeInPlace();
+    }
+
+    private void OnPreviewWebViewLostKeyboardFocus(
+        object sender,
+        KeyboardFocusChangedEventArgs e)
+    {
+        TryUpdatePreviewPanModeInPlace();
+    }
+
     private void OnZoomInClick(object sender, RoutedEventArgs e)
     {
         ApplyPreviewZoomState(_previewZoomCalculator.ZoomIn(
@@ -1108,6 +1360,32 @@ public partial class MainWindow : Window
             ToggleWordWrap();
             e.Handled = true;
         }
+        else if (modifiers == (ModifierKeys.Control | ModifierKeys.Shift)
+            && pressedKey == Key.C)
+        {
+            OnCopyPreviewAsPngClick(sender, new RoutedEventArgs());
+            e.Handled = true;
+        }
+        else if (modifiers == (ModifierKeys.Control | ModifierKeys.Alt)
+            && pressedKey == Key.C)
+        {
+            OnCopyEntireSourceClick(sender, new RoutedEventArgs());
+            e.Handled = true;
+        }
+        else if (modifiers == ModifierKeys.None
+            && pressedKey == Key.H
+            && CanUseHostPanShortcut())
+        {
+            SetPanMode(!_isPanModeEnabled);
+            e.Handled = true;
+        }
+        else if (pressedKey == Key.Escape
+            && _isPanModeEnabled
+            && !PreviewWebView.IsKeyboardFocusWithin)
+        {
+            SetPanMode(enabled: false);
+            e.Handled = true;
+        }
         else if (controlOnly && e.Key == Key.N)
         {
             OnNewClick(sender, new RoutedEventArgs());
@@ -1153,6 +1431,13 @@ public partial class MainWindow : Window
             OnCloseFindClick(sender, new RoutedEventArgs());
             e.Handled = true;
         }
+    }
+
+    private bool CanUseHostPanShortcut()
+    {
+        return !PreviewWebView.IsKeyboardFocusWithin
+            && !SourceEditor.IsKeyboardFocusWithin
+            && Keyboard.FocusedElement is not TextBoxBase;
     }
 
     private void ToggleWordWrap()

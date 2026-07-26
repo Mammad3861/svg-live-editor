@@ -16,6 +16,7 @@ public sealed class PreviewHtmlBuilder
           const bridge = window.chrome && window.chrome.webview;
           const bridgeToken = document.body.dataset.bridgeToken;
           let spaceHeld = false;
+          let panModeEnabled = false;
           let activePointerId = null;
           let activePanButton = null;
           let startX = 0;
@@ -34,6 +35,9 @@ public sealed class PreviewHtmlBuilder
           const refreshCursor = () => {
             viewport.classList.toggle('can-pan', canPan());
             viewport.classList.toggle('space-held', spaceHeld && canPan());
+            viewport.classList.toggle(
+              'pan-mode',
+              panModeEnabled && canPan());
           };
 
           const stopPan = event => {
@@ -111,6 +115,70 @@ public sealed class PreviewHtmlBuilder
             }
           };
 
+          const postPanCommand = command => {
+            if (bridge) {
+              bridge.postMessage({
+                type: 'panCommand',
+                token: bridgeToken,
+                command
+              });
+            }
+          };
+
+          const postPngError = requestId => {
+            if (bridge) {
+              bridge.postMessage({
+                type: 'pngError',
+                token: bridgeToken,
+                requestId
+              });
+            }
+          };
+
+          const renderPng = message => {
+            if (!image.complete || image.naturalWidth <= 0 ||
+                image.naturalHeight <= 0) {
+              postPngError(message.requestId);
+              return;
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = message.width;
+            canvas.height = message.height;
+            const context = canvas.getContext('2d', { alpha: true });
+            if (!context) {
+              postPngError(message.requestId);
+              return;
+            }
+
+            try {
+              context.clearRect(0, 0, message.width, message.height);
+              context.drawImage(image, 0, 0, message.width, message.height);
+              const dataUrl = canvas.toDataURL('image/png');
+              const prefix = 'data:image/png;base64,';
+              if (!dataUrl.startsWith(prefix) ||
+                  dataUrl.length - prefix.length > 53333336) {
+                postPngError(message.requestId);
+                return;
+              }
+
+              bridge.postMessage({
+                type: 'png',
+                token: bridgeToken,
+                requestId: message.requestId,
+                mimeType: 'image/png',
+                width: message.width,
+                height: message.height,
+                payload: dataUrl.slice(prefix.length)
+              });
+            } catch {
+              postPngError(message.requestId);
+            } finally {
+              canvas.width = 0;
+              canvas.height = 0;
+            }
+          };
+
           const restoreViewportCenter = (centerX, centerY) => {
             const safeCenterX = Number.isFinite(centerX)
               ? Math.max(0, Math.min(1, centerX))
@@ -131,32 +199,56 @@ public sealed class PreviewHtmlBuilder
           if (bridge) {
             bridge.addEventListener('message', event => {
               const message = event.data;
-              if (!message ||
-                  typeof message !== 'object' ||
-                  Object.keys(message).length !== 6 ||
-                  message.type !== 'zoomState' ||
-                  message.token !== bridgeToken ||
-                  !Number.isFinite(message.renderedWidth) ||
-                  message.renderedWidth <= 0 ||
-                  message.renderedWidth > 10000000 ||
-                  !Number.isFinite(message.renderedHeight) ||
-                  message.renderedHeight <= 0 ||
-                  message.renderedHeight > 10000000 ||
-                  !Number.isFinite(message.centerX) ||
-                  message.centerX < 0 ||
-                  message.centerX > 1 ||
-                  !Number.isFinite(message.centerY) ||
-                  message.centerY < 0 ||
-                  message.centerY > 1) {
+              if (!message || typeof message !== 'object' ||
+                  message.token !== bridgeToken) {
                 return;
               }
 
-              image.style.width = `${message.renderedWidth}px`;
-              image.style.height = `${message.renderedHeight}px`;
-              stage.style.width = `${message.renderedWidth + 48}px`;
-              stage.style.height = `${message.renderedHeight + 48}px`;
-              requestAnimationFrame(() =>
-                restoreViewportCenter(message.centerX, message.centerY));
+              if (message.type === 'zoomState' &&
+                  Object.keys(message).length === 6 &&
+                  Number.isFinite(message.renderedWidth) &&
+                  message.renderedWidth > 0 &&
+                  message.renderedWidth <= 10000000 &&
+                  Number.isFinite(message.renderedHeight) &&
+                  message.renderedHeight > 0 &&
+                  message.renderedHeight <= 10000000 &&
+                  Number.isFinite(message.centerX) &&
+                  message.centerX >= 0 &&
+                  message.centerX <= 1 &&
+                  Number.isFinite(message.centerY) &&
+                  message.centerY >= 0 &&
+                  message.centerY <= 1) {
+                image.style.width = `${message.renderedWidth}px`;
+                image.style.height = `${message.renderedHeight}px`;
+                stage.style.width = `${message.renderedWidth + 48}px`;
+                stage.style.height = `${message.renderedHeight + 48}px`;
+                requestAnimationFrame(() =>
+                  restoreViewportCenter(message.centerX, message.centerY));
+                return;
+              }
+
+              if (message.type === 'panState' &&
+                  Object.keys(message).length === 3 &&
+                  typeof message.enabled === 'boolean') {
+                panModeEnabled = message.enabled;
+                stopPan();
+                refreshCursor();
+                return;
+              }
+
+              if (message.type === 'copyPng' &&
+                  Object.keys(message).length === 5 &&
+                  typeof message.requestId === 'string' &&
+                  /^[0-9a-fA-F]{32}$/.test(message.requestId) &&
+                  Number.isInteger(message.width) &&
+                  message.width > 0 &&
+                  message.width <= 4096 &&
+                  Number.isInteger(message.height) &&
+                  message.height > 0 &&
+                  message.height <= 4096 &&
+                  message.width * message.height <= 8000000) {
+                renderPng(message);
+              }
             });
           }
 
@@ -191,7 +283,10 @@ public sealed class PreviewHtmlBuilder
             rememberPointer(event);
             const isMiddlePan = event.button === 1;
             const isSpacePan = event.button === 0 && spaceHeld;
-            if ((!isMiddlePan && !isSpacePan) || !canPan()) {
+            const isCtrlPan = event.button === 0 && event.ctrlKey;
+            const isModePan = event.button === 0 && panModeEnabled;
+            if ((!isMiddlePan && !isSpacePan &&
+                 !isCtrlPan && !isModePan) || !canPan()) {
               return;
             }
 
@@ -243,6 +338,15 @@ public sealed class PreviewHtmlBuilder
               spaceHeld = true;
               event.preventDefault();
               refreshCursor();
+            } else if (event.code === 'KeyH' &&
+                       !event.ctrlKey && !event.altKey &&
+                       !event.metaKey && !event.shiftKey &&
+                       !event.repeat) {
+              event.preventDefault();
+              postPanCommand('toggle');
+            } else if (event.code === 'Escape') {
+              event.preventDefault();
+              postPanCommand('exit');
             }
           });
 
@@ -365,7 +469,8 @@ public sealed class PreviewHtmlBuilder
                   overscroll-behavior: contain;
                   user-select: none;
                 }
-                .preview-viewport.can-pan.space-held {
+                .preview-viewport.can-pan.space-held,
+                .preview-viewport.can-pan.pan-mode {
                   cursor: grab;
                 }
                 .preview-viewport.panning {
