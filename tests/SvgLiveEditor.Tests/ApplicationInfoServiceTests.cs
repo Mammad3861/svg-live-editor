@@ -16,7 +16,7 @@ public sealed class ApplicationInfoServiceTests
             .InformationalVersion;
 
         Assert.AreEqual(
-            "v0.2.0",
+            "v0.3.0",
             ApplicationInfoService.FormatVersion(informationalVersion));
     }
 
@@ -24,6 +24,7 @@ public sealed class ApplicationInfoServiceTests
     [DataRow("0.2.0+abc123", "v0.2.0")]
     [DataRow("0.2.0-beta.1+abc123", "v0.2.0-beta.1")]
     [DataRow("v0.2.0", "v0.2.0")]
+    [DataRow("0.3.0+abc123", "v0.3.0")]
     public void FormatVersion_RemovesOnlyBuildMetadata(
         string value,
         string expected)
@@ -39,9 +40,9 @@ public sealed class ApplicationInfoServiceTests
             Architecture.X64);
 
         Assert.AreEqual("SvgLiveEditor", result.Name);
-        Assert.AreEqual("v0.2.0", result.Version);
+        Assert.AreEqual("v0.3.0", result.Version);
         Assert.AreEqual("win-x64", result.Architecture);
         Assert.AreEqual(ApplicationInfoService.RepositoryUrl, result.RepositoryUrl);
-        StringAssert.Contains(result.CopyText, "SvgLiveEditor v0.2.0 (win-x64)");
+        StringAssert.Contains(result.CopyText, "SvgLiveEditor v0.3.0 (win-x64)");
     }
 }

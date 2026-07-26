@@ -1,6 +1,6 @@
 # SvgLiveEditor
 
-SvgLiveEditor is an open-source Windows desktop application for editing SVG/XML source and viewing the result immediately. Version 0.2 provides a document inspector on the left, source in the center, and a security-restricted preview on the right while preserving the user's UTF-8 text exactly when saving.
+SvgLiveEditor is an open-source Windows desktop application for editing SVG/XML source and viewing the result immediately. Version 0.3 provides a document inspector on the left, source in the center, and a security-restricted preview on the right, with direct clipboard sharing and a discoverable Pan tool, while preserving the user's UTF-8 text exactly when saving.
 
 Repository: [github.com/Mammad3861/svg-live-editor](https://github.com/Mammad3861/svg-live-editor)
 
@@ -11,10 +11,13 @@ Repository: [github.com/Mammad3861/svg-live-editor](https://github.com/Mammad386
 ## Features
 
 - Validated hierarchical SVG element tree with explicit tree-to-source navigation and non-destructive debounced caret-to-tree synchronization.
-- Properties inspector for common safe attributes and shape geometry. Changes are minimal source edits, participate in Undo/Redo, and never reserialize the full XML document; path `d` is read-only in v0.2.
+- Properties inspector for common safe attributes and shape geometry. Changes are minimal source edits, participate in Undo/Redo, and never reserialize the full XML document; path `d` is read-only in v0.3.
 - AvalonEdit source editor with XML highlighting, line numbers, current-line highlighting, undo/redo, find/replace, and non-destructive word wrap. Toggle wrapping with `Alt+Z` or `Ctrl+Alt+W`.
 - Automatic live preview after a 300 ms debounce, plus manual refresh.
-- Preview zoom in/out, reset, and fit-to-area controls on a fixed checkerboard transparency canvas. The selected zoom mode is restored at the next launch; `Ctrl`+mouse wheel zooms around the pointer, normal wheel scrolling remains vertical, `Shift`+wheel scrolls horizontally, and a scrollable preview can be panned with middle-button drag or Space+left-button drag.
+- Preview zoom in/out, reset, and fit-to-area controls on a fixed checkerboard transparency canvas. The selected zoom mode is restored at the next launch; `Ctrl`+mouse wheel zooms around the pointer, normal wheel scrolling remains vertical, and `Shift`+wheel scrolls horizontally.
+- A visible Pan toolbar mode (`H` to toggle and `Escape` to exit). Overflowing previews can also be panned temporarily with `Ctrl`+left drag, Space+left drag, or middle-button drag; ordinary left drag stays inert when Pan mode is off.
+- Copy the complete valid artwork as a transparent PNG with **Preview > Copy Preview as PNG**, the **Copy Image** toolbar button, or `Ctrl+Shift+C`, then paste directly into Telegram Desktop, Paint, Word, or another clipboard-aware application. The operation copies the full artwork rather than the scrolled viewport and does not change zoom or document state.
+- Copy the editor's exact complete source with **Edit > Copy Entire SVG Source** or `Ctrl+Alt+C`. This preserves line endings, Persian text, invalid XML, caret, selection, and modified state; normal `Ctrl+C` still copies only the editor selection.
 - New, Open, Save, Save As, Exit, and drag/drop for `.svg` and `.txt` files.
 - The most recently opened or saved named document reopens by default at the next startup. The checkable View-menu preference and full path are stored only in the current user's LocalAppData settings; missing, inaccessible, or unsupported paths safely fall back to the welcome document.
 - Unsaved-change prompts before replacing or closing a document.
@@ -23,7 +26,7 @@ Repository: [github.com/Mammad3861/svg-live-editor](https://github.com/Mammad386
 - An original English/Persian welcome SVG included as the new-document template.
 - An original multi-resolution application icon embedded in the executable, title bar, taskbar, and Alt+Tab presentation.
 
-The trusted interaction bridge has automated browser integration coverage. Physical Ctrl+Wheel and the two drag-to-pan gestures should still be confirmed on the target machine for each release.
+The trusted interaction bridge has automated browser integration coverage. Physical Ctrl+Wheel, clipboard paste compatibility, and the four drag-to-pan methods should still be confirmed on the target machine for each release.
 
 The XML code editor intentionally remains left-to-right so markup punctuation and tag structure stay predictable. Persian text is preserved logically and as exact UTF-8, but mixed RTL/LTR caret movement and visual ordering are subject to AvalonEdit/WPF BiDi limitations; the saved source and SVG preview remain the authoritative checks.
 
@@ -31,7 +34,9 @@ The XML code editor intentionally remains left-to-right so markup punctuation an
 
 Opened files are untrusted. SvgLiveEditor prohibits DTDs, entity declarations, and external entity resolution; requires a standard SVG root; and rejects scripts, inline event handlers, `foreignObject`, active embedded content, processing instructions, style elements, navigation links, and non-fragment resources.
 
-Validated SVG is UTF-8/Base64 encoded into an HTML `<img>` data URL. Raw SVG is never inserted into host markup. The host uses a restrictive Content Security Policy. One fixed, app-owned interaction script is authorized by its exact CSP SHA-256 hash for wheel and pan handling. The trusted page and host exchange only exact-schema, per-navigation-token-bound zoom and viewport messages; the host may update only the existing image dimensions and normalized viewport for smooth zoom. Native browser/document zoom stays pinned to 100%, so only the SVG image dimensions change. User SVG scripts remain non-executable, and native host objects, arbitrary messages, permissions, downloads, pop-ups, external navigation, external requests, developer tools, and context menus are disabled or blocked. Invalid edits keep the last valid preview visible.
+Validated SVG is UTF-8/Base64 encoded into an HTML `<img>` data URL. Raw SVG is never inserted into host markup. The host uses a restrictive Content Security Policy. One fixed, app-owned interaction script is authorized by its exact CSP SHA-256 hash for wheel, pan, and full-image PNG rendering. PNG copy draws only the already validated isolated image to a transparent off-screen canvas; it never exposes an SVG DOM. The trusted page and host exchange only exact-schema, per-navigation-token-bound messages. PNG responses are bounded and validated for request ID, MIME type, dimensions, Base64 length, PNG structure, signature, and IHDR size before clipboard use. Native browser/document zoom stays pinned to 100%, so only the SVG image dimensions change. User SVG scripts remain non-executable, and native host objects, arbitrary messages, permissions, downloads, pop-ups, external navigation, external requests, developer tools, and context menus are disabled or blocked. Invalid edits keep the last valid preview visible.
+
+Clipboard PNG output uses the SVG's intrinsic width/height, or its `viewBox` dimensions when intrinsic size is absent. Output preserves aspect ratio and is scaled down to at most 4096 pixels on either side and 8,000,000 total pixels (about 32 MB of uncompressed RGBA pixels). If the current source is invalid, Copy Preview intentionally copies the last valid image and says so; while validation is pending, it identifies the result as the last validated preview. If no valid visible preview exists, the command is unavailable or reports a non-destructive error.
 
 The document inspector is built only from source accepted by the same secure validator. An explicit mouse or keyboard action in the tree reveals the corresponding source start tag; validation, reindexing, selection restoration, and caret-to-tree synchronization never change the editor selection. Supported property edits update the AvalonEdit document—the source remains the single source of truth—and then use the existing validation and preview pipeline. No SVG DOM is exposed to WebView2 or JavaScript.
 
@@ -39,7 +44,11 @@ This conservative MVP intentionally supports only a restricted safe SVG subset a
 
 ## Current scope
 
-Version 0.2 provides tree/property-based source editing, not direct canvas manipulation. It does not support selecting, dragging, resizing, creating, deleting, or reordering elements in the preview, and it does not provide freehand/path editing, PNG/PDF export, an installer, or automatic updates.
+Version 0.3 provides tree/property-based source editing, clipboard PNG sharing, and preview navigation, not direct canvas manipulation. It does not support selecting, dragging, resizing, creating, deleting, or reordering SVG elements, and it does not provide freehand/path editing, PNG/PDF **file export**, an installer, or automatic updates.
+
+## Roadmap
+
+Future work may include improved AvalonEdit mixed RTL/BiDi caret and punctuation behavior; autosave through crash-recovery snapshots in LocalAppData (never continuous overwriting of the user's original file); built-in SVG templates; direct visual canvas selection and editing; element dragging and resizing; path editing; PNG/PDF file export; and an installer with automatic updates. These items are not part of v0.3.
 
 ## Requirements
 
@@ -77,14 +86,14 @@ dotnet publish src/SvgLiveEditor/SvgLiveEditor.csproj --configuration Release --
 Output is written to `dist/win-x64`. To publish, audit, and create versioned ZIP and SHA-256 files locally:
 
 ```powershell
-./scripts/Publish-WinX64.ps1 -Version 0.2.0
+./scripts/Publish-WinX64.ps1 -Version 0.3.0
 ```
 
-This creates `releases/SvgLiveEditor-v0.2.0-win-x64.zip` and `releases/SvgLiveEditor-v0.2.0-win-x64.sha256`. Publishing is folder-based and intentionally not trimmed or forced into a single file, which is safer for WPF, WebView2 native dependencies, and startup reliability. This local command does not create or modify a GitHub Release.
+This creates `releases/SvgLiveEditor-v0.3.0-win-x64.zip` and `releases/SvgLiveEditor-v0.3.0-win-x64.sha256`. Publishing is folder-based and intentionally not trimmed or forced into a single file, which is safer for WPF, WebView2 native dependencies, and startup reliability. This local command does not create or modify a GitHub Release.
 
 ## Automated GitHub Releases
 
-The [release workflow](.github/workflows/release.yml) runs automatically when a stable semantic-version tag such as `v0.2.0` is pushed. It can also be started manually with an existing tag, which allows binary assets to be added to an existing Release. The workflow validates the tag, checks out its exact commit, confirms the project version, restores and builds in Release mode, runs tests excluding `TestCategory=DesktopIntegration`, and uses the same publish script to build and audit the package.
+The [release workflow](.github/workflows/release.yml) runs automatically when a stable semantic-version tag such as `v0.3.0` is pushed. It can also be started manually with an existing tag, which allows binary assets to be added to an existing Release. The workflow validates the tag, checks out its exact commit, confirms the project version, restores and builds in Release mode, runs tests excluding `TestCategory=DesktopIntegration`, and uses the same publish script to build and audit the package.
 
 Both the ZIP and its `.sha256` file are retained as a GitHub Actions artifact and attached to the matching GitHub Release with safe replacement of identically named assets. An existing published Release remains published and only its matching binary assets are replaced. If no matching Release exists, the workflow creates a draft Release and does not publish it automatically.
 

@@ -58,4 +58,49 @@ public sealed class PreviewPageMessageBuilderTests
                 100,
                 new PreviewViewportPosition(1.1, 0.5)));
     }
+
+    [TestMethod]
+    public void PanStateMessage_UsesOnlyTheTokenBoundBooleanSchema()
+    {
+        string json = _builder.BuildPanStateMessage(
+            BridgeToken,
+            enabled: true);
+
+        using JsonDocument document = JsonDocument.Parse(json);
+        JsonElement root = document.RootElement;
+        Assert.AreEqual(3, root.EnumerateObject().Count());
+        Assert.AreEqual("panState", root.GetProperty("type").GetString());
+        Assert.AreEqual(BridgeToken, root.GetProperty("token").GetString());
+        Assert.IsTrue(root.GetProperty("enabled").GetBoolean());
+    }
+
+    [TestMethod]
+    public void PngRequestMessage_UsesOnlyValidatedBoundedFields()
+    {
+        const string requestId = "FFEEDDCCBBAA99887766554433221100";
+        string json = _builder.BuildPngRequestMessage(
+            BridgeToken,
+            requestId,
+            new PreviewPngSize(1040, 440));
+
+        using JsonDocument document = JsonDocument.Parse(json);
+        JsonElement root = document.RootElement;
+        Assert.AreEqual(5, root.EnumerateObject().Count());
+        Assert.AreEqual("copyPng", root.GetProperty("type").GetString());
+        Assert.AreEqual(BridgeToken, root.GetProperty("token").GetString());
+        Assert.AreEqual(requestId, root.GetProperty("requestId").GetString());
+        Assert.AreEqual(1040, root.GetProperty("width").GetInt32());
+        Assert.AreEqual(440, root.GetProperty("height").GetInt32());
+
+        Assert.Throws<ArgumentException>(() =>
+            _builder.BuildPngRequestMessage(
+                BridgeToken,
+                "bad",
+                new PreviewPngSize(1, 1)));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            _builder.BuildPngRequestMessage(
+                BridgeToken,
+                requestId,
+                new PreviewPngSize(4096, 4096)));
+    }
 }

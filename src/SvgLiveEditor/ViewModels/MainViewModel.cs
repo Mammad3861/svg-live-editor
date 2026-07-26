@@ -12,6 +12,8 @@ public sealed class MainViewModel : ObservableObject
     private int _columnNumber = 1;
     private string _validationStatus = "Waiting for validation";
     private bool _isSvgValid;
+    private string _operationStatus = string.Empty;
+    private bool _canCopyPreviewAsPng;
 
     public string DocumentText => _documentText;
 
@@ -34,6 +36,10 @@ public sealed class MainViewModel : ObservableObject
     public string ValidationStatus => _validationStatus;
 
     public bool IsSvgValid => _isSvgValid;
+
+    public string OperationStatus => _operationStatus;
+
+    public bool CanCopyPreviewAsPng => _canCopyPreviewAsPng;
 
     public DocumentInspectorViewModel Inspector { get; } = new();
 
@@ -83,6 +89,23 @@ public sealed class MainViewModel : ObservableObject
             : FormatValidationError(result);
         OnPropertyChanged(nameof(IsSvgValid));
         OnPropertyChanged(nameof(ValidationStatus));
+    }
+
+    public void SetOperationStatus(string message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        SetProperty(
+            ref _operationStatus,
+            message,
+            nameof(OperationStatus));
+    }
+
+    public void SetCanCopyPreviewAsPng(bool canCopy)
+    {
+        SetProperty(
+            ref _canCopyPreviewAsPng,
+            canCopy,
+            nameof(CanCopyPreviewAsPng));
     }
 
     private static string FormatValidationError(SvgValidationResult result)

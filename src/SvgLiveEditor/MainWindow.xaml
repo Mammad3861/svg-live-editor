@@ -13,6 +13,7 @@
         Background="#F8FAFC"
         Loaded="OnWindowLoaded"
         Closing="OnWindowClosing"
+        Deactivated="OnWindowDeactivated"
         PreviewKeyDown="OnWindowPreviewKeyDown"
         PreviewDragOver="OnWindowPreviewDragOver"
         Drop="OnWindowDrop">
@@ -37,6 +38,11 @@
         <Separator />
         <MenuItem Header="_Find" InputGestureText="Ctrl+F" Click="OnFindClick" />
         <MenuItem Header="_Replace" InputGestureText="Ctrl+H" Click="OnReplaceClick" />
+        <Separator />
+        <MenuItem Header="Copy _Entire SVG Source"
+                  InputGestureText="Ctrl+Alt+C"
+                  Click="OnCopyEntireSourceClick"
+                  AutomationProperties.Name="Copy Entire SVG Source" />
       </MenuItem>
       <MenuItem Header="_View">
         <MenuItem x:Name="WordWrapMenuItem"
@@ -54,6 +60,12 @@
       </MenuItem>
       <MenuItem Header="_Preview">
         <MenuItem Header="_Refresh" Click="OnRefreshPreviewClick" />
+        <Separator />
+        <MenuItem Header="_Copy Preview as PNG"
+                  InputGestureText="Ctrl+Shift+C"
+                  IsEnabled="{Binding CanCopyPreviewAsPng}"
+                  Click="OnCopyPreviewAsPngClick"
+                  AutomationProperties.Name="Copy Preview as PNG" />
         <Separator />
         <MenuItem Header="Zoom _In" Click="OnZoomInClick" />
         <MenuItem Header="Zoom _Out" Click="OnZoomOutClick" />
@@ -73,6 +85,17 @@
         <Separator />
         <Button Content="Refresh Preview" ToolTip="Validate and refresh now" Click="OnRefreshPreviewClick" />
         <Separator />
+        <Button Content="Copy Image"
+                ToolTip="Copy the full valid SVG artwork as a transparent PNG (Ctrl+Shift+C)"
+                AutomationProperties.Name="Copy Preview as PNG"
+                IsEnabled="{Binding CanCopyPreviewAsPng}"
+                Click="OnCopyPreviewAsPngClick" />
+        <ToggleButton x:Name="PanModeButton"
+                      Content="Pan"
+                      ToolTip="Pan overflowing preview with left drag (H toggles, Escape exits)"
+                      AutomationProperties.Name="Pan preview mode"
+                      Click="OnPanModeClick" />
+        <Separator />
         <Button Content="Zoom In" ToolTip="Increase artwork zoom" Click="OnZoomInClick" />
         <Button Content="Zoom Out" ToolTip="Decrease artwork zoom" Click="OnZoomOutClick" />
         <Button Content="Reset Zoom" ToolTip="Show artwork at 100%" Click="OnResetZoomClick" />
@@ -87,6 +110,12 @@
       <Separator />
       <StatusBarItem>
         <TextBlock Text="{Binding SaveStatus}" />
+      </StatusBarItem>
+      <Separator />
+      <StatusBarItem>
+        <TextBlock Text="{Binding OperationStatus}"
+                   TextTrimming="CharacterEllipsis"
+                   ToolTip="{Binding OperationStatus}" />
       </StatusBarItem>
       <Separator />
       <StatusBarItem>
@@ -378,6 +407,7 @@
             <wv2:WebView2 x:Name="PreviewWebView"
                            DefaultBackgroundColor="#FFF8FAFC"
                            ZoomFactorChanged="OnPreviewWebViewZoomFactorChanged"
+                           LostKeyboardFocus="OnPreviewWebViewLostKeyboardFocus"
                            SizeChanged="OnPreviewWebViewSizeChanged" />
             <Border x:Name="PreviewMessagePanel" Background="#F8FAFC" Padding="32">
               <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="520">

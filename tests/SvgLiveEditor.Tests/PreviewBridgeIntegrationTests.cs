@@ -1,5 +1,7 @@
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
@@ -24,6 +26,9 @@ public sealed class PreviewBridgeIntegrationTests
         bool CtrlWheelCanceled,
         bool ShiftWheelScrolled,
         bool SourceRefreshPreservedViewport,
+        int PngWidth,
+        int PngHeight,
+        bool PngTopLeftIsTransparent,
         int ZoomNavigationCount);
 
     [TestMethod]
@@ -55,6 +60,9 @@ public sealed class PreviewBridgeIntegrationTests
         Assert.IsTrue(result.CtrlWheelCanceled);
         Assert.IsTrue(result.ShiftWheelScrolled);
         Assert.IsTrue(result.SourceRefreshPreservedViewport);
+        Assert.AreEqual(300, result.PngWidth);
+        Assert.AreEqual(150, result.PngHeight);
+        Assert.IsTrue(result.PngTopLeftIsTransparent);
         Assert.AreEqual(0, result.ZoomNavigationCount);
         Assert.IsTrue(thread.Join(TimeSpan.FromSeconds(5)));
     }
@@ -153,6 +161,8 @@ public sealed class PreviewBridgeIntegrationTests
 
             TaskCompletionSource<(string Source, string Json)> messageReceived = new(
                 TaskCreationOptions.RunContinuationsAsynchronously);
+            TaskCompletionSource<(string Source, string Json)> pngMessageReceived = new(
+                TaskCreationOptions.RunContinuationsAsynchronously);
             int zoomMessageCount = 0;
             int zoomNavigationCount = 0;
             core.NavigationStarting += (_, _) => zoomNavigationCount++;
@@ -165,7 +175,51 @@ public sealed class PreviewBridgeIntegrationTests
                     zoomMessageCount++;
                     messageReceived.TrySetResult((args.Source, args.WebMessageAsJson));
                 }
+                else if (message.RootElement.TryGetProperty(
+                        "type",
+                        out type)
+                    && type.GetString() == "png")
+                {
+                    pngMessageReceived.TrySetResult(
+                        (args.Source, args.WebMessageAsJson));
+                }
             };
+
+            const string pngRequestId =
+                "FFEEDDCCBBAA99887766554433221100";
+            PreviewPngSize requestedPngSize = new(300, 150);
+            core.PostWebMessageAsJson(
+                new PreviewPageMessageBuilder().BuildPngRequestMessage(
+                    BridgeToken,
+                    pngRequestId,
+                    requestedPngSize));
+            (string pngSource, string pngJson) =
+                await pngMessageReceived.Task.WaitAsync(
+                    TimeSpan.FromSeconds(10));
+            if (!new PreviewNavigationPolicy()
+                    .IsTrustedWebMessageSource(pngSource))
+            {
+                throw new InvalidOperationException(
+                    $"Unexpected PNG WebMessage source: {pngSource}");
+            }
+
+            PendingPreviewPngCopy expectedPng = new(
+                BridgeToken,
+                pngRequestId,
+                new PreviewPngCopyPlan(
+                    requestedPngSize,
+                    PreviewPngSourceState.CurrentValid));
+            if (!new PreviewPngMessageParser().TryParse(
+                    pngJson,
+                    expectedPng,
+                    out PreviewPngPayload? pngPayload)
+                || pngPayload is null)
+            {
+                throw new InvalidOperationException(
+                    "Trusted page returned an invalid PNG response.");
+            }
+            bool pngTopLeftIsTransparent =
+                IsTopLeftTransparent(pngPayload.Bytes);
 
             await core.ExecuteScriptAsync(
                 """
@@ -281,6 +335,9 @@ public sealed class PreviewBridgeIntegrationTests
                 dispatchResult.Equals("false", StringComparison.Ordinal),
                 scrollAfterShift > scrollBeforeShift,
                 sourceRefreshPreservedViewport,
+                pngPayload.Size.Width,
+                pngPayload.Size.Height,
+                pngTopLeftIsTransparent,
                 zoomNavigationCount));
         }
         catch (Exception exception)
@@ -301,6 +358,27 @@ public sealed class PreviewBridgeIntegrationTests
     private static double ParseScriptNumber(string json)
     {
         return JsonSerializer.Deserialize<double>(json);
+    }
+
+    private static bool IsTopLeftTransparent(byte[] pngBytes)
+    {
+        using MemoryStream stream = new(pngBytes, writable: false);
+        BitmapFrame frame = BitmapDecoder.Create(
+            stream,
+            BitmapCreateOptions.PreservePixelFormat,
+            BitmapCacheOption.OnLoad).Frames[0];
+        FormatConvertedBitmap bitmap = new(
+            frame,
+            PixelFormats.Bgra32,
+            null,
+            0);
+        byte[] pixel = new byte[4];
+        bitmap.CopyPixels(
+            new Int32Rect(0, 0, 1, 1),
+            pixel,
+            stride: 4,
+            offset: 0);
+        return pixel[3] == 0;
     }
 
     private static async Task NavigateAsync(CoreWebView2 core, string html)

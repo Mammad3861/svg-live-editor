@@ -97,6 +97,50 @@ public sealed class PreviewInteractionMessageParser
         }
     }
 
+    public bool TryParsePanCommand(
+        string json,
+        string expectedToken,
+        out PreviewPanCommand command)
+    {
+        command = default;
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || root.EnumerateObject().Count() != 3
+                || !TryReadString(root, "type", out string? type)
+                || type != "panCommand"
+                || !TryReadString(root, "token", out string? token)
+                || !string.Equals(
+                    token,
+                    expectedToken,
+                    StringComparison.Ordinal)
+                || !TryReadString(root, "command", out string? commandText))
+            {
+                return false;
+            }
+
+            if (commandText == "toggle")
+            {
+                command = PreviewPanCommand.Toggle;
+                return true;
+            }
+
+            if (commandText == "exit")
+            {
+                command = PreviewPanCommand.Exit;
+                return true;
+            }
+
+            return false;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
     private static bool TryReadString(
         JsonElement root,
         string propertyName,

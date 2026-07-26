@@ -52,13 +52,19 @@ public sealed class PreviewHtmlBuilderTests
         StringAssert.Contains(script.Groups[1].Value, "{ capture: true, passive: false }");
         StringAssert.Contains(script.Groups[1].Value, "event.button === 1");
         StringAssert.Contains(script.Groups[1].Value, "event.button === 0 && spaceHeld");
+        StringAssert.Contains(script.Groups[1].Value, "event.button === 0 && event.ctrlKey");
+        StringAssert.Contains(script.Groups[1].Value, "event.button === 0 && panModeEnabled");
         StringAssert.Contains(script.Groups[1].Value, "type: 'viewport'");
         StringAssert.Contains(script.Groups[1].Value, "token: bridgeToken");
-        StringAssert.Contains(script.Groups[1].Value, "message.type !== 'zoomState'");
-        StringAssert.Contains(script.Groups[1].Value, "Object.keys(message).length !== 6");
+        StringAssert.Contains(script.Groups[1].Value, "message.type === 'zoomState'");
+        StringAssert.Contains(script.Groups[1].Value, "Object.keys(message).length === 6");
         StringAssert.Contains(script.Groups[1].Value, "message.token !== bridgeToken");
-        StringAssert.Contains(script.Groups[1].Value, "message.renderedWidth > 10000000");
-        StringAssert.Contains(script.Groups[1].Value, "message.centerX > 1");
+        StringAssert.Contains(script.Groups[1].Value, "message.renderedWidth <= 10000000");
+        StringAssert.Contains(script.Groups[1].Value, "message.centerX <= 1");
+        StringAssert.Contains(script.Groups[1].Value, "message.type === 'copyPng'");
+        StringAssert.Contains(script.Groups[1].Value, "message.width * message.height <= 8000000");
+        StringAssert.Contains(script.Groups[1].Value, "canvas.toDataURL('image/png')");
+        StringAssert.Contains(script.Groups[1].Value, "context.drawImage(image");
         StringAssert.Contains(script.Groups[1].Value, "document.body.dataset.hostScriptReady = 'true'");
         Assert.IsFalse(script.Groups[1].Value.Contains(
             "nativeZoomFallback",
@@ -84,7 +90,7 @@ public sealed class PreviewHtmlBuilderTests
     }
 
     [TestMethod]
-    public void Build_PanStateAcceptsOnlyMiddleOrSpaceLeftAndAlwaysTerminates()
+    public void Build_PanStateAcceptsSupportedGesturesAndAlwaysTerminates()
     {
         const string svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" />";
 
@@ -93,7 +99,9 @@ public sealed class PreviewHtmlBuilderTests
 
         StringAssert.Contains(script, "const isMiddlePan = event.button === 1");
         StringAssert.Contains(script, "const isSpacePan = event.button === 0 && spaceHeld");
-        StringAssert.Contains(script, "if ((!isMiddlePan && !isSpacePan) || !canPan())");
+        StringAssert.Contains(script, "const isCtrlPan = event.button === 0 && event.ctrlKey");
+        StringAssert.Contains(script, "const isModePan = event.button === 0 && panModeEnabled");
+        StringAssert.Contains(script, "!isCtrlPan && !isModePan) || !canPan())");
         StringAssert.Contains(script, "viewport.setPointerCapture(activePointerId)");
         StringAssert.Contains(script, "activePanButton = event.button");
         StringAssert.Contains(script, "const requiredButtonMask = activePanButton === 1 ? 4 : 1");
@@ -103,8 +111,31 @@ public sealed class PreviewHtmlBuilderTests
         StringAssert.Contains(script, "viewport.addEventListener('pointerleave', stopPan)");
         StringAssert.Contains(script, "window.addEventListener('pointerup', stopPan, true)");
         StringAssert.Contains(script, "window.addEventListener('blur'");
+        StringAssert.Contains(script, "postPanCommand('toggle')");
+        StringAssert.Contains(script, "postPanCommand('exit')");
+        StringAssert.Contains(script, "event.code === 'KeyH'");
+        StringAssert.Contains(script, "event.code === 'Escape'");
         StringAssert.Contains(script, "activePointerId = null");
         StringAssert.Contains(script, "activePanButton = null");
+    }
+
+    [TestMethod]
+    public void Build_PngRenderingUsesOnlyTheIsolatedImageAndStrictLimits()
+    {
+        const string svg =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><text>سلام</text></svg>";
+        string script = ExtractHostScript(
+            _builder.Build(svg, 300, 150, BridgeToken));
+
+        StringAssert.Contains(script, "context.drawImage(image, 0, 0");
+        StringAssert.Contains(script, "message.width <= 4096");
+        StringAssert.Contains(script, "message.height <= 4096");
+        StringAssert.Contains(script, "message.width * message.height <= 8000000");
+        StringAssert.Contains(script, "mimeType: 'image/png'");
+        StringAssert.Contains(script, "payload: dataUrl.slice(prefix.length)");
+        Assert.IsFalse(script.Contains("innerHTML", StringComparison.Ordinal));
+        Assert.IsFalse(script.Contains("eval(", StringComparison.Ordinal));
+        Assert.IsFalse(script.Contains("fetch(", StringComparison.Ordinal));
     }
 
     [TestMethod]

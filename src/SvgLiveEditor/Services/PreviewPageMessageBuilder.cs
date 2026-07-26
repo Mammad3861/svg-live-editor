@@ -30,15 +30,59 @@ public sealed class PreviewPageMessageBuilder
         });
     }
 
-    private static void ValidateBridgeToken(string bridgeToken)
+    public string BuildPanStateMessage(
+        string bridgeToken,
+        bool enabled)
     {
-        ArgumentNullException.ThrowIfNull(bridgeToken);
-        if (bridgeToken.Length != 32
-            || bridgeToken.Any(character => !Uri.IsHexDigit(character)))
+        ValidateHexToken(bridgeToken, nameof(bridgeToken));
+        return JsonSerializer.Serialize(new
+        {
+            type = "panState",
+            token = bridgeToken,
+            enabled
+        });
+    }
+
+    public string BuildPngRequestMessage(
+        string bridgeToken,
+        string requestId,
+        PreviewPngSize size)
+    {
+        ValidateHexToken(bridgeToken, nameof(bridgeToken));
+        ValidateHexToken(requestId, nameof(requestId));
+        if (size.Width <= 0
+            || size.Width > PreviewPngSizeCalculator.MaximumDimension
+            || size.Height <= 0
+            || size.Height > PreviewPngSizeCalculator.MaximumDimension
+            || size.PixelCount > PreviewPngSizeCalculator.MaximumPixelCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(size));
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            type = "copyPng",
+            token = bridgeToken,
+            requestId,
+            width = size.Width,
+            height = size.Height
+        });
+    }
+
+    private static void ValidateBridgeToken(string bridgeToken) =>
+        ValidateHexToken(bridgeToken, nameof(bridgeToken));
+
+    private static void ValidateHexToken(
+        string value,
+        string parameterName)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        if (value.Length != 32
+            || value.Any(character => !Uri.IsHexDigit(character)))
         {
             throw new ArgumentException(
-                "The preview bridge token must contain exactly 32 hexadecimal characters.",
-                nameof(bridgeToken));
+                "The value must contain exactly 32 hexadecimal characters.",
+                parameterName);
         }
     }
 

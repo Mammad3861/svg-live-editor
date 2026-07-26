@@ -99,6 +99,46 @@ public sealed class PreviewInteractionTests
     }
 
     [TestMethod]
+    public void PanCommand_RequiresAnExactTokenBoundToggleOrExitSchema()
+    {
+        const string toggle = """
+            {"type":"panCommand","token":"00112233445566778899AABBCCDDEEFF",
+             "command":"toggle"}
+            """;
+        const string exit = """
+            {"type":"panCommand","token":"00112233445566778899AABBCCDDEEFF",
+             "command":"exit"}
+            """;
+        const string stale = """
+            {"type":"panCommand","token":"FFEEDDCCBBAA99887766554433221100",
+             "command":"toggle"}
+            """;
+        const string extra = """
+            {"type":"panCommand","token":"00112233445566778899AABBCCDDEEFF",
+             "command":"toggle","script":"alert(1)"}
+            """;
+
+        Assert.IsTrue(_parser.TryParsePanCommand(
+            toggle,
+            BridgeToken,
+            out PreviewPanCommand toggleCommand));
+        Assert.AreEqual(PreviewPanCommand.Toggle, toggleCommand);
+        Assert.IsTrue(_parser.TryParsePanCommand(
+            exit,
+            BridgeToken,
+            out PreviewPanCommand exitCommand));
+        Assert.AreEqual(PreviewPanCommand.Exit, exitCommand);
+        Assert.IsFalse(_parser.TryParsePanCommand(
+            stale,
+            BridgeToken,
+            out _));
+        Assert.IsFalse(_parser.TryParsePanCommand(
+            extra,
+            BridgeToken,
+            out _));
+    }
+
+    [TestMethod]
     public void AnchorScrollCalculation_KeepsPointerContentStableAndClamps()
     {
         PreviewZoomRequest centered = new(
