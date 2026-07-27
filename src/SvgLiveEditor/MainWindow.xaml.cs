@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
@@ -53,6 +54,7 @@ public partial class MainWindow : Window
     {
         Interval = TimeSpan.FromMilliseconds(150)
     };
+    private readonly ContextMenu _previewContextMenu;
 
     private bool _isUpdatingEditor;
     private bool _isWebViewReady;
@@ -77,6 +79,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        _previewContextMenu = CreatePreviewContextMenu();
         DataContext = _viewModel;
 
         SourceEditor.Options.IndentationSize = 2;
@@ -243,6 +246,7 @@ public partial class MainWindow : Window
 
         if (_isPreviewNavigationRequested)
         {
+            ClosePreviewContextMenu();
             CancelPendingPreviewPngCopy(
                 "Preview changed before the PNG copy completed. Try again.");
             _isPreviewNavigationRequested = false;
@@ -288,6 +292,7 @@ public partial class MainWindow : Window
 
     private void OnPreviewProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
     {
+        ClosePreviewContextMenu();
         _isWebViewReady = false;
         _isPreviewNavigationRequested = false;
         _activePreviewNavigationId = null;
@@ -392,10 +397,37 @@ public partial class MainWindow : Window
                 bridgeToken,
                 out PreviewPanCommand panCommand))
         {
+            if (panCommand == PreviewPanCommand.Exit)
+            {
+                ClosePreviewContextMenu();
+            }
             SetPanMode(
                 panCommand == PreviewPanCommand.Toggle
                     ? !_isPanModeEnabled
                     : false);
+            return;
+        }
+
+        if (_previewInteractionMessageParser.TryParseContextMenuRequest(
+                messageJson,
+                bridgeToken,
+                out PreviewContextMenuRequest contextMenuRequest))
+        {
+            ShowPreviewContextMenu(contextMenuRequest);
+            return;
+        }
+
+        if (_previewInteractionMessageParser.IsCopyCommand(
+                messageJson,
+                bridgeToken))
+        {
+            CopyShortcutAction action = ResolveCopyShortcutAction();
+            if (action == CopyShortcutAction.CopyPreviewAsPng)
+            {
+                OnCopyPreviewAsPngClick(
+                    PreviewWebView,
+                    new RoutedEventArgs());
+            }
             return;
         }
 
@@ -576,6 +608,110 @@ public partial class MainWindow : Window
             _viewModel.SetOperationStatus(
                 $"Could not request the PNG: {exception.Message}");
         }
+    }
+
+    private ContextMenu CreatePreviewContextMenu()
+    {
+        ContextMenu menu = new()
+        {
+            Placement = PlacementMode.RelativePoint,
+            StaysOpen = false
+        };
+
+        foreach (PreviewContextMenuItem definition
+            in PreviewContextMenuDefinition.Items)
+        {
+            MenuItem item = new()
+            {
+                Header = definition.Header,
+                Tag = definition.Command
+            };
+            AutomationProperties.SetName(item, definition.Header);
+            item.Click += OnPreviewContextMenuItemClick;
+            menu.Items.Add(item);
+        }
+
+        return menu;
+    }
+
+    private void ShowPreviewContextMenu(PreviewContextMenuRequest request)
+    {
+        ClosePreviewContextMenu();
+        if (PreviewWebView.ActualWidth <= 0
+            || PreviewWebView.ActualHeight <= 0)
+        {
+            return;
+        }
+
+        foreach (MenuItem item in _previewContextMenu.Items)
+        {
+            if (item.Tag is PreviewContextMenuCommand.CopyPreviewAsPng)
+            {
+                item.IsEnabled = _hasVisiblePreview
+                    && _pendingPreviewPngCopy is null;
+            }
+        }
+
+        PreviewWebView.Focus();
+        Keyboard.Focus(PreviewWebView);
+        _previewContextMenu.PlacementTarget = PreviewWebView;
+        _previewContextMenu.HorizontalOffset = Math.Clamp(
+            request.X / request.ViewportWidth * PreviewWebView.ActualWidth,
+            0,
+            PreviewWebView.ActualWidth);
+        _previewContextMenu.VerticalOffset = Math.Clamp(
+            request.Y / request.ViewportHeight * PreviewWebView.ActualHeight,
+            0,
+            PreviewWebView.ActualHeight);
+        _previewContextMenu.IsOpen = true;
+
+        Dispatcher.BeginInvoke(
+            DispatcherPriority.Input,
+            () =>
+            {
+                if (!_previewContextMenu.IsOpen)
+                {
+                    return;
+                }
+
+                MenuItem? firstEnabledItem = _previewContextMenu.Items
+                    .OfType<MenuItem>()
+                    .FirstOrDefault(item => item.IsEnabled);
+                if (firstEnabledItem is not null)
+                {
+                    firstEnabledItem.Focus();
+                    Keyboard.Focus(firstEnabledItem);
+                }
+            });
+    }
+
+    private void OnPreviewContextMenuItemClick(
+        object sender,
+        RoutedEventArgs e)
+    {
+        if (sender is not MenuItem item
+            || item.Tag is not PreviewContextMenuCommand command)
+        {
+            return;
+        }
+
+        switch (command)
+        {
+            case PreviewContextMenuCommand.CopyPreviewAsPng:
+                OnCopyPreviewAsPngClick(item, e);
+                break;
+            case PreviewContextMenuCommand.Fit:
+                OnFitPreviewClick(item, e);
+                break;
+            case PreviewContextMenuCommand.ResetZoom:
+                OnResetZoomClick(item, e);
+                break;
+        }
+    }
+
+    private void ClosePreviewContextMenu()
+    {
+        _previewContextMenu.IsOpen = false;
     }
 
     private async Task ExpirePreviewPngCopyAsync(
@@ -1186,6 +1322,7 @@ public partial class MainWindow : Window
 
     private void OnWindowDeactivated(object? sender, EventArgs e)
     {
+        ClosePreviewContextMenu();
         // Re-sending the current state asks the trusted page to terminate any
         // active pointer capture without changing whether Pan mode is enabled.
         TryUpdatePreviewPanModeInPlace();
@@ -1196,6 +1333,21 @@ public partial class MainWindow : Window
         KeyboardFocusChangedEventArgs e)
     {
         TryUpdatePreviewPanModeInPlace();
+    }
+
+    private void OnPreviewWebViewPreviewKeyDown(
+        object sender,
+        KeyEventArgs e)
+    {
+        Key pressedKey = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (Keyboard.Modifiers != ModifierKeys.Control
+            || pressedKey != Key.C)
+        {
+            return;
+        }
+
+        OnCopyPreviewAsPngClick(sender, new RoutedEventArgs());
+        e.Handled = true;
     }
 
     private void OnZoomInClick(object sender, RoutedEventArgs e)
@@ -1354,7 +1506,13 @@ public partial class MainWindow : Window
         bool controlOnly = modifiers == ModifierKeys.Control;
         Key pressedKey = e.Key == Key.System ? e.SystemKey : e.Key;
 
-        if (ApplicationShortcutResolver.Resolve(modifiers, pressedKey)
+        if (pressedKey == Key.Escape
+            && _previewContextMenu.IsOpen)
+        {
+            ClosePreviewContextMenu();
+            e.Handled = true;
+        }
+        else if (ApplicationShortcutResolver.Resolve(modifiers, pressedKey)
             == ApplicationShortcut.ToggleWordWrap)
         {
             ToggleWordWrap();
@@ -1370,6 +1528,14 @@ public partial class MainWindow : Window
             && pressedKey == Key.C)
         {
             OnCopyEntireSourceClick(sender, new RoutedEventArgs());
+            e.Handled = true;
+        }
+        else if (controlOnly
+            && pressedKey == Key.C
+            && ResolveCopyShortcutAction()
+                == CopyShortcutAction.CopyPreviewAsPng)
+        {
+            OnCopyPreviewAsPngClick(sender, new RoutedEventArgs());
             e.Handled = true;
         }
         else if (modifiers == ModifierKeys.None
@@ -1440,6 +1606,16 @@ public partial class MainWindow : Window
             && Keyboard.FocusedElement is not TextBoxBase;
     }
 
+    private CopyShortcutAction ResolveCopyShortcutAction()
+    {
+        return PreviewCopyShortcutRouter.Resolve(
+            new CopyFocusState(
+                PreviewWebView.IsKeyboardFocusWithin,
+                SourceEditor.IsKeyboardFocusWithin,
+                Keyboard.FocusedElement is TextBoxBase,
+                PreviewWebView.IsMouseOver));
+    }
+
     private void ToggleWordWrap()
     {
         ApplyWordWrap(!WordWrapMenuItem.IsChecked, persist: true);
@@ -1504,6 +1680,7 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        ClosePreviewContextMenu();
         SourceEditor.Document.TextChanged -= OnEditorDocumentTextChanged;
         SourceEditor.TextArea.Caret.PositionChanged -= OnCaretPositionChanged;
         PreviewWebView.CoreWebView2InitializationCompleted -= OnCoreWebView2InitializationCompleted;

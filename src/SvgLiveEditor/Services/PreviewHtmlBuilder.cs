@@ -125,6 +125,28 @@ public sealed class PreviewHtmlBuilder
             }
           };
 
+          const postCopyCommand = () => {
+            if (bridge) {
+              bridge.postMessage({
+                type: 'copyCommand',
+                token: bridgeToken
+              });
+            }
+          };
+
+          const postContextMenuRequest = () => {
+            if (bridge) {
+              bridge.postMessage({
+                type: 'contextMenu',
+                token: bridgeToken,
+                x: lastPointerX,
+                y: lastPointerY,
+                viewportWidth: viewport.clientWidth,
+                viewportHeight: viewport.clientHeight
+              });
+            }
+          };
+
           const postPngError = requestId => {
             if (bridge) {
               bridge.postMessage({
@@ -332,9 +354,20 @@ public sealed class PreviewHtmlBuilder
               event.preventDefault();
             }
           });
+          viewport.addEventListener('contextmenu', event => {
+            event.preventDefault();
+            rememberPointer(event);
+            viewport.focus({ preventScroll: true });
+            postContextMenuRequest();
+          });
 
           window.addEventListener('keydown', event => {
-            if (event.code === 'Space') {
+            if (event.code === 'KeyC' &&
+                event.ctrlKey && !event.shiftKey &&
+                !event.altKey && !event.metaKey) {
+              event.preventDefault();
+              postCopyCommand();
+            } else if (event.code === 'Space') {
               spaceHeld = true;
               event.preventDefault();
               refreshCursor();
@@ -466,8 +499,12 @@ public sealed class PreviewHtmlBuilder
                   height: 100%;
                   overflow: auto;
                   cursor: default;
+                  outline: none;
                   overscroll-behavior: contain;
                   user-select: none;
+                }
+                .preview-viewport:focus-visible {
+                  box-shadow: inset 0 0 0 3px #2563eb;
                 }
                 .preview-viewport.can-pan.space-held,
                 .preview-viewport.can-pan.pan-mode {
@@ -502,7 +539,10 @@ public sealed class PreviewHtmlBuilder
             <body data-bridge-token="{{bridgeToken}}"
                   data-initial-center-x="{{initialCenterX}}"
                   data-initial-center-y="{{initialCenterY}}">
-              <div class="preview-viewport">
+              <div class="preview-viewport"
+                   tabindex="0"
+                   role="region"
+                   aria-label="Live SVG preview">
                 <main aria-label="SVG preview">
                   <img alt="Rendered SVG preview" draggable="false" src="data:image/svg+xml;base64,{{encodedSvg}}">
                 </main>

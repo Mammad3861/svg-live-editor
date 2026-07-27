@@ -17,5 +17,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\SvgLiveEditor\SvgLiveEditor.csproj" />
     <None Include="..\..\samples\welcome.svg" Link="samples\welcome.svg" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\.github\workflows\release.yml" Link="workflows\release.yml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

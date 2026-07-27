@@ -54,6 +54,9 @@ public sealed class PreviewHtmlBuilderTests
         StringAssert.Contains(script.Groups[1].Value, "event.button === 0 && spaceHeld");
         StringAssert.Contains(script.Groups[1].Value, "event.button === 0 && event.ctrlKey");
         StringAssert.Contains(script.Groups[1].Value, "event.button === 0 && panModeEnabled");
+        StringAssert.Contains(script.Groups[1].Value, "type: 'contextMenu'");
+        StringAssert.Contains(script.Groups[1].Value, "type: 'copyCommand'");
+        StringAssert.Contains(script.Groups[1].Value, "viewport.focus({ preventScroll: true })");
         StringAssert.Contains(script.Groups[1].Value, "type: 'viewport'");
         StringAssert.Contains(script.Groups[1].Value, "token: bridgeToken");
         StringAssert.Contains(script.Groups[1].Value, "message.type === 'zoomState'");
@@ -87,6 +90,45 @@ public sealed class PreviewHtmlBuilderTests
         Assert.IsFalse(script.Contains(
             "viewport.scrollTop += horizontalDelta",
             StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void Build_PlainCopyIsPreviewFocusedAndDoesNotConflictWithOtherGestures()
+    {
+        const string svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" />";
+        string html = _builder.Build(svg, 1000, 500, BridgeToken);
+        string script = ExtractHostScript(html);
+
+        StringAssert.Contains(html, "tabindex=\"0\"");
+        StringAssert.Contains(html, "aria-label=\"Live SVG preview\"");
+        StringAssert.Contains(html, ".preview-viewport:focus-visible");
+        StringAssert.Contains(script, "event.code === 'KeyC'");
+        StringAssert.Contains(script, "event.ctrlKey && !event.shiftKey");
+        StringAssert.Contains(script, "!event.altKey && !event.metaKey");
+        StringAssert.Contains(script, "postCopyCommand()");
+        StringAssert.Contains(script, "if (event.ctrlKey)");
+        StringAssert.Contains(script, "const isCtrlPan = event.button === 0 && event.ctrlKey");
+    }
+
+    [TestMethod]
+    public void Build_RightClickSuppressesTheBrowserMenuAndSendsOnlyCoordinates()
+    {
+        const string svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" />";
+        string script = ExtractHostScript(
+            _builder.Build(svg, 1000, 500, BridgeToken));
+
+        StringAssert.Contains(
+            script,
+            "viewport.addEventListener('contextmenu', event =>");
+        StringAssert.Contains(script, "event.preventDefault()");
+        StringAssert.Contains(script, "rememberPointer(event)");
+        StringAssert.Contains(script, "type: 'contextMenu'");
+        StringAssert.Contains(script, "x: lastPointerX");
+        StringAssert.Contains(script, "y: lastPointerY");
+        StringAssert.Contains(script, "viewportWidth: viewport.clientWidth");
+        StringAssert.Contains(script, "viewportHeight: viewport.clientHeight");
+        Assert.IsFalse(script.Contains("innerHTML", StringComparison.Ordinal));
+        Assert.IsFalse(script.Contains("window.open", StringComparison.Ordinal));
     }
 
     [TestMethod]

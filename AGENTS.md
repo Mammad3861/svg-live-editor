@@ -2,7 +2,7 @@
 
 ## Project purpose and scope
 
-SvgLiveEditor is an open-source Windows desktop application for editing UTF-8 SVG/XML source and viewing a live, security-restricted preview. Version 0.3 adds secure full-artwork PNG clipboard sharing and a discoverable Pan mode to the validated document tree and minimal supported-attribute editing, while keeping source text as the single source of truth. It does not cover direct canvas manipulation, image/PDF file export, installers, updates, cloud features, full visual SVG editing, BPMN, or AI generation.
+SvgLiveEditor is an open-source Windows desktop application for editing UTF-8 SVG/XML source and viewing a live, security-restricted preview. Version 0.3.1 adds focus-sensitive preview copying and a fixed app-owned preview context menu to secure full-artwork PNG clipboard sharing, the discoverable Pan mode, validated document tree, and minimal supported-attribute editing, while keeping source text as the single source of truth. It does not cover direct canvas manipulation, image/PDF file export, installers, updates, cloud features, full visual SVG editing, BPMN, or AI generation.
 
 ## Architecture overview
 
@@ -38,12 +38,12 @@ dotnet build SvgLiveEditor.sln --configuration Release --no-restore
 dotnet test SvgLiveEditor.sln --configuration Release --no-build
 dotnet run --project src/SvgLiveEditor/SvgLiveEditor.csproj
 dotnet publish src/SvgLiveEditor/SvgLiveEditor.csproj --configuration Release --runtime win-x64 --self-contained true --property:PublishProfile=win-x64
-./scripts/Publish-WinX64.ps1 -Version 0.3.0
+./scripts/Publish-WinX64.ps1 -Version 0.3.1
 ```
 
 The publish output is under `dist/win-x64/`. The publish script audits the self-contained win-x64 package and creates both `releases/SvgLiveEditor-vX.Y.Z-win-x64.zip` and its `.sha256` file locally. Packaged users do not need a separate .NET installation, but they must install Microsoft Edge WebView2 Evergreen Runtime and extract the full ZIP before running `SvgLiveEditor.exe`.
 
-`.github/workflows/release.yml` runs for pushed stable `vX.Y.Z` tags and by manual dispatch for an existing tag. It validates and checks out the exact tag, confirms the project version, runs the deterministic non-desktop-integration tests, invokes the same audited packaging script, uploads both files as a workflow artifact, and attaches them to the matching GitHub Release. Identically named assets are replaced; a missing Release is created only as a draft.
+`.github/workflows/release.yml` runs for pushed stable `vX.Y.Z` tags and by manual dispatch for an existing tag. It validates and checks out the exact tag, confirms the project version, runs the deterministic non-desktop-integration tests, invokes the same audited packaging script, uploads both files as a workflow artifact, and attaches them to the matching GitHub Release. Identically named assets are replaced. An existing Release's publication state and notes are not edited; a missing Release is created only as a draft with GitHub-generated notes, using the previous stable tag when available.
 
 ## Coding conventions
 

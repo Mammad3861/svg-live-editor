@@ -141,6 +141,74 @@ public sealed class PreviewInteractionMessageParser
         }
     }
 
+    public bool TryParseContextMenuRequest(
+        string json,
+        string expectedToken,
+        out PreviewContextMenuRequest request)
+    {
+        request = default;
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || root.EnumerateObject().Count() != 6
+                || !TryReadString(root, "type", out string? type)
+                || type != "contextMenu"
+                || !TryReadString(root, "token", out string? token)
+                || !string.Equals(token, expectedToken, StringComparison.Ordinal)
+                || !TryReadNumber(root, "x", 0, MaximumViewportDimension, out double x)
+                || !TryReadNumber(root, "y", 0, MaximumViewportDimension, out double y)
+                || !TryReadNumber(
+                    root,
+                    "viewportWidth",
+                    1,
+                    MaximumViewportDimension,
+                    out double viewportWidth)
+                || !TryReadNumber(
+                    root,
+                    "viewportHeight",
+                    1,
+                    MaximumViewportDimension,
+                    out double viewportHeight)
+                || x > viewportWidth
+                || y > viewportHeight)
+            {
+                return false;
+            }
+
+            request = new PreviewContextMenuRequest(
+                x,
+                y,
+                viewportWidth,
+                viewportHeight);
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    public bool IsCopyCommand(string json, string expectedToken)
+    {
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            return root.ValueKind == JsonValueKind.Object
+                && root.EnumerateObject().Count() == 2
+                && TryReadString(root, "type", out string? type)
+                && type == "copyCommand"
+                && TryReadString(root, "token", out string? token)
+                && string.Equals(token, expectedToken, StringComparison.Ordinal);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
     private static bool TryReadString(
         JsonElement root,
         string propertyName,

@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing stable release tag to package (for example, v0.3.0)
+        description: Existing stable release tag to package (for example, v0.3.1)
         required: true
         type: string
 
@@ -47,7 +47,7 @@ jobs:
           }
 
           if ($tag -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
-            throw "Release tag '$tag' must be a stable semantic version such as v0.3.0."
+            throw "Release tag '$tag' must be a stable semantic version such as v0.3.1."
           }
 
           git show-ref --verify --quiet "refs/tags/$tag"
@@ -166,12 +166,31 @@ jobs:
               throw "Could not query the GitHub Release for '$tag': $lookupOutput"
             }
 
-            gh release create $tag `
-              --repo $env:GITHUB_REPOSITORY `
-              --verify-tag `
-              --draft `
-              --title "SvgLiveEditor $tag" `
-              --notes "Automated binary package for $tag."
+            [version]$currentVersion = $tag.Substring(1)
+            $previousTag = git tag --list 'v*' --sort=-v:refname |
+              Where-Object {
+                $_ -cmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' -and
+                [version]($_.Substring(1)) -lt $currentVersion
+              } |
+              Select-Object -First 1
+
+            $createArguments = @(
+              'release',
+              'create',
+              $tag,
+              '--repo',
+              $env:GITHUB_REPOSITORY,
+              '--verify-tag',
+              '--draft',
+              '--title',
+              "SvgLiveEditor $tag",
+              '--generate-notes'
+            )
+            if (-not [string]::IsNullOrWhiteSpace($previousTag)) {
+              $createArguments += @('--notes-start-tag', $previousTag)
+            }
+
+            & gh @createArguments
             if ($LASTEXITCODE -ne 0) {
               throw "Could not create a draft GitHub Release for '$tag'."
             }
