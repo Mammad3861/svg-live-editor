@@ -406,6 +406,7 @@
           <Grid Grid.Row="1" Background="#F8FAFC">
             <wv2:WebView2 x:Name="PreviewWebView"
                            DefaultBackgroundColor="#FFF8FAFC"
+                           PreviewKeyDown="OnPreviewWebViewPreviewKeyDown"
                            ZoomFactorChanged="OnPreviewWebViewZoomFactorChanged"
                            LostKeyboardFocus="OnPreviewWebViewLostKeyboardFocus"
                            SizeChanged="OnPreviewWebViewSizeChanged" />

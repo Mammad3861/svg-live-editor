@@ -29,7 +29,11 @@ public sealed class PreviewBridgeIntegrationTests
         int PngWidth,
         int PngHeight,
         bool PngTopLeftIsTransparent,
-        int ZoomNavigationCount);
+        int ZoomNavigationCount,
+        bool ContextMenuCanceled,
+        bool ContextMenuParsed,
+        bool PlainCopyCanceled,
+        int CopyCommandCount);
 
     [TestMethod]
     [TestCategory("DesktopIntegration")]
@@ -64,6 +68,10 @@ public sealed class PreviewBridgeIntegrationTests
         Assert.AreEqual(150, result.PngHeight);
         Assert.IsTrue(result.PngTopLeftIsTransparent);
         Assert.AreEqual(0, result.ZoomNavigationCount);
+        Assert.IsTrue(result.ContextMenuCanceled);
+        Assert.IsTrue(result.ContextMenuParsed);
+        Assert.IsTrue(result.PlainCopyCanceled);
+        Assert.AreEqual(1, result.CopyCommandCount);
         Assert.IsTrue(thread.Join(TimeSpan.FromSeconds(5)));
     }
 
@@ -163,7 +171,12 @@ public sealed class PreviewBridgeIntegrationTests
                 TaskCreationOptions.RunContinuationsAsynchronously);
             TaskCompletionSource<(string Source, string Json)> pngMessageReceived = new(
                 TaskCreationOptions.RunContinuationsAsynchronously);
+            TaskCompletionSource<(string Source, string Json)> contextMenuReceived = new(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            TaskCompletionSource<(string Source, string Json)> copyCommandReceived = new(
+                TaskCreationOptions.RunContinuationsAsynchronously);
             int zoomMessageCount = 0;
+            int copyCommandCount = 0;
             int zoomNavigationCount = 0;
             core.NavigationStarting += (_, _) => zoomNavigationCount++;
             core.WebMessageReceived += (_, args) =>
@@ -176,11 +189,28 @@ public sealed class PreviewBridgeIntegrationTests
                     messageReceived.TrySetResult((args.Source, args.WebMessageAsJson));
                 }
                 else if (message.RootElement.TryGetProperty(
-                        "type",
-                        out type)
+                         "type",
+                         out type)
                     && type.GetString() == "png")
                 {
                     pngMessageReceived.TrySetResult(
+                        (args.Source, args.WebMessageAsJson));
+                }
+                else if (message.RootElement.TryGetProperty(
+                         "type",
+                         out type)
+                    && type.GetString() == "contextMenu")
+                {
+                    contextMenuReceived.TrySetResult(
+                        (args.Source, args.WebMessageAsJson));
+                }
+                else if (message.RootElement.TryGetProperty(
+                         "type",
+                         out type)
+                    && type.GetString() == "copyCommand")
+                {
+                    copyCommandCount++;
+                    copyCommandReceived.TrySetResult(
                         (args.Source, args.WebMessageAsJson));
                 }
             };
@@ -220,6 +250,75 @@ public sealed class PreviewBridgeIntegrationTests
             }
             bool pngTopLeftIsTransparent =
                 IsTopLeftTransparent(pngPayload.Bytes);
+
+            string contextMenuDispatch = await core.ExecuteScriptAsync(
+                """
+                document.querySelector('.preview-viewport').dispatchEvent(
+                  new MouseEvent('contextmenu', {
+                    clientX: 200,
+                    clientY: 120,
+                    bubbles: true,
+                    cancelable: true
+                  }))
+                """);
+            (string contextSource, string contextJson) =
+                await contextMenuReceived.Task.WaitAsync(
+                    TimeSpan.FromSeconds(10));
+            PreviewNavigationPolicy navigationPolicy = new();
+            PreviewInteractionMessageParser parser = new();
+            bool contextMenuParsed =
+                navigationPolicy.IsTrustedWebMessageSource(contextSource)
+                && parser.TryParseContextMenuRequest(
+                    contextJson,
+                    BridgeToken,
+                    out PreviewContextMenuRequest contextRequest)
+                && contextRequest.X > 0
+                && contextRequest.Y > 0;
+
+            string copyDispatch = await core.ExecuteScriptAsync(
+                """
+                (() => {
+                  const viewport = document.querySelector('.preview-viewport');
+                  viewport.focus();
+                  return viewport.dispatchEvent(new KeyboardEvent('keydown', {
+                    code: 'KeyC',
+                    ctrlKey: true,
+                    bubbles: true,
+                    cancelable: true
+                  }));
+                })()
+                """);
+            (string copySource, string copyJson) =
+                await copyCommandReceived.Task.WaitAsync(
+                    TimeSpan.FromSeconds(10));
+            if (!navigationPolicy.IsTrustedWebMessageSource(copySource)
+                || !parser.IsCopyCommand(copyJson, BridgeToken))
+            {
+                throw new InvalidOperationException(
+                    $"Trusted page sent an invalid copy command: {copyJson}");
+            }
+
+            await core.ExecuteScriptAsync(
+                """
+                (() => {
+                  const viewport = document.querySelector('.preview-viewport');
+                  viewport.dispatchEvent(new KeyboardEvent('keydown', {
+                    code: 'KeyC',
+                    ctrlKey: true,
+                    shiftKey: true,
+                    bubbles: true,
+                    cancelable: true
+                  }));
+                  viewport.dispatchEvent(new KeyboardEvent('keydown', {
+                    code: 'KeyC',
+                    ctrlKey: true,
+                    altKey: true,
+                    bubbles: true,
+                    cancelable: true
+                  }));
+                })()
+                """);
+            await Task.Delay(50);
 
             await core.ExecuteScriptAsync(
                 """
@@ -269,14 +368,12 @@ public sealed class PreviewBridgeIntegrationTests
             (string source, string json) =
                 await messageReceived.Task.WaitAsync(TimeSpan.FromSeconds(10));
             await Task.Delay(150);
-            PreviewNavigationPolicy navigationPolicy = new();
             if (!navigationPolicy.IsTrustedWebMessageSource(source))
             {
                 throw new InvalidOperationException(
                     $"Unexpected WebMessage source: {source}; current document: {core.Source}");
             }
 
-            PreviewInteractionMessageParser parser = new();
             if (!parser.TryParseZoomRequest(
                     json,
                     BridgeToken,
@@ -338,7 +435,11 @@ public sealed class PreviewBridgeIntegrationTests
                 pngPayload.Size.Width,
                 pngPayload.Size.Height,
                 pngTopLeftIsTransparent,
-                zoomNavigationCount));
+                zoomNavigationCount,
+                contextMenuDispatch.Equals("false", StringComparison.Ordinal),
+                contextMenuParsed,
+                copyDispatch.Equals("false", StringComparison.Ordinal),
+                copyCommandCount));
         }
         catch (Exception exception)
         {

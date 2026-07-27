@@ -139,6 +139,76 @@ public sealed class PreviewInteractionTests
     }
 
     [TestMethod]
+    public void ContextMenuRequest_RequiresExactTokenBoundCoordinates()
+    {
+        const string valid = """
+            {"type":"contextMenu",
+             "token":"00112233445566778899AABBCCDDEEFF",
+             "x":250,"y":125,"viewportWidth":500,"viewportHeight":250}
+            """;
+        const string stale = """
+            {"type":"contextMenu",
+             "token":"FFEEDDCCBBAA99887766554433221100",
+             "x":250,"y":125,"viewportWidth":500,"viewportHeight":250}
+            """;
+        const string outside = """
+            {"type":"contextMenu",
+             "token":"00112233445566778899AABBCCDDEEFF",
+             "x":501,"y":125,"viewportWidth":500,"viewportHeight":250}
+            """;
+        const string extra = """
+            {"type":"contextMenu",
+             "token":"00112233445566778899AABBCCDDEEFF",
+             "x":250,"y":125,"viewportWidth":500,"viewportHeight":250,
+             "url":"https://example.test"}
+            """;
+
+        Assert.IsTrue(_parser.TryParseContextMenuRequest(
+            valid,
+            BridgeToken,
+            out PreviewContextMenuRequest request));
+        Assert.AreEqual(250, request.X);
+        Assert.AreEqual(125, request.Y);
+        Assert.IsFalse(_parser.TryParseContextMenuRequest(
+            stale,
+            BridgeToken,
+            out _));
+        Assert.IsFalse(_parser.TryParseContextMenuRequest(
+            outside,
+            BridgeToken,
+            out _));
+        Assert.IsFalse(_parser.TryParseContextMenuRequest(
+            extra,
+            BridgeToken,
+            out _));
+    }
+
+    [TestMethod]
+    public void CopyCommand_RequiresOnlyTheExactTypeAndNavigationToken()
+    {
+        const string valid = """
+            {"type":"copyCommand",
+             "token":"00112233445566778899AABBCCDDEEFF"}
+            """;
+        const string stale = """
+            {"type":"copyCommand",
+             "token":"FFEEDDCCBBAA99887766554433221100"}
+            """;
+        const string extra = """
+            {"type":"copyCommand",
+             "token":"00112233445566778899AABBCCDDEEFF",
+             "target":"document"}
+            """;
+
+        Assert.IsTrue(_parser.IsCopyCommand(valid, BridgeToken));
+        Assert.IsFalse(_parser.IsCopyCommand(stale, BridgeToken));
+        Assert.IsFalse(_parser.IsCopyCommand(extra, BridgeToken));
+        Assert.IsFalse(_parser.IsCopyCommand(
+            """{"type":"navigate","token":"00112233445566778899AABBCCDDEEFF"}""",
+            BridgeToken));
+    }
+
+    [TestMethod]
     public void AnchorScrollCalculation_KeepsPointerContentStableAndClamps()
     {
         PreviewZoomRequest centered = new(
