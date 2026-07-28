@@ -209,6 +209,108 @@ public sealed class PreviewInteractionTests
     }
 
     [TestMethod]
+    public void DirectDragArm_RequiresExactCurrentTokenAndBoundedArtworkSchema()
+    {
+        const string valid = """
+            {"type":"directDrag",
+             "token":"00112233445566778899AABBCCDDEEFF",
+             "action":"arm",
+             "gestureId":"FFEEDDCCBBAA99887766554433221100",
+             "x":250,"y":125,"viewportWidth":500,"viewportHeight":250,
+             "button":0,"startedOnArtwork":true,
+             "isPrimary":true,"pointerType":"mouse",
+             "ctrlKey":false,"shiftKey":false,"altKey":false,
+             "metaKey":false,"spaceHeld":false}
+            """;
+        const string stale = """
+            {"type":"directDrag",
+             "token":"FFEEDDCCBBAA99887766554433221100",
+             "action":"arm",
+             "gestureId":"FFEEDDCCBBAA99887766554433221100",
+             "x":250,"y":125,"viewportWidth":500,"viewportHeight":250,
+             "button":0,"startedOnArtwork":true,
+             "isPrimary":true,"pointerType":"mouse",
+             "ctrlKey":false,"shiftKey":false,"altKey":false,
+             "metaKey":false,"spaceHeld":false}
+            """;
+        const string extra = """
+            {"type":"directDrag",
+             "token":"00112233445566778899AABBCCDDEEFF",
+             "action":"arm",
+             "gestureId":"FFEEDDCCBBAA99887766554433221100",
+             "x":250,"y":125,"viewportWidth":500,"viewportHeight":250,
+             "button":0,"startedOnArtwork":true,
+             "isPrimary":true,"pointerType":"mouse",
+             "ctrlKey":false,"shiftKey":false,"altKey":false,
+             "metaKey":false,"spaceHeld":false,
+             "path":"C:\\secret.png"}
+            """;
+
+        Assert.IsTrue(_parser.TryParseDirectDragArmRequest(
+            valid,
+            BridgeToken,
+            out PreviewDirectDragArmRequest request));
+        Assert.IsTrue(request.Gesture.StartedOnArtwork);
+        Assert.IsTrue(request.Gesture.IsPrimary);
+        Assert.IsTrue(request.Gesture.IsMouse);
+        Assert.IsFalse(_parser.TryParseDirectDragArmRequest(
+            stale,
+            BridgeToken,
+            out _));
+        Assert.IsFalse(_parser.TryParseDirectDragArmRequest(
+            extra,
+            BridgeToken,
+            out _));
+        Assert.IsFalse(new PreviewNavigationPolicy()
+            .IsTrustedWebMessageSource("https://example.test"));
+    }
+
+    [TestMethod]
+    public void DirectDragSignal_RequiresExactStartOrCancelSchema()
+    {
+        const string start = """
+            {"type":"directDrag",
+             "token":"00112233445566778899AABBCCDDEEFF",
+             "action":"start",
+             "gestureId":"FFEEDDCCBBAA99887766554433221100",
+             "x":260,"y":125,"viewportWidth":500,"viewportHeight":250}
+            """;
+        const string cancel = """
+            {"type":"directDrag",
+             "token":"00112233445566778899AABBCCDDEEFF",
+             "action":"cancel",
+             "gestureId":"FFEEDDCCBBAA99887766554433221100",
+             "x":250,"y":125,"viewportWidth":500,"viewportHeight":250}
+            """;
+        const string outside = """
+            {"type":"directDrag",
+             "token":"00112233445566778899AABBCCDDEEFF",
+             "action":"start",
+             "gestureId":"FFEEDDCCBBAA99887766554433221100",
+             "x":501,"y":125,"viewportWidth":500,"viewportHeight":250}
+            """;
+
+        Assert.IsTrue(_parser.TryParseDirectDragSignal(
+            start,
+            BridgeToken,
+            out PreviewDirectDragSignal startSignal));
+        Assert.AreEqual(
+            PreviewDirectDragSignalAction.Start,
+            startSignal.Action);
+        Assert.IsTrue(_parser.TryParseDirectDragSignal(
+            cancel,
+            BridgeToken,
+            out PreviewDirectDragSignal cancelSignal));
+        Assert.AreEqual(
+            PreviewDirectDragSignalAction.Cancel,
+            cancelSignal.Action);
+        Assert.IsFalse(_parser.TryParseDirectDragSignal(
+            outside,
+            BridgeToken,
+            out _));
+    }
+
+    [TestMethod]
     public void AnchorScrollCalculation_KeepsPointerContentStableAndClamps()
     {
         PreviewZoomRequest centered = new(

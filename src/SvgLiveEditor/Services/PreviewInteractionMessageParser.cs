@@ -209,6 +209,127 @@ public sealed class PreviewInteractionMessageParser
         }
     }
 
+    public bool TryParseDirectDragArmRequest(
+        string json,
+        string expectedToken,
+        out PreviewDirectDragArmRequest request)
+    {
+        request = default;
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || root.EnumerateObject().Count() != 17
+                || !TryReadString(root, "type", out string? type)
+                || type != "directDrag"
+                || !TryReadString(root, "token", out string? token)
+                || !string.Equals(token, expectedToken, StringComparison.Ordinal)
+                || !TryReadString(root, "action", out string? action)
+                || action != "arm"
+                || !TryReadHexId(root, "gestureId", out string? gestureId)
+                || !TryReadPointerCoordinates(
+                    root,
+                    out double x,
+                    out double y,
+                    out double viewportWidth,
+                    out double viewportHeight)
+                || !TryReadInteger(root, "button", 0, 2, out int button)
+                || !TryReadBoolean(root, "startedOnArtwork", out bool startedOnArtwork)
+                || !TryReadBoolean(root, "isPrimary", out bool isPrimary)
+                || !TryReadString(root, "pointerType", out string? pointerType)
+                || pointerType != "mouse"
+                || !TryReadBoolean(root, "ctrlKey", out bool controlHeld)
+                || !TryReadBoolean(root, "shiftKey", out bool shiftHeld)
+                || !TryReadBoolean(root, "altKey", out bool altHeld)
+                || !TryReadBoolean(root, "metaKey", out bool metaHeld)
+                || !TryReadBoolean(root, "spaceHeld", out bool isSpaceHeld))
+            {
+                return false;
+            }
+
+            request = new PreviewDirectDragArmRequest(
+                gestureId!,
+                new PreviewPointerGestureInput(
+                    button,
+                    startedOnArtwork,
+                    isPrimary,
+                    IsMouse: true,
+                    controlHeld,
+                    shiftHeld,
+                    altHeld,
+                    metaHeld,
+                    isSpaceHeld,
+                    PanModeEnabled: false),
+                x,
+                y,
+                viewportWidth,
+                viewportHeight);
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    public bool TryParseDirectDragSignal(
+        string json,
+        string expectedToken,
+        out PreviewDirectDragSignal signal)
+    {
+        signal = default;
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || root.EnumerateObject().Count() != 8
+                || !TryReadString(root, "type", out string? type)
+                || type != "directDrag"
+                || !TryReadString(root, "token", out string? token)
+                || !string.Equals(token, expectedToken, StringComparison.Ordinal)
+                || !TryReadString(root, "action", out string? actionText)
+                || !TryReadHexId(root, "gestureId", out string? gestureId)
+                || !TryReadPointerCoordinates(
+                    root,
+                    out double x,
+                    out double y,
+                    out double viewportWidth,
+                    out double viewportHeight))
+            {
+                return false;
+            }
+
+            PreviewDirectDragSignalAction action;
+            if (actionText == "start")
+            {
+                action = PreviewDirectDragSignalAction.Start;
+            }
+            else if (actionText == "cancel")
+            {
+                action = PreviewDirectDragSignalAction.Cancel;
+            }
+            else
+            {
+                return false;
+            }
+
+            signal = new PreviewDirectDragSignal(
+                action,
+                gestureId!,
+                x,
+                y,
+                viewportWidth,
+                viewportHeight);
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
     private static bool TryReadString(
         JsonElement root,
         string propertyName,
@@ -223,6 +344,87 @@ public sealed class PreviewInteractionMessageParser
 
         value = property.GetString();
         return value is not null;
+    }
+
+    private static bool TryReadHexId(
+        JsonElement root,
+        string propertyName,
+        out string? value)
+    {
+        return TryReadString(root, propertyName, out value)
+            && value!.Length == 32
+            && value.All(Uri.IsHexDigit);
+    }
+
+    private static bool TryReadBoolean(
+        JsonElement root,
+        string propertyName,
+        out bool value)
+    {
+        value = false;
+        if (!root.TryGetProperty(propertyName, out JsonElement property)
+            || property.ValueKind is not (
+                JsonValueKind.True or JsonValueKind.False))
+        {
+            return false;
+        }
+
+        value = property.GetBoolean();
+        return true;
+    }
+
+    private static bool TryReadInteger(
+        JsonElement root,
+        string propertyName,
+        int minimum,
+        int maximum,
+        out int value)
+    {
+        value = 0;
+        return root.TryGetProperty(propertyName, out JsonElement property)
+            && property.ValueKind == JsonValueKind.Number
+            && property.TryGetInt32(out value)
+            && value >= minimum
+            && value <= maximum;
+    }
+
+    private static bool TryReadPointerCoordinates(
+        JsonElement root,
+        out double x,
+        out double y,
+        out double viewportWidth,
+        out double viewportHeight)
+    {
+        x = 0;
+        y = 0;
+        viewportWidth = 0;
+        viewportHeight = 0;
+        return TryReadNumber(
+                root,
+                "x",
+                0,
+                MaximumViewportDimension,
+                out x)
+            && TryReadNumber(
+                root,
+                "y",
+                0,
+                MaximumViewportDimension,
+                out y)
+            && TryReadNumber(
+                root,
+                "viewportWidth",
+                1,
+                MaximumViewportDimension,
+                out viewportWidth)
+            && TryReadNumber(
+                root,
+                "viewportHeight",
+                1,
+                MaximumViewportDimension,
+                out viewportHeight)
+            && x <= viewportWidth
+            && y <= viewportHeight;
     }
 
     private static bool TryReadNumber(

@@ -1,4 +1,3 @@
-using System.Buffers.Binary;
 using System.Text.Json;
 using SvgLiveEditor.Models;
 
@@ -11,12 +10,18 @@ public sealed class PreviewPngMessageParser
     public const int MaximumMessageCharacters =
         MaximumBase64Characters + 1024;
 
-    private static readonly byte[] PngSignature =
-        [137, 80, 78, 71, 13, 10, 26, 10];
+    private readonly PreviewPngPayloadValidator _payloadValidator;
+
+    public PreviewPngMessageParser(
+        PreviewPngPayloadValidator? payloadValidator = null)
+    {
+        _payloadValidator =
+            payloadValidator ?? new PreviewPngPayloadValidator();
+    }
 
     public bool TryParse(
         string json,
-        PendingPreviewPngCopy expected,
+        PendingPreviewPngRequest expected,
         out PreviewPngPayload? payload)
     {
         payload = null;
@@ -83,7 +88,9 @@ public sealed class PreviewPngMessageParser
                 Array.Resize(ref bytes, bytesWritten);
             }
 
-            if (!HasExpectedPngStructure(bytes, width, height))
+            if (!_payloadValidator.IsValid(
+                    bytes,
+                    new PreviewPngSize(width, height)))
             {
                 return false;
             }
@@ -101,7 +108,7 @@ public sealed class PreviewPngMessageParser
 
     public bool IsMatchingError(
         string json,
-        PendingPreviewPngCopy expected)
+        PendingPreviewPngRequest expected)
     {
         if (string.IsNullOrEmpty(json) || json.Length > 1024)
         {
@@ -131,94 +138,6 @@ public sealed class PreviewPngMessageParser
         {
             return false;
         }
-    }
-
-    private static bool HasExpectedPngStructure(
-        byte[] bytes,
-        int expectedWidth,
-        int expectedHeight)
-    {
-        if (!bytes.AsSpan(0, PngSignature.Length)
-                .SequenceEqual(PngSignature))
-        {
-            return false;
-        }
-
-        int offset = PngSignature.Length;
-        bool foundHeader = false;
-        bool foundImageData = false;
-        while (offset <= bytes.Length - 12)
-        {
-            uint unsignedLength =
-                BinaryPrimitives.ReadUInt32BigEndian(
-                    bytes.AsSpan(offset, 4));
-            if (unsignedLength > int.MaxValue)
-            {
-                return false;
-            }
-
-            int length = (int)unsignedLength;
-            int dataOffset = offset + 8;
-            if (length > bytes.Length - dataOffset - 4)
-            {
-                return false;
-            }
-
-            ReadOnlySpan<byte> type = bytes.AsSpan(offset + 4, 4);
-            if (!IsChunkType(type))
-            {
-                return false;
-            }
-
-            if (!foundHeader)
-            {
-                if (!type.SequenceEqual("IHDR"u8)
-                    || length != 13
-                    || BinaryPrimitives.ReadUInt32BigEndian(
-                        bytes.AsSpan(dataOffset, 4)) != (uint)expectedWidth
-                    || BinaryPrimitives.ReadUInt32BigEndian(
-                        bytes.AsSpan(dataOffset + 4, 4)) !=
-                        (uint)expectedHeight)
-                {
-                    return false;
-                }
-
-                foundHeader = true;
-            }
-            else if (type.SequenceEqual("IHDR"u8))
-            {
-                return false;
-            }
-            else if (type.SequenceEqual("IDAT"u8))
-            {
-                foundImageData = true;
-            }
-            else if (type.SequenceEqual("IEND"u8))
-            {
-                return foundImageData
-                    && length == 0
-                    && offset + 12 == bytes.Length;
-            }
-
-            offset = dataOffset + length + 4;
-        }
-
-        return false;
-    }
-
-    private static bool IsChunkType(ReadOnlySpan<byte> type)
-    {
-        foreach (byte character in type)
-        {
-            if (!((character >= (byte)'A' && character <= (byte)'Z')
-                || (character >= (byte)'a'
-                    && character <= (byte)'z')))
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     private static bool TryReadString(

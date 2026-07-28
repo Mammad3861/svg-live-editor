@@ -15,13 +15,17 @@
         Closing="OnWindowClosing"
         Deactivated="OnWindowDeactivated"
         PreviewKeyDown="OnWindowPreviewKeyDown"
+        PreviewDragEnter="OnWindowPreviewDragEnter"
         PreviewDragOver="OnWindowPreviewDragOver"
-        Drop="OnWindowDrop">
+        PreviewDragLeave="OnWindowPreviewDragLeave"
+        PreviewDrop="OnWindowDrop"
+        QueryContinueDrag="OnWindowQueryContinueDrag">
   <Window.Resources>
     <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
   </Window.Resources>
 
-  <DockPanel LastChildFill="True">
+  <Grid>
+    <DockPanel LastChildFill="True">
     <Menu DockPanel.Dock="Top" Background="White">
       <MenuItem Header="_File">
         <MenuItem Header="_New" InputGestureText="Ctrl+N" Click="OnNewClick" />
@@ -90,6 +94,24 @@
                 AutomationProperties.Name="Copy Preview as PNG"
                 IsEnabled="{Binding CanCopyPreviewAsPng}"
                 Click="OnCopyPreviewAsPngClick" />
+        <Button x:Name="DragImageButton"
+                ToolTip="Drag the rendered PNG to another application"
+                AutomationProperties.Name="Drag Image"
+                IsEnabled="{Binding CanCopyPreviewAsPng}"
+                PreviewMouseLeftButtonDown="OnDragImagePreviewMouseLeftButtonDown"
+                PreviewMouseMove="OnDragImagePreviewMouseMove"
+                PreviewMouseLeftButtonUp="OnDragImagePreviewMouseLeftButtonUp"
+                LostMouseCapture="OnDragImageLostMouseCapture">
+          <StackPanel Orientation="Horizontal">
+            <Path Width="14"
+                  Height="14"
+                  Margin="0,0,5,0"
+                  Stretch="Uniform"
+                  Fill="#334155"
+                  Data="M3,1 L11,1 L11,4 L9,4 L9,3 L5,3 L5,9 L9,9 L9,8 L11,8 L11,11 L3,11 Z M8,5 L12,5 L12,3 L15,6 L12,9 L12,7 L8,7 Z" />
+            <TextBlock Text="Drag Image" />
+          </StackPanel>
+        </Button>
         <ToggleButton x:Name="PanModeButton"
                       Content="Pan"
                       ToolTip="Pan overflowing preview with left drag (H toggles, Escape exits)"
@@ -404,12 +426,14 @@
           </Border>
 
           <Grid Grid.Row="1" Background="#F8FAFC">
-            <wv2:WebView2 x:Name="PreviewWebView"
-                           DefaultBackgroundColor="#FFF8FAFC"
-                           PreviewKeyDown="OnPreviewWebViewPreviewKeyDown"
-                           ZoomFactorChanged="OnPreviewWebViewZoomFactorChanged"
-                           LostKeyboardFocus="OnPreviewWebViewLostKeyboardFocus"
-                           SizeChanged="OnPreviewWebViewSizeChanged" />
+            <wv2:WebView2CompositionControl
+                x:Name="PreviewWebView"
+                AllowExternalDrop="False"
+                DefaultBackgroundColor="#FFF8FAFC"
+                PreviewKeyDown="OnPreviewWebViewPreviewKeyDown"
+                ZoomFactorChanged="OnPreviewWebViewZoomFactorChanged"
+                LostKeyboardFocus="OnPreviewWebViewLostKeyboardFocus"
+                SizeChanged="OnPreviewWebViewSizeChanged" />
             <Border x:Name="PreviewMessagePanel" Background="#F8FAFC" Padding="32">
               <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="520">
                 <ProgressBar x:Name="PreviewLoadingIndicator" Width="220" Height="4" Margin="0,0,0,20" IsIndeterminate="True" />
@@ -426,5 +450,36 @@
         </Grid>
       </Border>
     </Grid>
-  </DockPanel>
+    </DockPanel>
+
+    <Border x:Name="FileDropOverlay"
+            Panel.ZIndex="1000"
+            Margin="18"
+            Padding="28"
+            Background="#E60F172A"
+            BorderBrush="#60A5FA"
+            BorderThickness="3"
+            CornerRadius="12"
+            Visibility="Collapsed"
+            IsHitTestVisible="False"
+            Focusable="False"
+            AutomationProperties.Name="Drop SVG or TXT to open"
+            AutomationProperties.LiveSetting="Polite">
+      <StackPanel HorizontalAlignment="Center"
+                  VerticalAlignment="Center"
+                  MaxWidth="620">
+        <TextBlock Text="Drop SVG or TXT to open"
+                   FontSize="26"
+                   FontWeight="SemiBold"
+                   Foreground="White"
+                   TextAlignment="Center" />
+        <TextBlock x:Name="FileDropOverlayFileName"
+                   Margin="0,10,0,0"
+                   FontSize="16"
+                   Foreground="#BFDBFE"
+                   TextAlignment="Center"
+                   TextTrimming="CharacterEllipsis" />
+      </StackPanel>
+    </Border>
+  </Grid>
 </Window>

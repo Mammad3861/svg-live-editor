@@ -60,18 +60,33 @@ public sealed class PreviewPageMessageBuilderTests
     }
 
     [TestMethod]
-    public void PanStateMessage_UsesOnlyTheTokenBoundBooleanSchema()
+    public void PanStateMessage_UsesOnlyTokenBooleanAndSystemThresholdSchema()
     {
         string json = _builder.BuildPanStateMessage(
             BridgeToken,
-            enabled: true);
+            enabled: true,
+            minimumHorizontalDragDistance: 4,
+            minimumVerticalDragDistance: 5);
 
         using JsonDocument document = JsonDocument.Parse(json);
         JsonElement root = document.RootElement;
-        Assert.AreEqual(3, root.EnumerateObject().Count());
+        Assert.AreEqual(5, root.EnumerateObject().Count());
         Assert.AreEqual("panState", root.GetProperty("type").GetString());
         Assert.AreEqual(BridgeToken, root.GetProperty("token").GetString());
         Assert.IsTrue(root.GetProperty("enabled").GetBoolean());
+        Assert.AreEqual(
+            4,
+            root.GetProperty("minimumHorizontalDragDistance").GetDouble());
+        Assert.AreEqual(
+            5,
+            root.GetProperty("minimumVerticalDragDistance").GetDouble());
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            _builder.BuildPanStateMessage(
+                BridgeToken,
+                enabled: false,
+                minimumHorizontalDragDistance: 0,
+                minimumVerticalDragDistance: 4));
     }
 
     [TestMethod]

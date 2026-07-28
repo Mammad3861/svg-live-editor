@@ -233,12 +233,13 @@ public sealed class PreviewBridgeIntegrationTests
                     $"Unexpected PNG WebMessage source: {pngSource}");
             }
 
-            PendingPreviewPngCopy expectedPng = new(
+            PendingPreviewPngRequest expectedPng = new(
                 BridgeToken,
                 pngRequestId,
                 new PreviewPngCopyPlan(
                     requestedPngSize,
-                    PreviewPngSourceState.CurrentValid));
+                    PreviewPngSourceState.CurrentValid),
+                PreviewPngRequestPurpose.ClipboardCopy);
             if (!new PreviewPngMessageParser().TryParse(
                     pngJson,
                     expectedPng,
