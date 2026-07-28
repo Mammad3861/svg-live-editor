@@ -6,6 +6,7 @@ namespace SvgLiveEditor.Services;
 public sealed class PreviewPageMessageBuilder
 {
     public const double MaximumRenderedDimension = 10_000_000;
+    public const double MaximumDragThreshold = 1_000;
 
     public string BuildZoomStateMessage(
         string bridgeToken,
@@ -32,14 +33,24 @@ public sealed class PreviewPageMessageBuilder
 
     public string BuildPanStateMessage(
         string bridgeToken,
-        bool enabled)
+        bool enabled,
+        double minimumHorizontalDragDistance,
+        double minimumVerticalDragDistance)
     {
         ValidateHexToken(bridgeToken, nameof(bridgeToken));
+        ValidateDragThreshold(
+            minimumHorizontalDragDistance,
+            nameof(minimumHorizontalDragDistance));
+        ValidateDragThreshold(
+            minimumVerticalDragDistance,
+            nameof(minimumVerticalDragDistance));
         return JsonSerializer.Serialize(new
         {
             type = "panState",
             token = bridgeToken,
-            enabled
+            enabled,
+            minimumHorizontalDragDistance,
+            minimumVerticalDragDistance
         });
     }
 
@@ -99,6 +110,18 @@ public sealed class PreviewPageMessageBuilder
     private static void ValidateNormalized(double value, string parameterName)
     {
         if (!double.IsFinite(value) || value < 0 || value > 1)
+        {
+            throw new ArgumentOutOfRangeException(parameterName);
+        }
+    }
+
+    private static void ValidateDragThreshold(
+        double value,
+        string parameterName)
+    {
+        if (!double.IsFinite(value)
+            || value <= 0
+            || value > MaximumDragThreshold)
         {
             throw new ArgumentOutOfRangeException(parameterName);
         }

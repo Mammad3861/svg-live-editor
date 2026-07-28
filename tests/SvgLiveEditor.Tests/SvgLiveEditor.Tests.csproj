@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
@@ -18,5 +18,9 @@
     <ProjectReference Include="..\..\src\SvgLiveEditor\SvgLiveEditor.csproj" />
     <None Include="..\..\samples\welcome.svg" Link="samples\welcome.svg" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\.github\workflows\release.yml" Link="workflows\release.yml" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\scripts\Publish-WinX64.ps1" Link="scripts\Publish-WinX64.ps1" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\SvgLiveEditor\MainWindow.xaml" Link="ui\MainWindow.xaml" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\SvgLiveEditor\MainWindow.xaml.cs" Link="ui\MainWindow.xaml.cs" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\SvgLiveEditor\Properties\PublishProfiles\win-x64.pubxml" Link="publish\win-x64.pubxml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

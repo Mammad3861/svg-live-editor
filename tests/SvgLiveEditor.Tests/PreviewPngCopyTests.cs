@@ -145,7 +145,7 @@ public sealed class PreviewPngCopyTests
     public void PngMessage_AcceptsOnlyExpectedTokenSchemaDimensionsAndSignature()
     {
         byte[] png = CreateStructurallyValidPng(1, 1);
-        PendingPreviewPngCopy expected = CreatePending(
+        PendingPreviewPngRequest expected = CreatePending(
             new PreviewPngSize(1, 1));
         string json = CreateMessage(
             png,
@@ -167,7 +167,7 @@ public sealed class PreviewPngCopyTests
     public void PngMessage_RejectsStaleTokensExtraFieldsWrongMimeAndDimensions()
     {
         byte[] png = CreateStructurallyValidPng(1, 1);
-        PendingPreviewPngCopy expected = CreatePending(
+        PendingPreviewPngRequest expected = CreatePending(
             new PreviewPngSize(1, 1));
         string stale = CreateMessage(
             png,
@@ -208,7 +208,7 @@ public sealed class PreviewPngCopyTests
     [TestMethod]
     public void PngMessage_RejectsBadBase64TruncatedOrMismatchedPng()
     {
-        PendingPreviewPngCopy expected = CreatePending(
+        PendingPreviewPngRequest expected = CreatePending(
             new PreviewPngSize(1, 1));
         byte[] wrongSignature = CreateStructurallyValidPng(1, 1);
         wrongSignature[0] = 0;
@@ -242,15 +242,16 @@ public sealed class PreviewPngCopyTests
             out _));
     }
 
-    private static PendingPreviewPngCopy CreatePending(
+    private static PendingPreviewPngRequest CreatePending(
         PreviewPngSize size)
     {
-        return new PendingPreviewPngCopy(
+        return new PendingPreviewPngRequest(
             BridgeToken,
             RequestId,
             new PreviewPngCopyPlan(
                 size,
-                PreviewPngSourceState.CurrentValid));
+                PreviewPngSourceState.CurrentValid),
+            PreviewPngRequestPurpose.ClipboardCopy);
     }
 
     private static string CreateMessage(

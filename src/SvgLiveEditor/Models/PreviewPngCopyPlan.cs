@@ -24,7 +24,14 @@ public sealed record PreviewPngPayload(
     PreviewPngSize Size,
     byte[] Bytes);
 
-public sealed record PendingPreviewPngCopy(
+public enum PreviewPngRequestPurpose
+{
+    ClipboardCopy,
+    DragOut
+}
+
+public sealed record PendingPreviewPngRequest(
     string BridgeToken,
     string RequestId,
-    PreviewPngCopyPlan Plan);
+    PreviewPngCopyPlan Plan,
+    PreviewPngRequestPurpose Purpose);

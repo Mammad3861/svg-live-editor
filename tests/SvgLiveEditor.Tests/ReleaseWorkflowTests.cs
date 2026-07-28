@@ -42,6 +42,44 @@ public sealed class ReleaseWorkflowTests
     }
 
     [TestMethod]
+    public void PublicReleaseUploadContainsOnlyTheZip()
+    {
+        string workflow = ReadWorkflow();
+        int attachStep = workflow.IndexOf(
+            "- name: Attach assets to the matching GitHub Release",
+            StringComparison.Ordinal);
+        Assert.IsTrue(attachStep >= 0);
+        string releaseUpload = workflow[attachStep..];
+
+        StringAssert.Contains(
+            releaseUpload,
+            "gh release upload $tag $archivePath");
+        Assert.IsFalse(releaseUpload.Contains(
+            "$checksumPath",
+            StringComparison.Ordinal));
+        Assert.IsFalse(releaseUpload.Contains(
+            ".sha256",
+            StringComparison.OrdinalIgnoreCase));
+    }
+
+    [TestMethod]
+    public void InternalChecksumIsGeneratedVerifiedAndSummarized()
+    {
+        string workflow = ReadWorkflow();
+
+        StringAssert.Contains(
+            workflow,
+            "SvgLiveEditor-$env:RELEASE_TAG-win-x64.sha256");
+        StringAssert.Contains(
+            workflow,
+            "$actualChecksum -cne $expectedChecksum");
+        StringAssert.Contains(
+            workflow,
+            "Verified release ZIP SHA-256");
+        StringAssert.Contains(workflow, "GITHUB_STEP_SUMMARY");
+    }
+
+    [TestMethod]
     public void StableTagValidationAndExactCheckoutRemainRequired()
     {
         string workflow = ReadWorkflow();

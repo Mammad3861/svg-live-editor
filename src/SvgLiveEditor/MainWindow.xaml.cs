@@ -43,6 +43,15 @@ public partial class MainWindow : Window
     private readonly SvgCanvasSizeReader _svgCanvasSizeReader = new();
     private readonly PreviewPngCopyPolicy _previewPngCopyPolicy = new();
     private readonly PreviewPngMessageParser _previewPngMessageParser = new();
+    private readonly PreviewDragFileStore _previewDragFileStore = new();
+    private readonly PreviewDragDataObjectFactory
+        _previewDragDataObjectFactory = new();
+    private readonly PreviewDragGestureTracker
+        _previewDragGestureTracker = new();
+    private readonly PreviewDirectDragHandshake
+        _previewDirectDragHandshake = new();
+    private readonly InboundFileDropPolicy _inboundFileDropPolicy = new();
+    private readonly FileDropOverlayState _fileDropOverlayState = new();
     private readonly ClipboardCopyService _clipboardCopyService =
         new(new WindowsClipboardWriter());
     private readonly UserPreferencesService _userPreferencesService = new();
@@ -53,6 +62,10 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _fitResizeTimer = new()
     {
         Interval = TimeSpan.FromMilliseconds(150)
+    };
+    private readonly DispatcherTimer _dragFileCleanupTimer = new()
+    {
+        Interval = PreviewDragFileStore.CleanupInterval
     };
     private readonly ContextMenu _previewContextMenu;
 
@@ -74,7 +87,8 @@ public partial class MainWindow : Window
     private string? _activePreviewBridgeToken;
     private CoreWebView2? _configuredCoreWebView;
     private Task<bool>? _webViewInitializationTask;
-    private PendingPreviewPngCopy? _pendingPreviewPngCopy;
+    private PendingPreviewPngRequest? _pendingPreviewPngRequest;
+    private PreviewDragRequestOrigin? _pendingPreviewDragOrigin;
 
     public MainWindow()
     {
@@ -92,6 +106,9 @@ public partial class MainWindow : Window
         SourceEditor.TextArea.Caret.PositionChanged += OnCaretPositionChanged;
         PreviewWebView.CoreWebView2InitializationCompleted += OnCoreWebView2InitializationCompleted;
         _fitResizeTimer.Tick += OnFitResizeTimerTick;
+        _dragFileCleanupTimer.Tick += OnDragFileCleanupTimerTick;
+        _dragFileCleanupTimer.Start();
+        _previewDragFileStore.TryCleanup();
         InitializeDocumentInspector();
 
         _userPreferences = _userPreferencesService.Load();
@@ -224,6 +241,7 @@ public partial class MainWindow : Window
         settings.IsPinchZoomEnabled = false;
         settings.IsGeneralAutofillEnabled = false;
         settings.IsPasswordAutosaveEnabled = false;
+        PreviewWebView.AllowExternalDrop = false;
 
         core.NavigationStarting += OnPreviewNavigationStarting;
         core.NavigationCompleted += OnPreviewNavigationCompleted;
@@ -247,7 +265,8 @@ public partial class MainWindow : Window
         if (_isPreviewNavigationRequested)
         {
             ClosePreviewContextMenu();
-            CancelPendingPreviewPngCopy(
+            _previewDirectDragHandshake.Reset();
+            CancelPendingPreviewPngRequest(
                 "Preview changed before the PNG copy completed. Try again.");
             _isPreviewNavigationRequested = false;
             _activePreviewNavigationId = e.NavigationId;
@@ -283,7 +302,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        CancelPendingPreviewPngCopy();
+        CancelPendingPreviewPngRequest();
         _activePreviewBridgeToken = null;
         ShowPreviewError(
             "Preview could not be rendered",
@@ -298,7 +317,8 @@ public partial class MainWindow : Window
         _activePreviewNavigationId = null;
         _activePreviewRevision = null;
         _activePreviewBridgeToken = null;
-        CancelPendingPreviewPngCopy();
+        _previewDirectDragHandshake.Reset();
+        CancelPendingPreviewPngRequest();
         _previewNavigationCoordinator.Reset();
         ShowPreviewError(
             "Preview process failed",
@@ -317,13 +337,14 @@ public partial class MainWindow : Window
         }
 
         string messageJson = e.WebMessageAsJson;
-        if (_pendingPreviewPngCopy is PendingPreviewPngCopy pending)
+        if (_pendingPreviewPngRequest is PendingPreviewPngRequest pending)
         {
             if (_previewPngMessageParser.IsMatchingError(
                     messageJson,
                     pending))
             {
-                _pendingPreviewPngCopy = null;
+                _pendingPreviewPngRequest = null;
+                _pendingPreviewDragOrigin = null;
                 _viewModel.SetCanCopyPreviewAsPng(_hasVisiblePreview);
                 _viewModel.SetOperationStatus(
                     "The preview could not be converted to PNG.");
@@ -338,35 +359,20 @@ public partial class MainWindow : Window
                     out pngPayload));
             if (isPng && pngPayload is not null)
             {
-                if (!ReferenceEquals(_pendingPreviewPngCopy, pending))
+                if (!ReferenceEquals(_pendingPreviewPngRequest, pending))
                 {
                     return;
                 }
 
-                _pendingPreviewPngCopy = null;
-                ClipboardWriteResult result =
-                    await _clipboardCopyService.CopyPngAsync(pngPayload);
+                _pendingPreviewPngRequest = null;
+                PreviewDragRequestOrigin? dragOrigin =
+                    _pendingPreviewDragOrigin;
+                _pendingPreviewDragOrigin = null;
                 _viewModel.SetCanCopyPreviewAsPng(_hasVisiblePreview);
-                if (result.Succeeded)
-                {
-                    string dimensions =
-                        $"{pngPayload.Size.Width} \u00D7 {pngPayload.Size.Height}";
-                    _viewModel.SetOperationStatus(
-                        pending.Plan.SourceState switch
-                        {
-                            PreviewPngSourceState.CurrentInvalid =>
-                                $"Copied the last valid preview; current source is invalid \u00B7 {dimensions}",
-                            PreviewPngSourceState.PendingValidation =>
-                                $"Copied the last validated preview; current source is still validating \u00B7 {dimensions}",
-                            _ =>
-                                $"Preview copied as PNG \u00B7 {dimensions}"
-                        });
-                }
-                else
-                {
-                    _viewModel.SetOperationStatus(
-                        $"Could not copy the preview: {result.ErrorMessage}");
-                }
+                await HandlePreviewPngPayloadAsync(
+                    pending,
+                    pngPayload,
+                    dragOrigin);
                 return;
             }
 
@@ -377,6 +383,48 @@ public partial class MainWindow : Window
         }
         else if (messageJson.Length > 16_384)
         {
+            return;
+        }
+
+        if (_previewInteractionMessageParser.TryParseDirectDragArmRequest(
+                messageJson,
+                bridgeToken,
+                out PreviewDirectDragArmRequest armRequest))
+        {
+            PreviewPointerGestureInput gesture = armRequest.Gesture with
+            {
+                PanModeEnabled = _isPanModeEnabled
+            };
+            _previewDirectDragHandshake.TryArm(
+                armRequest with { Gesture = gesture },
+                Mouse.LeftButton == MouseButtonState.Pressed);
+            return;
+        }
+
+        if (_previewInteractionMessageParser.TryParseDirectDragSignal(
+                messageJson,
+                bridgeToken,
+                out PreviewDirectDragSignal dragSignal))
+        {
+            if (dragSignal.Action
+                == PreviewDirectDragSignalAction.Cancel)
+            {
+                _previewDirectDragHandshake.TryCancel(dragSignal);
+                return;
+            }
+
+            if (_previewDirectDragHandshake.TryStart(
+                    dragSignal,
+                    Mouse.LeftButton == MouseButtonState.Pressed,
+                    _isPanModeEnabled,
+                    SystemParameters.MinimumHorizontalDragDistance,
+                    SystemParameters.MinimumVerticalDragDistance))
+            {
+                ClosePreviewContextMenu();
+                StartPreviewPngRequest(
+                    PreviewPngRequestPurpose.DragOut,
+                    PreviewDragRequestOrigin.Artwork);
+            }
             return;
         }
 
@@ -528,7 +576,7 @@ public partial class MainWindow : Window
     {
         _isWebViewReady = false;
         _hasVisiblePreview = false;
-        CancelPendingPreviewPngCopy();
+        CancelPendingPreviewPngRequest();
         _viewModel.SetCanCopyPreviewAsPng(false);
         _previewPresentationState = "Error";
         UpdatePreviewStateText("Error");
@@ -562,10 +610,26 @@ public partial class MainWindow : Window
         object sender,
         RoutedEventArgs e)
     {
-        if (_pendingPreviewPngCopy is not null)
+        StartPreviewPngRequest(
+            PreviewPngRequestPurpose.ClipboardCopy);
+    }
+
+    private void StartPreviewPngRequest(
+        PreviewPngRequestPurpose purpose,
+        PreviewDragRequestOrigin? dragOrigin = null)
+    {
+        if ((purpose == PreviewPngRequestPurpose.DragOut)
+            != (dragOrigin is not null))
+        {
+            throw new ArgumentException(
+                "A drag request must identify exactly one drag origin.",
+                nameof(dragOrigin));
+        }
+
+        if (_pendingPreviewPngRequest is not null)
         {
             _viewModel.SetOperationStatus(
-                "A preview copy is already in progress.");
+                "A preview image operation is already in progress.");
             return;
         }
 
@@ -580,33 +644,145 @@ public partial class MainWindow : Window
             || PreviewWebView.CoreWebView2 is not CoreWebView2 core)
         {
             _viewModel.SetOperationStatus(
-                "No valid preview is available to copy.");
+                purpose == PreviewPngRequestPurpose.DragOut
+                    ? "No valid preview is available to drag."
+                    : "No valid preview is available to copy.");
             return;
         }
 
         string requestId =
             Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
-        PendingPreviewPngCopy pending =
-            new(bridgeToken, requestId, plan);
+        PendingPreviewPngRequest pending =
+            new(bridgeToken, requestId, plan, purpose);
         try
         {
-            _pendingPreviewPngCopy = pending;
+            _pendingPreviewPngRequest = pending;
+            _pendingPreviewDragOrigin = dragOrigin;
             _viewModel.SetCanCopyPreviewAsPng(false);
-            _viewModel.SetOperationStatus("Preparing PNG for the clipboard...");
+            _viewModel.SetOperationStatus(
+                purpose == PreviewPngRequestPurpose.DragOut
+                    ? "Preparing image\u2026"
+                    : "Preparing PNG for the clipboard...");
             core.PostWebMessageAsJson(
                 _previewPageMessageBuilder.BuildPngRequestMessage(
                     bridgeToken,
                     requestId,
                     plan.Size));
-            _ = ExpirePreviewPngCopyAsync(pending);
+            _ = ExpirePreviewPngRequestAsync(pending);
         }
         catch (Exception exception)
             when (exception is InvalidOperationException or COMException)
         {
-            _pendingPreviewPngCopy = null;
+            _pendingPreviewPngRequest = null;
+            _pendingPreviewDragOrigin = null;
             _viewModel.SetCanCopyPreviewAsPng(_hasVisiblePreview);
             _viewModel.SetOperationStatus(
                 $"Could not request the PNG: {exception.Message}");
+        }
+    }
+
+    private async Task HandlePreviewPngPayloadAsync(
+        PendingPreviewPngRequest pending,
+        PreviewPngPayload pngPayload,
+        PreviewDragRequestOrigin? dragOrigin)
+    {
+        if (pending.Purpose == PreviewPngRequestPurpose.DragOut)
+        {
+            if (dragOrigin is not PreviewDragRequestOrigin origin)
+            {
+                _viewModel.SetOperationStatus(
+                    "The preview image drag request lost its trusted origin.");
+                return;
+            }
+
+            StartPreviewImageDrag(pending, pngPayload, origin);
+            return;
+        }
+
+        ClipboardWriteResult result =
+            await _clipboardCopyService.CopyPngAsync(pngPayload);
+        if (result.Succeeded)
+        {
+            string dimensions =
+                $"{pngPayload.Size.Width} \u00D7 {pngPayload.Size.Height}";
+            _viewModel.SetOperationStatus(
+                pending.Plan.SourceState switch
+                {
+                    PreviewPngSourceState.CurrentInvalid =>
+                        $"Copied the last valid preview; current source is invalid \u00B7 {dimensions}",
+                    PreviewPngSourceState.PendingValidation =>
+                        $"Copied the last validated preview; current source is still validating \u00B7 {dimensions}",
+                    _ =>
+                        $"Preview copied as PNG \u00B7 {dimensions}"
+                });
+        }
+        else
+        {
+            _viewModel.SetOperationStatus(
+                $"Could not copy the preview: {result.ErrorMessage}");
+        }
+    }
+
+    private void StartPreviewImageDrag(
+        PendingPreviewPngRequest pending,
+        PreviewPngPayload pngPayload,
+        PreviewDragRequestOrigin origin)
+    {
+        if (origin == PreviewDragRequestOrigin.Artwork
+            && Mouse.LeftButton != MouseButtonState.Pressed)
+        {
+            _viewModel.SetOperationStatus(
+                "Preview image drag cancelled.");
+            return;
+        }
+
+        PreviewDragFileResult fileResult =
+            _previewDragFileStore.TryCreate(pngPayload);
+        if (!fileResult.Succeeded
+            || fileResult.Path is not string temporaryPath)
+        {
+            _viewModel.SetOperationStatus(
+                $"Could not prepare the image drag: {fileResult.ErrorMessage}");
+            return;
+        }
+
+        try
+        {
+            DataObject data = _previewDragDataObjectFactory.Create(
+                pngPayload,
+                temporaryPath);
+            _viewModel.SetOperationStatus(
+                PreviewDragStatusPolicy.Started(
+                    pending.Plan.SourceState,
+                    pngPayload.Size));
+            DependencyObject dragSource =
+                origin == PreviewDragRequestOrigin.Artwork
+                    ? PreviewWebView
+                    : DragImageButton;
+            DragDropEffects result = DragDrop.DoDragDrop(
+                dragSource,
+                data,
+                DragDropEffects.Copy);
+            if (result == DragDropEffects.None)
+            {
+                _previewDragFileStore.TryDelete(temporaryPath);
+                _viewModel.SetOperationStatus(
+                    "Preview image drag cancelled.");
+            }
+            else
+            {
+                _viewModel.SetOperationStatus(
+                    "Preview image shared. Temporary PNG cleanup is automatic.");
+            }
+        }
+        catch (Exception exception) when (exception is IOException
+            or UnauthorizedAccessException
+            or InvalidOperationException
+            or ArgumentException)
+        {
+            _previewDragFileStore.TryDelete(temporaryPath);
+            _viewModel.SetOperationStatus(
+                $"Could not start the image drag: {exception.Message}");
         }
     }
 
@@ -648,7 +824,7 @@ public partial class MainWindow : Window
             if (item.Tag is PreviewContextMenuCommand.CopyPreviewAsPng)
             {
                 item.IsEnabled = _hasVisiblePreview
-                    && _pendingPreviewPngCopy is null;
+                    && _pendingPreviewPngRequest is null;
             }
         }
 
@@ -714,29 +890,39 @@ public partial class MainWindow : Window
         _previewContextMenu.IsOpen = false;
     }
 
-    private async Task ExpirePreviewPngCopyAsync(
-        PendingPreviewPngCopy pending)
+    private async Task ExpirePreviewPngRequestAsync(
+        PendingPreviewPngRequest pending)
     {
         await Task.Delay(TimeSpan.FromSeconds(10));
-        if (ReferenceEquals(_pendingPreviewPngCopy, pending))
+        if (ReferenceEquals(_pendingPreviewPngRequest, pending))
         {
-            CancelPendingPreviewPngCopy(
+            CancelPendingPreviewPngRequest(
                 "The PNG response was not received or failed validation. Try again.");
         }
     }
 
-    private void CancelPendingPreviewPngCopy(string? status = null)
+    private void CancelPendingPreviewPngRequest(string? status = null)
     {
-        if (_pendingPreviewPngCopy is null)
+        _pendingPreviewDragOrigin = null;
+        if (_pendingPreviewPngRequest is null)
         {
             return;
         }
 
-        _pendingPreviewPngCopy = null;
+        _pendingPreviewPngRequest = null;
         _viewModel.SetCanCopyPreviewAsPng(_hasVisiblePreview);
         if (!string.IsNullOrWhiteSpace(status))
         {
             _viewModel.SetOperationStatus(status);
+        }
+    }
+
+    private void CancelPendingDirectArtworkDrag()
+    {
+        if (_pendingPreviewDragOrigin == PreviewDragRequestOrigin.Artwork)
+        {
+            CancelPendingPreviewPngRequest(
+                "Preview image drag cancelled.");
         }
     }
 
@@ -872,6 +1058,7 @@ public partial class MainWindow : Window
             _activePreviewNavigationId = null;
             _activePreviewRevision = request.Revision;
             _activePreviewBridgeToken = bridgeToken;
+            _previewDirectDragHandshake.Reset();
             _isPreviewNavigationRequested = true;
             core.NavigateToString(html);
         }
@@ -881,6 +1068,7 @@ public partial class MainWindow : Window
             _activePreviewNavigationId = null;
             _activePreviewRevision = null;
             _activePreviewBridgeToken = null;
+            _previewDirectDragHandshake.Reset();
             _previewNavigationCoordinator.TryComplete(request.Revision, out _);
             if (_previewNavigationCoordinator.HasPending)
             {
@@ -1020,6 +1208,15 @@ public partial class MainWindow : Window
             MessageBox.Show(
                 this,
                 "The selected file is not valid UTF-8.",
+                "Cannot open file",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+        catch (FileSizeLimitExceededException)
+        {
+            MessageBox.Show(
+                this,
+                $"The selected file exceeds the {Utf8FileService.MaximumFileMegabytes} MB limit.",
                 "Cannot open file",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
@@ -1285,6 +1482,7 @@ public partial class MainWindow : Window
     private void SetPanMode(bool enabled, bool announce = true)
     {
         _isPanModeEnabled = enabled;
+        _previewDirectDragHandshake.Reset();
         PanModeButton.IsChecked = enabled;
         PanModeButton.ToolTip = enabled
             ? "Pan mode active; left drag an overflowing preview (Escape exits)"
@@ -1311,7 +1509,9 @@ public partial class MainWindow : Window
             core.PostWebMessageAsJson(
                 _previewPageMessageBuilder.BuildPanStateMessage(
                     bridgeToken,
-                    _isPanModeEnabled));
+                    _isPanModeEnabled,
+                    SystemParameters.MinimumHorizontalDragDistance,
+                    SystemParameters.MinimumVerticalDragDistance));
             return true;
         }
         catch (InvalidOperationException)
@@ -1323,6 +1523,12 @@ public partial class MainWindow : Window
     private void OnWindowDeactivated(object? sender, EventArgs e)
     {
         ClosePreviewContextMenu();
+        ApplyFileDropOverlay(
+            _fileDropOverlayState.Transition(
+                FileDropOverlayEvent.WindowDeactivated));
+        ResetDragImageGesture();
+        _previewDirectDragHandshake.Reset();
+        CancelPendingDirectArtworkDrag();
         // Re-sending the current state asks the trusted page to terminate any
         // active pointer capture without changing whether Pan mode is enabled.
         TryUpdatePreviewPanModeInPlace();
@@ -1332,6 +1538,8 @@ public partial class MainWindow : Window
         object sender,
         KeyboardFocusChangedEventArgs e)
     {
+        _previewDirectDragHandshake.Reset();
+        CancelPendingDirectArtworkDrag();
         TryUpdatePreviewPanModeInPlace();
     }
 
@@ -1505,8 +1713,29 @@ public partial class MainWindow : Window
         ModifierKeys modifiers = Keyboard.Modifiers;
         bool controlOnly = modifiers == ModifierKeys.Control;
         Key pressedKey = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (pressedKey == Key.Escape)
+        {
+            _previewDirectDragHandshake.Reset();
+        }
 
         if (pressedKey == Key.Escape
+            && _pendingPreviewPngRequest?.Purpose
+                == PreviewPngRequestPurpose.DragOut)
+        {
+            CancelPendingPreviewPngRequest(
+                "Preview image drag cancelled.");
+            ResetDragImageGesture();
+            e.Handled = true;
+        }
+        else if (pressedKey == Key.Escape
+            && FileDropOverlay.Visibility == Visibility.Visible)
+        {
+            ApplyFileDropOverlay(
+                _fileDropOverlayState.Transition(
+                    FileDropOverlayEvent.Escape));
+            e.Handled = true;
+        }
+        else if (pressedKey == Key.Escape
             && _previewContextMenu.IsOpen)
         {
             ClosePreviewContextMenu();
@@ -1621,35 +1850,187 @@ public partial class MainWindow : Window
         ApplyWordWrap(!WordWrapMenuItem.IsChecked, persist: true);
     }
 
+    private void OnDragImagePreviewMouseLeftButtonDown(
+        object sender,
+        MouseButtonEventArgs e)
+    {
+        if (!_viewModel.CanCopyPreviewAsPng)
+        {
+            return;
+        }
+
+        Point position = e.GetPosition(DragImageButton);
+        _previewDragGestureTracker.Begin(position.X, position.Y);
+        DragImageButton.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void OnDragImagePreviewMouseMove(
+        object sender,
+        MouseEventArgs e)
+    {
+        if (!_previewDragGestureTracker.IsArmed)
+        {
+            return;
+        }
+
+        Point position = e.GetPosition(DragImageButton);
+        bool shouldStart = _previewDragGestureTracker.Move(
+            position.X,
+            position.Y,
+            e.LeftButton == MouseButtonState.Pressed,
+            SystemParameters.MinimumHorizontalDragDistance,
+            SystemParameters.MinimumVerticalDragDistance);
+        if (!shouldStart)
+        {
+            return;
+        }
+
+        if (Mouse.Captured == DragImageButton)
+        {
+            DragImageButton.ReleaseMouseCapture();
+        }
+
+        e.Handled = true;
+        StartPreviewPngRequest(
+            PreviewPngRequestPurpose.DragOut,
+            PreviewDragRequestOrigin.Toolbar);
+    }
+
+    private void OnDragImagePreviewMouseLeftButtonUp(
+        object sender,
+        MouseButtonEventArgs e)
+    {
+        ResetDragImageGesture();
+        e.Handled = true;
+    }
+
+    private void OnDragImageLostMouseCapture(
+        object sender,
+        MouseEventArgs e)
+    {
+        _previewDragGestureTracker.Cancel();
+    }
+
+    private void ResetDragImageGesture()
+    {
+        _previewDragGestureTracker.Cancel();
+        if (Mouse.Captured == DragImageButton)
+        {
+            DragImageButton.ReleaseMouseCapture();
+        }
+    }
+
+    private void OnWindowPreviewDragEnter(
+        object sender,
+        DragEventArgs e)
+    {
+        UpdateFileDropFeedback(e);
+    }
+
     private void OnWindowPreviewDragOver(object sender, DragEventArgs e)
     {
-        e.Effects = TryGetSingleDroppedFile(e.Data, out string? path) && IsSupportedFile(path)
+        UpdateFileDropFeedback(e);
+    }
+
+    private void UpdateFileDropFeedback(DragEventArgs e)
+    {
+        InboundFileDropEvaluation evaluation =
+            _inboundFileDropPolicy.Evaluate(e.Data);
+        e.Effects = evaluation.IsAccepted
             ? DragDropEffects.Copy
             : DragDropEffects.None;
+        ApplyFileDropOverlay(
+            evaluation.IsAccepted
+                ? _fileDropOverlayState.Transition(
+                    FileDropOverlayEvent.SupportedDrag,
+                    evaluation.DisplayFileName)
+                : _fileDropOverlayState.Transition(
+                    FileDropOverlayEvent.Cancelled));
         e.Handled = true;
+    }
+
+    private void OnWindowPreviewDragLeave(
+        object sender,
+        DragEventArgs e)
+    {
+        e.Handled = true;
+        ApplyFileDropOverlay(
+            _fileDropOverlayState.Transition(
+                FileDropOverlayEvent.DragLeftWindow));
     }
 
     private void OnWindowDrop(object sender, DragEventArgs e)
     {
-        if (TryGetSingleDroppedFile(e.Data, out string? path)
-            && IsSupportedFile(path)
-            && ConfirmCanLeaveCurrentDocument())
+        ApplyFileDropOverlay(
+            _fileDropOverlayState.Transition(
+                FileDropOverlayEvent.Drop));
+        InboundFileDropEvaluation evaluation =
+            _inboundFileDropPolicy.Evaluate(e.Data);
+        e.Effects = evaluation.IsAccepted
+            ? DragDropEffects.Copy
+            : DragDropEffects.None;
+        e.Handled = true;
+
+        if (!evaluation.IsAccepted
+            || evaluation.FullPath is not string path)
         {
-            OpenDocument(path);
+            _viewModel.SetOperationStatus(evaluation.StatusMessage);
+            return;
         }
+
+        if (!ConfirmCanLeaveCurrentDocument())
+        {
+            ApplyFileDropOverlay(
+                _fileDropOverlayState.Transition(
+                    FileDropOverlayEvent.Cancelled));
+            _viewModel.SetOperationStatus(
+                "File drop cancelled; the current document was not changed.");
+            return;
+        }
+
+        InboundFileDropEvaluation finalEvaluation =
+            _inboundFileDropPolicy.Evaluate([path]);
+        if (!finalEvaluation.IsAccepted
+            || finalEvaluation.FullPath is not string finalPath)
+        {
+            _viewModel.SetOperationStatus(
+                finalEvaluation.StatusMessage);
+            return;
+        }
+
+        OpenDocument(finalPath);
     }
 
-    private static bool TryGetSingleDroppedFile(IDataObject data, out string path)
+    private void OnWindowQueryContinueDrag(
+        object sender,
+        QueryContinueDragEventArgs e)
     {
-        path = string.Empty;
-        if (!data.GetDataPresent(DataFormats.FileDrop)
-            || data.GetData(DataFormats.FileDrop) is not string[] { Length: 1 } files)
+        if (!e.EscapePressed)
         {
-            return false;
+            return;
         }
 
-        path = files[0];
-        return true;
+        e.Action = DragAction.Cancel;
+        ApplyFileDropOverlay(
+            _fileDropOverlayState.Transition(
+                FileDropOverlayEvent.Escape));
+    }
+
+    private void ApplyFileDropOverlay(
+        FileDropOverlayPresentation presentation)
+    {
+        FileDropOverlayFileName.Text = presentation.FileName;
+        FileDropOverlay.Visibility = presentation.IsVisible
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    private void OnDragFileCleanupTimerTick(
+        object? sender,
+        EventArgs e)
+    {
+        _previewDragFileStore.TryCleanup();
     }
 
     private static bool IsSupportedFile(string path)
@@ -1687,6 +2068,10 @@ public partial class MainWindow : Window
         DisposeDocumentInspector();
         _fitResizeTimer.Stop();
         _fitResizeTimer.Tick -= OnFitResizeTimerTick;
+        _dragFileCleanupTimer.Stop();
+        _dragFileCleanupTimer.Tick -= OnDragFileCleanupTimerTick;
+        ResetDragImageGesture();
+        _previewDirectDragHandshake.Reset();
         DetachCoreWebViewEvents();
         _previewDebouncer.Dispose();
         PreviewWebView.Dispose();

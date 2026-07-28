@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing stable release tag to package (for example, v0.3.1)
+        description: Existing stable release tag to package (for example, v0.4.0)
         required: true
         type: string
 
@@ -47,7 +47,7 @@ jobs:
           }
 
           if ($tag -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
-            throw "Release tag '$tag' must be a stable semantic version such as v0.3.1."
+            throw "Release tag '$tag' must be a stable semantic version such as v0.4.0."
           }
 
           git show-ref --verify --quiet "refs/tags/$tag"
@@ -136,6 +136,20 @@ jobs:
             throw 'The generated SHA-256 file does not match the release archive.'
           }
 
+          Write-Host "Verified release ZIP SHA-256: $archiveHash"
+          $summary = @(
+            '## Verified release package',
+            '',
+            "- Asset: ``$archiveName``",
+            "- SHA-256: ``$archiveHash``",
+            '',
+            'GitHub also displays the asset Digest on the Release page.'
+          ) -join "`n"
+          [IO.File]::AppendAllText(
+            $env:GITHUB_STEP_SUMMARY,
+            "$summary`n",
+            [Text.UTF8Encoding]::new($false))
+
       - name: Upload package for troubleshooting
         uses: actions/upload-artifact@v6
         with:
@@ -157,7 +171,6 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $false
           $tag = $env:RELEASE_TAG
           $archivePath = "releases/SvgLiveEditor-$tag-win-x64.zip"
-          $checksumPath = "releases/SvgLiveEditor-$tag-win-x64.sha256"
 
           $lookupOutput = (& gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" 2>&1 | Out-String)
           $lookupExitCode = $LASTEXITCODE
@@ -196,7 +209,7 @@ jobs:
             }
           }
 
-          gh release upload $tag $archivePath $checksumPath `
+          gh release upload $tag $archivePath `
             --repo $env:GITHUB_REPOSITORY `
             --clobber
           if ($LASTEXITCODE -ne 0) {

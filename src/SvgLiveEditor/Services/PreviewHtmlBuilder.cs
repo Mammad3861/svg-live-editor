@@ -17,8 +17,11 @@ public sealed class PreviewHtmlBuilder
           const bridgeToken = document.body.dataset.bridgeToken;
           let spaceHeld = false;
           let panModeEnabled = false;
+          let minimumHorizontalDragDistance = null;
+          let minimumVerticalDragDistance = null;
           let activePointerId = null;
           let activePanButton = null;
+          let activeDirectDrag = null;
           let startX = 0;
           let startY = 0;
           let startScrollLeft = 0;
@@ -38,6 +41,11 @@ public sealed class PreviewHtmlBuilder
             viewport.classList.toggle(
               'pan-mode',
               panModeEnabled && canPan());
+            image.classList.toggle(
+              'drag-ready',
+              !panModeEnabled &&
+              minimumHorizontalDragDistance !== null &&
+              minimumVerticalDragDistance !== null);
           };
 
           const stopPan = event => {
@@ -147,6 +155,99 @@ public sealed class PreviewHtmlBuilder
             }
           };
 
+          const postDirectDragArm = (gestureId, event) => {
+            if (!bridge) {
+              return;
+            }
+
+            bridge.postMessage({
+              type: 'directDrag',
+              token: bridgeToken,
+              action: 'arm',
+              gestureId,
+              x: lastPointerX,
+              y: lastPointerY,
+              viewportWidth: viewport.clientWidth,
+              viewportHeight: viewport.clientHeight,
+              button: event.button,
+              startedOnArtwork: event.target === image,
+              isPrimary: event.isPrimary,
+              pointerType: event.pointerType,
+              ctrlKey: event.ctrlKey,
+              shiftKey: event.shiftKey,
+              altKey: event.altKey,
+              metaKey: event.metaKey,
+              spaceHeld
+            });
+          };
+
+          const postDirectDragSignal = (action, gestureId) => {
+            if (!bridge) {
+              return;
+            }
+
+            bridge.postMessage({
+              type: 'directDrag',
+              token: bridgeToken,
+              action,
+              gestureId,
+              x: lastPointerX,
+              y: lastPointerY,
+              viewportWidth: viewport.clientWidth,
+              viewportHeight: viewport.clientHeight
+            });
+          };
+
+          const createGestureId = () => {
+            if (!globalThis.crypto ||
+                typeof globalThis.crypto.getRandomValues !== 'function') {
+              return null;
+            }
+
+            const bytes = new Uint8Array(16);
+            globalThis.crypto.getRandomValues(bytes);
+            return Array.from(
+              bytes,
+              value => value.toString(16).padStart(2, '0')).join('');
+          };
+
+          const choosePointerAction = event => {
+            if (event.button === 1) {
+              return 'pan';
+            }
+            if (event.button !== 0) {
+              return 'none';
+            }
+            if (spaceHeld || event.ctrlKey || panModeEnabled) {
+              return 'pan';
+            }
+            if (event.shiftKey || event.altKey || event.metaKey ||
+                event.target !== image ||
+                !event.isTrusted || !event.isPrimary ||
+                event.pointerType !== 'mouse') {
+              return 'none';
+            }
+            return 'drag';
+          };
+
+          const stopDirectDrag = (event, notify = true) => {
+            if (activeDirectDrag === null ||
+                (event && event.pointerId !== activeDirectDrag.pointerId)) {
+              return;
+            }
+
+            const stopped = activeDirectDrag;
+            activeDirectDrag = null;
+            image.classList.remove('drag-armed');
+            if (image.hasPointerCapture(stopped.pointerId)) {
+              image.releasePointerCapture(stopped.pointerId);
+            }
+            if (notify) {
+              postDirectDragSignal('cancel', stopped.gestureId);
+            }
+            refreshCursor();
+          };
+
           const postPngError = requestId => {
             if (bridge) {
               bridge.postMessage({
@@ -250,10 +351,21 @@ public sealed class PreviewHtmlBuilder
               }
 
               if (message.type === 'panState' &&
-                  Object.keys(message).length === 3 &&
-                  typeof message.enabled === 'boolean') {
+                  Object.keys(message).length === 5 &&
+                  typeof message.enabled === 'boolean' &&
+                  Number.isFinite(message.minimumHorizontalDragDistance) &&
+                  message.minimumHorizontalDragDistance > 0 &&
+                  message.minimumHorizontalDragDistance <= 1000 &&
+                  Number.isFinite(message.minimumVerticalDragDistance) &&
+                  message.minimumVerticalDragDistance > 0 &&
+                  message.minimumVerticalDragDistance <= 1000) {
                 panModeEnabled = message.enabled;
+                minimumHorizontalDragDistance =
+                  message.minimumHorizontalDragDistance;
+                minimumVerticalDragDistance =
+                  message.minimumVerticalDragDistance;
                 stopPan();
+                stopDirectDrag();
                 refreshCursor();
                 return;
               }
@@ -303,16 +415,39 @@ public sealed class PreviewHtmlBuilder
 
           viewport.addEventListener('pointerdown', event => {
             rememberPointer(event);
-            const isMiddlePan = event.button === 1;
-            const isSpacePan = event.button === 0 && spaceHeld;
-            const isCtrlPan = event.button === 0 && event.ctrlKey;
-            const isModePan = event.button === 0 && panModeEnabled;
-            if ((!isMiddlePan && !isSpacePan &&
-                 !isCtrlPan && !isModePan) || !canPan()) {
+            const action = choosePointerAction(event);
+            if (action === 'drag') {
+              if (minimumHorizontalDragDistance === null ||
+                  minimumVerticalDragDistance === null) {
+                return;
+              }
+
+              const gestureId = createGestureId();
+              if (gestureId === null) {
+                return;
+              }
+
+              event.preventDefault();
+              stopPan();
+              activeDirectDrag = {
+                gestureId,
+                pointerId: event.pointerId,
+                startX: lastPointerX,
+                startY: lastPointerY
+              };
+              image.setPointerCapture(event.pointerId);
+              image.classList.add('drag-armed');
+              postDirectDragArm(gestureId, event);
+              refreshCursor();
+              return;
+            }
+
+            if (action !== 'pan' || !canPan()) {
               return;
             }
 
             event.preventDefault();
+            stopDirectDrag();
             activePointerId = event.pointerId;
             activePanButton = event.button;
             startX = event.clientX;
@@ -325,6 +460,30 @@ public sealed class PreviewHtmlBuilder
 
           viewport.addEventListener('pointermove', event => {
             rememberPointer(event);
+            if (activeDirectDrag !== null &&
+                event.pointerId === activeDirectDrag.pointerId) {
+              if (!event.isTrusted ||
+                  (event.buttons & 1) === 0 ||
+                  spaceHeld || event.ctrlKey || panModeEnabled ||
+                  event.shiftKey || event.altKey || event.metaKey) {
+                stopDirectDrag(event);
+                return;
+              }
+
+              if (Math.abs(lastPointerX - activeDirectDrag.startX) <
+                    minimumHorizontalDragDistance &&
+                  Math.abs(lastPointerY - activeDirectDrag.startY) <
+                    minimumVerticalDragDistance) {
+                return;
+              }
+
+              event.preventDefault();
+              const gestureId = activeDirectDrag.gestureId;
+              stopDirectDrag(event, false);
+              postDirectDragSignal('start', gestureId);
+              return;
+            }
+
             if (event.pointerId !== activePointerId) {
               return;
             }
@@ -340,13 +499,31 @@ public sealed class PreviewHtmlBuilder
             viewport.scrollTop = startScrollTop - (event.clientY - startY);
           });
 
-          viewport.addEventListener('pointerup', stopPan);
-          viewport.addEventListener('pointercancel', stopPan);
-          viewport.addEventListener('lostpointercapture', stopPan);
-          viewport.addEventListener('pointerleave', stopPan);
+          viewport.addEventListener('pointerup', event => {
+            stopPan(event);
+            stopDirectDrag(event);
+          });
+          viewport.addEventListener('pointercancel', event => {
+            stopPan(event);
+            stopDirectDrag(event);
+          });
+          viewport.addEventListener('lostpointercapture', event => {
+            stopPan(event);
+            stopDirectDrag(event);
+          });
+          viewport.addEventListener('pointerleave', event => {
+            stopPan(event);
+            stopDirectDrag(event);
+          });
           viewport.addEventListener('scroll', scheduleViewportState);
-          window.addEventListener('pointerup', stopPan, true);
-          window.addEventListener('pointercancel', stopPan, true);
+          window.addEventListener('pointerup', event => {
+            stopPan(event);
+            stopDirectDrag(event);
+          }, true);
+          window.addEventListener('pointercancel', event => {
+            stopPan(event);
+            stopDirectDrag(event);
+          }, true);
           viewport.addEventListener('dragstart', event => event.preventDefault());
           viewport.addEventListener('selectstart', event => event.preventDefault());
           viewport.addEventListener('auxclick', event => {
@@ -356,6 +533,7 @@ public sealed class PreviewHtmlBuilder
           });
           viewport.addEventListener('contextmenu', event => {
             event.preventDefault();
+            stopDirectDrag();
             rememberPointer(event);
             viewport.focus({ preventScroll: true });
             postContextMenuRequest();
@@ -379,6 +557,7 @@ public sealed class PreviewHtmlBuilder
               postPanCommand('toggle');
             } else if (event.code === 'Escape') {
               event.preventDefault();
+              stopDirectDrag();
               postPanCommand('exit');
             }
           });
@@ -387,6 +566,7 @@ public sealed class PreviewHtmlBuilder
             if (event.code === 'Space') {
               spaceHeld = false;
               stopPan();
+              stopDirectDrag();
               refreshCursor();
             }
           });
@@ -394,6 +574,7 @@ public sealed class PreviewHtmlBuilder
           window.addEventListener('blur', () => {
             spaceHeld = false;
             stopPan();
+            stopDirectDrag();
             refreshCursor();
           });
 
@@ -513,6 +694,12 @@ public sealed class PreviewHtmlBuilder
                 .preview-viewport.panning {
                   cursor: grabbing;
                 }
+                img.drag-ready {
+                  cursor: grab;
+                }
+                img.drag-armed {
+                  cursor: grabbing;
+                }
                 main {
                   position: relative;
                   width: {{stageWidthCss}}px;
@@ -531,7 +718,7 @@ public sealed class PreviewHtmlBuilder
                   height: {{heightCss}}px;
                   max-width: none;
                   max-height: none;
-                  pointer-events: none;
+                  pointer-events: auto;
                   user-select: none;
                 }
               </style>

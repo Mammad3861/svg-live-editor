@@ -2,15 +2,15 @@
 
 ## Project purpose and scope
 
-SvgLiveEditor is an open-source Windows desktop application for editing UTF-8 SVG/XML source and viewing a live, security-restricted preview. Version 0.3.1 adds focus-sensitive preview copying and a fixed app-owned preview context menu to secure full-artwork PNG clipboard sharing, the discoverable Pan mode, validated document tree, and minimal supported-attribute editing, while keeping source text as the single source of truth. It does not cover direct canvas manipulation, image/PDF file export, installers, updates, cloud features, full visual SVG editing, BPMN, or AI generation.
+SvgLiveEditor is an open-source Windows desktop application for editing UTF-8 SVG/XML source and viewing a live, security-restricted preview. Version 0.4.0 adds bounded window-wide SVG/TXT dropping and validated PNG drag-out sharing to focus-sensitive preview copying, the fixed app-owned preview context menu, discoverable Pan mode, validated document tree, and minimal supported-attribute editing, while keeping source text as the single source of truth. It does not cover direct canvas manipulation, explicit image/PDF file export, installers, updates, cloud features, full visual SVG editing, BPMN, or AI generation.
 
 ## Architecture overview
 
 - `src/SvgLiveEditor`: one WPF application targeting `net10.0-windows`.
 - `ViewModels`: window state, inspector tree/property state, and presentation-friendly document metadata.
-- `Services`: testable SVG validation, validated source indexing, minimal attribute edits, secure preview/PNG bridge generation, bounded clipboard writing, UTF-8 file access, debounce behavior, sample loading, and unsaved-change policy.
+- `Services`: testable SVG validation, validated source indexing, minimal attribute edits, secure preview/PNG bridge generation, bounded clipboard/drag payloads, bounded UTF-8 file access, drag-file cleanup, debounce behavior, sample loading, and unsaved-change policy.
 - `Models`: immutable results, source spans, indexed SVG nodes, text edits, and decisions shared by services and view models.
-- `MainWindow`: WPF-only integration for AvalonEdit, the document inspector, dialogs, WebView2, keyboard input, and drag/drop. Inspector-specific code stays in the `MainWindow.Inspector.cs` partial.
+- `MainWindow`: WPF-only integration for AvalonEdit, the document inspector, dialogs, composition-mode WebView2, keyboard input, and drag/drop. Inspector-specific code stays in the `MainWindow.Inspector.cs` partial.
 - `tests/SvgLiveEditor.Tests`: tests for security-sensitive and document logic that does not require launching WPF.
 - `samples/welcome.svg`: the repository's original, safe starter SVG.
 
@@ -25,6 +25,9 @@ Keep the application in one project until a concrete need justifies another prod
 - Never insert raw SVG into host HTML. Preview only a Base64 data image under a restrictive CSP.
 - Keep user SVG scripts, host objects, downloads, permissions, external navigation, pop-ups, and external resource requests disabled or blocked. If a fixed app-owned host interaction script is technically required, authorize only its exact CSP hash, keep the SVG isolated as a Base64 image, and accept only narrowly typed, strictly validated web messages.
 - Treat PNG bridge payloads as untrusted: enforce request, token, schema, dimension, pixel, encoded-length, decoded-length, MIME, PNG signature, and image-header checks before clipboard use.
+- Direct preview drag must remain a paired, token-bound trusted-page gesture. Require an actual primary left-button pointer start on the isolated image, Pan-off arbitration, bounded coordinates, the Windows drag threshold, and a matching host-side armed gesture before requesting the existing validated PNG pipeline.
+- Accept inbound drag data only from one local FileDrop `.svg` or `.txt` path. Reject text/HTML/URL payloads, remote paths, links, directories, unsupported extensions, and files above the documented 10,000,000-byte limit.
+- Write drag-out PNGs only under the current user's scoped LocalAppData `SvgLiveEditor\DragOut` directory with random create-new names. Keep cleanup age, count, and total-size bounds; never derive a path from SVG source.
 - Do not weaken these rules without security tests and explicit rationale.
 - Never add secrets, credentials, telemetry, or unexpected network access.
 
@@ -38,12 +41,12 @@ dotnet build SvgLiveEditor.sln --configuration Release --no-restore
 dotnet test SvgLiveEditor.sln --configuration Release --no-build
 dotnet run --project src/SvgLiveEditor/SvgLiveEditor.csproj
 dotnet publish src/SvgLiveEditor/SvgLiveEditor.csproj --configuration Release --runtime win-x64 --self-contained true --property:PublishProfile=win-x64
-./scripts/Publish-WinX64.ps1 -Version 0.3.1
+./scripts/Publish-WinX64.ps1 -Version 0.4.0
 ```
 
 The publish output is under `dist/win-x64/`. The publish script audits the self-contained win-x64 package and creates both `releases/SvgLiveEditor-vX.Y.Z-win-x64.zip` and its `.sha256` file locally. Packaged users do not need a separate .NET installation, but they must install Microsoft Edge WebView2 Evergreen Runtime and extract the full ZIP before running `SvgLiveEditor.exe`.
 
-`.github/workflows/release.yml` runs for pushed stable `vX.Y.Z` tags and by manual dispatch for an existing tag. It validates and checks out the exact tag, confirms the project version, runs the deterministic non-desktop-integration tests, invokes the same audited packaging script, uploads both files as a workflow artifact, and attaches them to the matching GitHub Release. Identically named assets are replaced. An existing Release's publication state and notes are not edited; a missing Release is created only as a draft with GitHub-generated notes, using the previous stable tag when available.
+`.github/workflows/release.yml` runs for pushed stable `vX.Y.Z` tags and by manual dispatch for an existing tag. It validates and checks out the exact tag, confirms the project version, runs the deterministic non-desktop-integration tests, invokes the same audited packaging script, verifies the internal checksum, records it in logs and the job summary, and retains both files as a troubleshooting artifact. Only the ZIP is attached to new GitHub Releases; GitHub displays its public asset Digest. An existing Release's publication state, notes, and unrelated historical assets are not edited; a missing Release is created only as a draft with GitHub-generated notes, using the previous stable tag when available.
 
 ## Coding conventions
 

@@ -2,7 +2,7 @@
 param(
     [Parameter()]
     [ValidatePattern('^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')]
-    [string]$Version = '0.3.1',
+    [string]$Version = '0.4.0',
 
     [Parameter()]
     [string]$RepositoryRoot
@@ -84,6 +84,7 @@ function Get-ForbiddenPackageReason {
             $segment -ieq 'test' -or
             $segment -ieq 'tests' -or
             $segment -ieq 'TestResults' -or
+            $segment -ieq 'DragOut' -or
             $segment -ieq 'EBWebView' -or
             $segment -ieq 'WebView2' -or
             $segment.EndsWith('.WebView2', [StringComparison]::OrdinalIgnoreCase)) {
@@ -167,6 +168,7 @@ function Assert-PublishDirectory {
         'coreclr.dll',
         'hostfxr.dll',
         'hostpolicy.dll',
+        'Microsoft.Windows.SDK.NET.dll',
         'System.Private.CoreLib.dll',
         'WebView2Loader.dll'
     )
@@ -207,6 +209,7 @@ function Assert-ZipPackage {
             'coreclr.dll',
             'hostfxr.dll',
             'hostpolicy.dll',
+            'Microsoft.Windows.SDK.NET.dll',
             'System.Private.CoreLib.dll',
             'WebView2Loader.dll'
         )

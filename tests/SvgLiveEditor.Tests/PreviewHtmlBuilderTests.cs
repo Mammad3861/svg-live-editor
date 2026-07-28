@@ -51,9 +51,11 @@ public sealed class PreviewHtmlBuilderTests
         StringAssert.Contains(script.Groups[1].Value, "window.addEventListener(");
         StringAssert.Contains(script.Groups[1].Value, "{ capture: true, passive: false }");
         StringAssert.Contains(script.Groups[1].Value, "event.button === 1");
-        StringAssert.Contains(script.Groups[1].Value, "event.button === 0 && spaceHeld");
-        StringAssert.Contains(script.Groups[1].Value, "event.button === 0 && event.ctrlKey");
-        StringAssert.Contains(script.Groups[1].Value, "event.button === 0 && panModeEnabled");
+        StringAssert.Contains(script.Groups[1].Value, "spaceHeld || event.ctrlKey || panModeEnabled");
+        StringAssert.Contains(script.Groups[1].Value, "event.target !== image");
+        StringAssert.Contains(script.Groups[1].Value, "!event.isTrusted || !event.isPrimary");
+        StringAssert.Contains(script.Groups[1].Value, "event.pointerType !== 'mouse'");
+        StringAssert.Contains(script.Groups[1].Value, "type: 'directDrag'");
         StringAssert.Contains(script.Groups[1].Value, "type: 'contextMenu'");
         StringAssert.Contains(script.Groups[1].Value, "type: 'copyCommand'");
         StringAssert.Contains(script.Groups[1].Value, "viewport.focus({ preventScroll: true })");
@@ -107,7 +109,33 @@ public sealed class PreviewHtmlBuilderTests
         StringAssert.Contains(script, "!event.altKey && !event.metaKey");
         StringAssert.Contains(script, "postCopyCommand()");
         StringAssert.Contains(script, "if (event.ctrlKey)");
-        StringAssert.Contains(script, "const isCtrlPan = event.button === 0 && event.ctrlKey");
+        StringAssert.Contains(script, "spaceHeld || event.ctrlKey || panModeEnabled");
+    }
+
+    [TestMethod]
+    public void Build_DirectDragRequiresTrustedArtworkGestureAndHostThreshold()
+    {
+        const string svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" />";
+        string html = _builder.Build(svg, 1000, 500, BridgeToken);
+        string script = ExtractHostScript(html);
+
+        StringAssert.Contains(html, "img.drag-ready");
+        StringAssert.Contains(html, "cursor: grab");
+        StringAssert.Contains(html, "pointer-events: auto");
+        StringAssert.Contains(script, "const choosePointerAction = event =>");
+        StringAssert.Contains(script, "event.target !== image");
+        StringAssert.Contains(script, "!event.isTrusted || !event.isPrimary");
+        StringAssert.Contains(script, "event.pointerType !== 'mouse'");
+        StringAssert.Contains(script, "minimumHorizontalDragDistance");
+        StringAssert.Contains(script, "minimumVerticalDragDistance");
+        StringAssert.Contains(script, "postDirectDragArm(gestureId, event)");
+        StringAssert.Contains(script, "postDirectDragSignal('start', gestureId)");
+        StringAssert.Contains(script, "postDirectDragSignal('cancel', stopped.gestureId)");
+        StringAssert.Contains(script, "stopDirectDrag(event, false)");
+        StringAssert.Contains(script, "viewport.addEventListener('dragstart', event => event.preventDefault())");
+        Assert.IsFalse(script.Contains(
+            "dataTransfer.setData",
+            StringComparison.Ordinal));
     }
 
     [TestMethod]
@@ -139,19 +167,18 @@ public sealed class PreviewHtmlBuilderTests
         string script = ExtractHostScript(
             _builder.Build(svg, 2000, 1000, BridgeToken));
 
-        StringAssert.Contains(script, "const isMiddlePan = event.button === 1");
-        StringAssert.Contains(script, "const isSpacePan = event.button === 0 && spaceHeld");
-        StringAssert.Contains(script, "const isCtrlPan = event.button === 0 && event.ctrlKey");
-        StringAssert.Contains(script, "const isModePan = event.button === 0 && panModeEnabled");
-        StringAssert.Contains(script, "!isCtrlPan && !isModePan) || !canPan())");
+        StringAssert.Contains(script, "if (event.button === 1)");
+        StringAssert.Contains(script, "spaceHeld || event.ctrlKey || panModeEnabled");
+        StringAssert.Contains(script, "return 'pan'");
+        StringAssert.Contains(script, "if (action !== 'pan' || !canPan())");
         StringAssert.Contains(script, "viewport.setPointerCapture(activePointerId)");
         StringAssert.Contains(script, "activePanButton = event.button");
         StringAssert.Contains(script, "const requiredButtonMask = activePanButton === 1 ? 4 : 1");
-        StringAssert.Contains(script, "viewport.addEventListener('pointerup', stopPan)");
-        StringAssert.Contains(script, "viewport.addEventListener('pointercancel', stopPan)");
-        StringAssert.Contains(script, "viewport.addEventListener('lostpointercapture', stopPan)");
-        StringAssert.Contains(script, "viewport.addEventListener('pointerleave', stopPan)");
-        StringAssert.Contains(script, "window.addEventListener('pointerup', stopPan, true)");
+        StringAssert.Contains(script, "viewport.addEventListener('pointerup', event =>");
+        StringAssert.Contains(script, "viewport.addEventListener('pointercancel', event =>");
+        StringAssert.Contains(script, "viewport.addEventListener('lostpointercapture', event =>");
+        StringAssert.Contains(script, "viewport.addEventListener('pointerleave', event =>");
+        StringAssert.Contains(script, "window.addEventListener('pointerup', event =>");
         StringAssert.Contains(script, "window.addEventListener('blur'");
         StringAssert.Contains(script, "postPanCommand('toggle')");
         StringAssert.Contains(script, "postPanCommand('exit')");
