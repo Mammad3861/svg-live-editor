@@ -1,6 +1,6 @@
 # SvgLiveEditor
 
-SvgLiveEditor is an open-source Windows desktop application for editing SVG/XML source and viewing the result immediately. Version 0.4.0 provides a document inspector on the left, source in the center, and a security-restricted preview on the right, with bounded file drag-and-drop, direct PNG sharing, an app-owned preview context menu, and a discoverable Pan tool, while preserving the user's UTF-8 text exactly when saving.
+SvgLiveEditor is an open-source Windows desktop application for editing SVG/XML source and viewing the result immediately. Version 0.5.0 adds five original safe templates, bounded crash-recovery snapshots, and opt-in validation-gated Auto Save to the v0.4 document inspector, secure preview, PNG sharing, drag/drop, and Pan experience while preserving the user's UTF-8 text exactly.
 
 Repository: [github.com/Mammad3861/svg-live-editor](https://github.com/Mammad3861/svg-live-editor)
 
@@ -13,6 +13,7 @@ Repository: [github.com/Mammad3861/svg-live-editor](https://github.com/Mammad386
 - Validated hierarchical SVG element tree with explicit tree-to-source navigation and non-destructive debounced caret-to-tree synchronization.
 - Properties inspector for common safe attributes and shape geometry. Changes are minimal source edits, participate in Undo/Redo, and never reserialize the full XML document; path `d` is read-only in v0.4.
 - AvalonEdit source editor with XML highlighting, line numbers, current-line highlighting, undo/redo, find/replace, and non-destructive word wrap. Toggle wrapping with `Alt+Z` or `Ctrl+Alt+W`.
+- A keyboard-accessible native WPF template gallery under **File > New from Template** (`Ctrl+Alt+N`) with Blank Canvas, App Icon, Social Card, Flow Diagram, and Persian/RTL starters. Templates pass the same strict SVG validator and open as detached Modified documents that require Save As; the embedded resource is never overwritten. Text placeholders carry explicit passive bidi metadata: the Persian starter uses `direction="rtl"`, `unicode-bidi="embed"`, and RTL-correct `text-anchor="start"`, while neutral placeholders use `unicode-bidi="plaintext"` without directional overrides.
 - Automatic live preview after a 300 ms debounce, plus manual refresh.
 - Preview zoom in/out, reset, and fit-to-area controls on a fixed checkerboard transparency canvas. The selected zoom mode is restored at the next launch; `Ctrl`+mouse wheel zooms around the pointer, normal wheel scrolling remains vertical, and `Shift`+wheel scrolls horizontally.
 - A visible Pan toolbar mode (`H` to toggle and `Escape` to exit). Overflowing previews can also be panned temporarily with `Ctrl`+left drag, Space+left drag, or middle-button drag. Pan mode and these alternate gestures always take priority over image sharing.
@@ -21,6 +22,8 @@ Repository: [github.com/Mammad3861/svg-live-editor](https://github.com/Mammad386
 - Copy the editor's exact complete source with **Edit > Copy Entire SVG Source** or `Ctrl+Alt+C`. This preserves line endings, Persian text, invalid XML, caret, selection, and modified state; normal `Ctrl+C` keeps copying only selected text when the source editor or an Inspector property field has focus.
 - New, Open, Save, Save As, Exit, and window-wide file drag/drop for one local `.svg` or `.txt` file. A **Drop SVG or TXT to open** overlay works over the Source editor, Inspector, Properties, and Live Preview. The same unsaved-change prompt runs before replacement; Cancel leaves the current document unchanged. Files are read as strict UTF-8 and bounded to 10,000,000 bytes.
 - The most recently opened or saved named document reopens by default at the next startup. The checkable View-menu preference and full path are stored only in the current user's LocalAppData settings; missing, inaccessible, or unsupported paths safely fall back to the welcome document.
+- Crash recovery is enabled by default. Exact UTF-8 source—including invalid XML and Persian text—is debounced into atomic, random-ID snapshots under `%LocalAppData%\SvgLiveEditor\Recovery`. Startup offers Restore, Discard, or Skip before reopening the last document. Restore opens the snapshot in memory as Modified and never overwrites the original; redundant snapshots identical to the original are removed without prompting. Snapshots expire after 7 days and are bounded to 10 files and 100,000,000 bytes.
+- Optional **File > Auto Save** is off by default and persisted per user. For an existing named `.svg` or `.txt` document that was manually opened or saved, it atomically writes the exact current UTF-8 revision two seconds after editing only when the strict SVG validator accepts it. Invalid XML, a missing/read-only/inaccessible original, reparse points, network paths, unsupported drives, or policy failures pause Auto Save without touching the original; recovery snapshots continue. Untitled and template documents still require Save As.
 - Unsaved-change prompts before replacing or closing a document.
 - Strict UTF-8 reading and UTF-8-without-BOM writing without source reformatting.
 - Secure XML validation with useful line and column errors.
@@ -29,7 +32,7 @@ Repository: [github.com/Mammad3861/svg-live-editor](https://github.com/Mammad386
 
 The trusted interaction bridge has automated browser integration coverage. Physical inbound drops, direct artwork drag and Drag Image compatibility, Ctrl+Wheel, the app-owned right-click menu, focus-sensitive Ctrl+C, clipboard paste compatibility, and the four drag-to-pan methods should still be confirmed on the target machine for each release.
 
-The XML code editor intentionally remains left-to-right so markup punctuation and tag structure stay predictable. Persian text is preserved logically and as exact UTF-8, but mixed RTL/LTR caret movement and visual ordering are subject to AvalonEdit/WPF BiDi limitations; the saved source and SVG preview remain the authoritative checks.
+The XML code editor intentionally remains left-to-right so markup punctuation and tag structure stay predictable. Persian text and punctuation are preserved in exact logical UTF-8 order, but mixed RTL/LTR caret movement and source-editor glyph placement remain subject to AvalonEdit/WPF BiDi limitations. The SVG preview renders the source exactly as authored: explicit `direction`, `unicode-bidi`, and `text-anchor` attributes control SVG text layout, while text without such metadata keeps the viewer's normal SVG bidi behavior. SvgLiveEditor never rewrites Persian text or inserts hidden direction characters.
 
 ## Security model and limitations
 
@@ -41,17 +44,19 @@ Clipboard and Drag Image PNG output use the SVG's intrinsic width/height, or its
 
 For interoperable Windows drag-out, a validated PNG is written with a random application-owned name under `%LocalAppData%\SvgLiveEditor\DragOut`. SVG source is never written beside it. Cancelled drags are deleted when safe. Successful drag files remain available for applications that read asynchronously, then cleanup runs at startup, before another drag image is created, and every six hours. Managed files older than 24 hours are removed, and the directory is bounded to 20 files and 200,000,000 bytes. Cleanup failures do not prevent application startup.
 
-The document inspector is built only from source accepted by the same secure validator. An explicit mouse or keyboard action in the tree reveals the corresponding source start tag; validation, reindexing, selection restoration, and caret-to-tree synchronization never change the editor selection. Supported property edits update the AvalonEdit document—the source remains the single source of truth—and then use the existing validation and preview pipeline. No SVG DOM is exposed to WebView2 or JavaScript.
+Recovery persistence is separate from preview rendering. Snapshots are written only to the fixed current-user `%LocalAppData%\SvgLiveEditor\Recovery` directory with random application-generated identifiers and atomic same-directory replacement. The loader accepts only the exact versioned JSON schema, validates ID/filename agreement, metadata, normalized supported paths, source size, and SHA-256, rejects reparse points and malformed or tampered records, and never follows a stored path to restore source. An original path is used only as a safe existing document association; the snapshot source remains authoritative. Auto Save stages exact UTF-8 bytes beside an eligible existing local file, rechecks the path policy and exact document session/revision before atomic replacement, and never recreates a missing original.
+
+The document inspector is built only from source accepted by the same secure validator. An explicit mouse or keyboard action in the tree reveals the corresponding source start tag; validation, reindexing, selection restoration, and caret-to-tree synchronization never change the editor selection. Supported property edits update the AvalonEdit document—the source remains the single source of truth—and then use the existing validation and preview pipeline. For `<text>` and `<tspan>`, constrained choices are available for `direction` (`ltr`/`rtl`), `unicode-bidi` (`normal`/`embed`/`isolate`/`plaintext`), and `text-anchor` (`start`/`middle`/`end`); the blank choice removes the optional attribute. Override values are deliberately unavailable. No SVG DOM is exposed to WebView2 or JavaScript.
 
 This conservative MVP intentionally supports only a restricted safe SVG subset and does not render every valid SVG feature. In particular, external images/fonts/styles, embedded data resources, hyperlinks, `<style>`, `foreignObject`, scripts, and event handlers are rejected. Because exporter output varies, SvgLiveEditor is not guaranteed to open every SVG produced by tools such as Adobe Illustrator or Inkscape. The preview is not a general-purpose web browser or a replacement for reviewing SVG before distribution. See [docs/security-model.md](docs/security-model.md).
 
 ## Current scope
 
-Version 0.4 provides tree/property-based source editing, clipboard and drag/drop PNG sharing, and preview navigation, not direct canvas manipulation. It does not support selecting, dragging, resizing, creating, deleting, or reordering SVG elements, and it does not provide freehand/path editing, explicit PNG/PDF **file export**, an installer, or automatic updates.
+Version 0.5 provides templates, recovery snapshots, opt-in safe Auto Save, tree/property-based source editing, clipboard and drag/drop PNG sharing, and preview navigation—not direct canvas manipulation. It does not support selecting, dragging, resizing, creating, deleting, or reordering SVG elements, and it does not provide freehand/path editing, explicit PNG/PDF **file export**, an installer, or automatic updates.
 
 ## Roadmap
 
-Future work may include improved AvalonEdit mixed RTL/BiDi caret and punctuation behavior; autosave through crash-recovery snapshots in LocalAppData (never continuous overwriting of the user's original file); built-in SVG templates; direct visual canvas selection and editing; element dragging and resizing; path editing; PNG/PDF explicit file export; and an installer with automatic updates. These items are not part of v0.4.
+Future work may include improved AvalonEdit mixed RTL/BiDi caret and glyph behavior, richer template organization, configurable recovery timing, direct visual canvas selection and editing, element dragging and resizing, path editing, explicit PNG/PDF file export, and an installer with automatic updates. Auto Save remains deliberately validation-gated and is not a replacement for version control or backups.
 
 ## Requirements
 
@@ -89,14 +94,14 @@ dotnet publish src/SvgLiveEditor/SvgLiveEditor.csproj --configuration Release --
 Output is written to `dist/win-x64`. To publish, audit, and create versioned ZIP and SHA-256 files locally:
 
 ```powershell
-./scripts/Publish-WinX64.ps1 -Version 0.4.0
+./scripts/Publish-WinX64.ps1 -Version 0.5.0
 ```
 
-This creates `releases/SvgLiveEditor-v0.4.0-win-x64.zip` and the internal/local `releases/SvgLiveEditor-v0.4.0-win-x64.sha256`. Publishing is folder-based and intentionally not trimmed or forced into a single file, which is safer for WPF, WebView2 native dependencies, and startup reliability. This local command does not create or modify a GitHub Release.
+This creates `releases/SvgLiveEditor-v0.5.0-win-x64.zip` and the internal/local `releases/SvgLiveEditor-v0.5.0-win-x64.sha256`. Publishing is folder-based and intentionally not trimmed, ReadyToRun-enabled, or forced into a single file, which is safer for WPF, WebView2 native dependencies, startup reliability, and the established package-size baseline. This local command does not create or modify a GitHub Release.
 
 ## Automated GitHub Releases
 
-The [release workflow](.github/workflows/release.yml) runs automatically when a stable semantic-version tag such as `v0.4.0` is pushed. It can also be started manually with an existing tag, which allows binary assets to be added to an existing Release. The workflow validates the tag, checks out its exact commit, confirms the project version, restores and builds in Release mode, runs tests excluding `TestCategory=DesktopIntegration`, and uses the same publish script to build and audit the package.
+The [release workflow](.github/workflows/release.yml) runs automatically when a stable semantic-version tag such as `v0.5.0` is pushed. It can also be started manually with an existing tag, which allows binary assets to be added to an existing Release. The workflow validates the tag, checks out its exact commit, confirms the project version, restores and builds in Release mode, runs tests excluding `TestCategory=DesktopIntegration`, and uses the same publish script to build and audit the package.
 
 The ZIP and its internal `.sha256` file are retained as a short-lived GitHub Actions troubleshooting artifact, but only the ZIP is attached to new GitHub Releases. The workflow verifies the internal checksum before upload and records the SHA-256 in its logs and job summary. An existing Release keeps its publication state, manually edited notes, and unrelated historical assets; only the matching ZIP is replaced. If no matching Release exists, the workflow creates a draft with GitHub-generated notes, using the previous stable tag when available, and leaves it unpublished for manual review.
 
@@ -115,7 +120,7 @@ The development-only generator uses Windows' built-in `System.Drawing`; it adds 
 Download `SvgLiveEditor-vX.Y.Z-win-x64.zip` from the matching GitHub Release. GitHub displays the expected **Digest** directly under the ZIP asset. Calculate the downloaded file's SHA-256 in PowerShell and compare it with that displayed digest:
 
 ```powershell
-Get-FileHash .\SvgLiveEditor-v0.4.0-win-x64.zip -Algorithm SHA256
+Get-FileHash .\SvgLiveEditor-v0.5.0-win-x64.zip -Algorithm SHA256
 ```
 
 Extract the **entire** ZIP into a new folder before running `SvgLiveEditor.exe`. The package is self-contained for win-x64 and does not require a separate .NET installation. Microsoft Edge WebView2 Evergreen Runtime remains an external requirement and must be installed on the computer.
@@ -126,6 +131,7 @@ Extract the **entire** ZIP into a new folder before running `SvgLiveEditor.exe`.
 src/SvgLiveEditor/          WPF application, inspector, and secure editing services
 tests/SvgLiveEditor.Tests/ Automated logic and security tests
 samples/welcome.svg        Original safe starter document
+templates/                 Five original embedded safe SVG templates
 assets/                    Original editable artwork
 docs/                      Architecture and security notes
 .github/workflows/         Windows build, test, and release workflows

@@ -7,6 +7,8 @@ public sealed class PreviewPageMessageBuilder
 {
     public const double MaximumRenderedDimension = 10_000_000;
     public const double MaximumDragThreshold = 1_000;
+    public const double MaximumHorizontalScrollDelta =
+        PreviewNativeHorizontalScrollPolicy.MaximumDeltaPixels;
 
     public string BuildZoomStateMessage(
         string bridgeToken,
@@ -77,6 +79,26 @@ public sealed class PreviewPageMessageBuilder
             requestId,
             width = size.Width,
             height = size.Height
+        });
+    }
+
+    public string BuildHorizontalScrollMessage(
+        string bridgeToken,
+        double deltaX)
+    {
+        ValidateBridgeToken(bridgeToken);
+        if (!double.IsFinite(deltaX)
+            || deltaX == 0
+            || Math.Abs(deltaX) > MaximumHorizontalScrollDelta)
+        {
+            throw new ArgumentOutOfRangeException(nameof(deltaX));
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            type = "horizontalScroll",
+            token = bridgeToken,
+            deltaX
         });
     }
 

@@ -32,6 +32,11 @@ public sealed class SvgPropertyViewModel : ObservableObject
 
     public bool IsPresent => Attribute is not null;
 
+    public bool HasAllowedValues => Definition.AllowedValues is not null;
+
+    public IReadOnlyList<string> AllowedValues =>
+        Definition.AllowedValues ?? [];
+
     public string PresenceText => IsPresent ? "Existing attribute" : "Missing attribute";
 
     public string Value

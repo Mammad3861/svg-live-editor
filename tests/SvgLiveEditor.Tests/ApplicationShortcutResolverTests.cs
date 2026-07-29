@@ -27,4 +27,17 @@ public sealed class ApplicationShortcutResolverTests
         Assert.IsNull(ApplicationShortcutResolver.Resolve(ModifierKeys.Alt, Key.W));
         Assert.IsNull(ApplicationShortcutResolver.Resolve(ModifierKeys.None, Key.Z));
     }
+
+    [TestMethod]
+    public void ControlAltN_OpensTemplateGalleryWithoutConflictingWithNew()
+    {
+        Assert.AreEqual(
+            ApplicationShortcut.NewFromTemplate,
+            ApplicationShortcutResolver.Resolve(
+                ModifierKeys.Control | ModifierKeys.Alt,
+                Key.N));
+        Assert.IsNull(ApplicationShortcutResolver.Resolve(
+            ModifierKeys.Control,
+            Key.N));
+    }
 }

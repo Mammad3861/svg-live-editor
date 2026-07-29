@@ -57,8 +57,15 @@ public sealed class UserPreferencesService
                 && pathValue.ValueKind == JsonValueKind.String
                     ? pathValue.GetString()
                     : null;
+            bool autoSaveEnabled = root.TryGetProperty(
+                    "autoSaveEnabled",
+                    out JsonElement autoSaveValue)
+                && autoSaveValue.ValueKind is JsonValueKind.True or JsonValueKind.False
+                    ? autoSaveValue.GetBoolean()
+                    : false;
             return new UserPreferences(wordWrap, ReadPreviewZoom(root))
             {
+                AutoSaveEnabled = autoSaveEnabled,
                 ReopenLastDocumentOnStartup = reopenLastDocument,
                 LastDocumentPath = string.IsNullOrWhiteSpace(lastDocumentPath)
                     ? null
@@ -90,6 +97,7 @@ public sealed class UserPreferencesService
                 wordWrap = preferences.WordWrap,
                 previewZoomMode = preferences.PreviewZoom.Mode.ToString(),
                 previewZoomPercent = preferences.PreviewZoom.ManualScale * 100,
+                autoSaveEnabled = preferences.AutoSaveEnabled,
                 reopenLastDocumentOnStartup =
                     preferences.ReopenLastDocumentOnStartup,
                 lastDocumentPath = preferences.LastDocumentPath

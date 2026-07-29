@@ -24,6 +24,24 @@ public sealed class SvgValidationServiceTests
     }
 
     [TestMethod]
+    public void Validate_AcceptsPassiveBidiPresentationWithoutAddingActiveContent()
+    {
+        const string svg = """
+            <svg xmlns="http://www.w3.org/2000/svg">
+              <text direction="rtl" unicode-bidi="embed" text-anchor="start">سلام! من بهروز هستم.</text>
+              <text direction="ltr" unicode-bidi="plaintext" text-anchor="middle">Hello — سلام!</text>
+            </svg>
+            """;
+
+        Models.SvgValidationResult result = _service.Validate(svg);
+
+        Assert.IsTrue(result.IsValid, result.Message);
+        Assert.IsFalse(svg.Contains("<script", StringComparison.OrdinalIgnoreCase));
+        Assert.IsFalse(svg.Contains(" on", StringComparison.OrdinalIgnoreCase));
+        Assert.IsFalse(svg.Contains("href=", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [TestMethod]
     public void Validate_AcceptsSupportedSafeSvgFeatures()
     {
         const string svg = """

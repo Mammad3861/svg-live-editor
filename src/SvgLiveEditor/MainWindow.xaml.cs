@@ -116,13 +116,18 @@ public partial class MainWindow : Window
         ApplyWordWrap(_userPreferences.WordWrap, persist: false);
         ReopenLastDocumentMenuItem.IsChecked =
             _userPreferences.ReopenLastDocumentOnStartup;
+        InitializeDocumentPersistence();
         UpdatePreviewStateText(_previewPresentationState);
-
-        LoadStartupDocument();
     }
 
     private async void OnWindowLoaded(object sender, RoutedEventArgs e)
     {
+        if (!_startupDocumentLoaded)
+        {
+            _startupDocumentLoaded = true;
+            LoadStartupDocument();
+        }
+
         if (await EnsureWebViewReadyAsync())
         {
             await RefreshPreviewNowAsync();
@@ -937,8 +942,10 @@ public partial class MainWindow : Window
         _previewPngSourceState =
             PreviewPngSourceState.PendingValidation;
         _viewModel.UpdateTextFromEditor(SourceEditor.Text);
+        _viewModel.SetOperationStatus("Modified");
         MarkDocumentInspectorSourceChanged();
         QueuePreviewUpdate();
+        QueuePersistenceForCurrentEdit();
     }
 
     private void QueuePreviewUpdate()
@@ -1097,9 +1104,20 @@ public partial class MainWindow : Window
             dpi.DpiScaleY);
     }
 
-    private void LoadIntoEditor(string text, string? path)
+    private void LoadIntoEditor(
+        string text,
+        string? path,
+        bool isModified = false,
+        string? recoverySnapshotId = null,
+        bool autoSaveEligible = false,
+        long recoveryRevisionBaseline = 0,
+        bool queueInitialRecovery = false)
     {
         _previewDebouncer.Cancel();
+        BeginDocumentSession(
+            recoverySnapshotId,
+            autoSaveEligible,
+            recoveryRevisionBaseline);
         SetPanMode(enabled: false, announce: false);
         _previewPngSourceState =
             PreviewPngSourceState.PendingValidation;
@@ -1109,8 +1127,10 @@ public partial class MainWindow : Window
         {
             SourceEditor.Text = text;
             _sourceRevisionTracker.Advance();
+            _loadedSourceRevision =
+                _sourceRevisionTracker.Current;
             SourceEditor.CaretOffset = 0;
-            _viewModel.LoadDocument(text, path);
+            _viewModel.LoadDocument(text, path, isModified);
             _viewModel.UpdateCaret(1, 1);
             MarkDocumentInspectorSourceChanged();
             _viewModel.Inspector.ShowUnavailable(
@@ -1122,6 +1142,10 @@ public partial class MainWindow : Window
         }
 
         QueuePreviewUpdate();
+        if (queueInitialRecovery && isModified)
+        {
+            QueueRecoverySnapshot();
+        }
     }
 
     private void LoadStartupDocument()
@@ -1130,13 +1154,21 @@ public partial class MainWindow : Window
         _lastValidSvg = welcomeSource;
         _lastValidCanvasSize = _svgCanvasSizeReader.Read(welcomeSource);
 
+        if (TryRestoreRecoverySnapshot())
+        {
+            return;
+        }
+
         LastDocumentRestoreResult restore =
             _lastDocumentService.TryRestore(_userPreferences);
         if (restore.IsRestored
             && restore.Source is string source
             && restore.Path is string path)
         {
-            LoadIntoEditor(source, path);
+            LoadIntoEditor(
+                source,
+                path,
+                autoSaveEligible: true);
             return;
         }
 
@@ -1199,7 +1231,10 @@ public partial class MainWindow : Window
         {
             string text = _fileService.ReadAllText(path);
             string fullPath = Path.GetFullPath(path);
-            LoadIntoEditor(text, fullPath);
+            LoadIntoEditor(
+                text,
+                fullPath,
+                autoSaveEligible: true);
             RememberLastDocument(fullPath);
             return true;
         }
@@ -1267,6 +1302,7 @@ public partial class MainWindow : Window
             string fullPath = Path.GetFullPath(path);
             _viewModel.MarkSaved(fullPath);
             RememberLastDocument(fullPath);
+            OnManualDocumentSaved();
             return true;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
@@ -1302,7 +1338,16 @@ public partial class MainWindow : Window
             _ => UnsavedChangesChoice.Cancel
         };
         bool saveSucceeded = choice == UnsavedChangesChoice.Save && SaveDocument();
-        return _unsavedChangesPolicy.CanProceed(_viewModel.IsModified, choice, saveSucceeded);
+        bool canProceed = _unsavedChangesPolicy.CanProceed(
+            _viewModel.IsModified,
+            choice,
+            saveSucceeded);
+        if (canProceed && choice == UnsavedChangesChoice.Discard)
+        {
+            DiscardCurrentRecoverySnapshot();
+        }
+
+        return canProceed;
     }
 
     private void OnWindowClosing(object? sender, CancelEventArgs e)
@@ -1310,7 +1355,11 @@ public partial class MainWindow : Window
         if (!ConfirmCanLeaveCurrentDocument())
         {
             e.Cancel = true;
+            return;
         }
+
+        _isWindowClosing = true;
+        CancelDocumentPersistence();
     }
 
     private void OnExitClick(object sender, RoutedEventArgs e) => Close();
@@ -1742,6 +1791,12 @@ public partial class MainWindow : Window
             e.Handled = true;
         }
         else if (ApplicationShortcutResolver.Resolve(modifiers, pressedKey)
+            == ApplicationShortcut.NewFromTemplate)
+        {
+            OnNewFromTemplateClick(sender, new RoutedEventArgs());
+            e.Handled = true;
+        }
+        else if (ApplicationShortcutResolver.Resolve(modifiers, pressedKey)
             == ApplicationShortcut.ToggleWordWrap)
         {
             ToggleWordWrap();
@@ -2061,6 +2116,8 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        _isWindowClosing = true;
+        DetachNativePreviewInputHook();
         ClosePreviewContextMenu();
         SourceEditor.Document.TextChanged -= OnEditorDocumentTextChanged;
         SourceEditor.TextArea.Caret.PositionChanged -= OnCaretPositionChanged;
@@ -2074,6 +2131,7 @@ public partial class MainWindow : Window
         _previewDirectDragHandshake.Reset();
         DetachCoreWebViewEvents();
         _previewDebouncer.Dispose();
+        DisposeDocumentPersistence();
         PreviewWebView.Dispose();
         base.OnClosed(e);
     }

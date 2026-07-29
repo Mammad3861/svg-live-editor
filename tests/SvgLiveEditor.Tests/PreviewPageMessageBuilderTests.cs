@@ -118,4 +118,42 @@ public sealed class PreviewPageMessageBuilderTests
                 requestId,
                 new PreviewPngSize(4096, 4096)));
     }
+
+    [TestMethod]
+    public void HorizontalScrollMessage_UsesOnlyCurrentTokenAndBoundedDelta()
+    {
+        string json = _builder.BuildHorizontalScrollMessage(
+            BridgeToken,
+            deltaX: -12.5);
+
+        using JsonDocument document = JsonDocument.Parse(json);
+        JsonElement root = document.RootElement;
+        Assert.AreEqual(3, root.EnumerateObject().Count());
+        Assert.AreEqual(
+            "horizontalScroll",
+            root.GetProperty("type").GetString());
+        Assert.AreEqual(
+            BridgeToken,
+            root.GetProperty("token").GetString());
+        Assert.AreEqual(
+            -12.5,
+            root.GetProperty("deltaX").GetDouble(),
+            0.0001);
+
+        Assert.Throws<ArgumentException>(() =>
+            _builder.BuildHorizontalScrollMessage("stale", 1));
+        foreach (double invalid in new[]
+                 {
+                     0,
+                     double.NaN,
+                     double.PositiveInfinity,
+                     PreviewPageMessageBuilder.MaximumHorizontalScrollDelta + 1
+                 })
+        {
+            Assert.Throws<ArgumentOutOfRangeException>(() =>
+                _builder.BuildHorizontalScrollMessage(
+                    BridgeToken,
+                    invalid));
+        }
+    }
 }

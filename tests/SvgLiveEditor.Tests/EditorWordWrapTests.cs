@@ -61,6 +61,7 @@ public sealed class EditorWordWrapTests
             UserPreferences defaults = service.Load();
             Assert.IsTrue(defaults.WordWrap);
             Assert.AreEqual(PreviewZoomMode.Fit, defaults.PreviewZoom.Mode);
+            Assert.IsFalse(defaults.AutoSaveEnabled);
             Assert.IsTrue(defaults.ReopenLastDocumentOnStartup);
             Assert.IsNull(defaults.LastDocumentPath);
 
@@ -68,6 +69,7 @@ public sealed class EditorWordWrapTests
                 WordWrap: false,
                 PreviewZoom: new PreviewZoomState(PreviewZoomMode.Manual, 1.25))
             {
+                AutoSaveEnabled = true,
                 ReopenLastDocumentOnStartup = false,
                 LastDocumentPath = Path.Combine(directory, "sample.svg")
             };
@@ -77,6 +79,7 @@ public sealed class EditorWordWrapTests
             Assert.IsFalse(restored.WordWrap);
             Assert.AreEqual(PreviewZoomMode.Manual, restored.PreviewZoom.Mode);
             Assert.AreEqual(1.25, restored.PreviewZoom.ManualScale, 0.0001);
+            Assert.IsTrue(restored.AutoSaveEnabled);
             Assert.IsFalse(restored.ReopenLastDocumentOnStartup);
             Assert.AreEqual(changed.LastDocumentPath, restored.LastDocumentPath);
         }

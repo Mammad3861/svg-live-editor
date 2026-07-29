@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540">
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M1 1 11 6 1 11Z" fill="#64748b"/>
+    </marker>
+  </defs>
+  <rect width="960" height="540" fill="#f8fafc"/>
+  <path d="M270 270H370M590 270H690" fill="none" stroke="#64748b" stroke-width="4" marker-end="url(#arrow)"/>
+  <rect x="70" y="190" width="200" height="160" rx="20" fill="#dbeafe" stroke="#2563eb" stroke-width="3"/>
+  <rect x="370" y="190" width="220" height="160" rx="20" fill="#ede9fe" stroke="#7c3aed" stroke-width="3"/>
+  <rect x="690" y="190" width="200" height="160" rx="20" fill="#dcfce7" stroke="#16a34a" stroke-width="3"/>
+  <text x="170" y="280" direction="ltr" unicode-bidi="plaintext" text-anchor="middle" fill="#1e3a8a" font-family="Segoe UI, sans-serif" font-size="30" font-weight="600">Start</text>
+  <text x="480" y="280" direction="ltr" unicode-bidi="plaintext" text-anchor="middle" fill="#5b21b6" font-family="Segoe UI, sans-serif" font-size="30" font-weight="600">Create</text>
+  <text x="790" y="280" direction="ltr" unicode-bidi="plaintext" text-anchor="middle" fill="#166534" font-family="Segoe UI, sans-serif" font-size="30" font-weight="600">Share</text>
+</svg>

@@ -44,6 +44,21 @@ public sealed class PublishDependencyTests
             "<TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>");
     }
 
+    [TestMethod]
+    public void PublishAuditRejectsRecoveryAndTemporaryState()
+    {
+        string script = File.ReadAllText(
+            Path.Combine(
+                AppContext.BaseDirectory,
+                "scripts",
+                "Publish-WinX64.ps1"));
+
+        StringAssert.Contains(script, "$segment -ieq 'Recovery'");
+        StringAssert.Contains(script, "'.tmp'");
+        StringAssert.Contains(script, "$fileName -ieq 'settings.json'");
+        StringAssert.Contains(script, "$segment -ieq 'EBWebView'");
+    }
+
     private static int CountOccurrences(string text, string value)
     {
         int count = 0;

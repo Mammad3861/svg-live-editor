@@ -4,6 +4,12 @@ namespace SvgLiveEditor.Services;
 
 public static class SvgPropertySchema
 {
+    private static readonly string[] DirectionValues = ["", "ltr", "rtl"];
+    private static readonly string[] UnicodeBidiValues =
+        ["", "normal", "embed", "isolate", "plaintext"];
+    private static readonly string[] TextAnchorValues =
+        ["", "start", "middle", "end"];
+
     private static readonly SvgPropertyDefinition[] Common =
     [
         new("id"),
@@ -29,7 +35,22 @@ public static class SvgPropertySchema
             ["circle"] = [new("cx"), new("cy"), new("r")],
             ["ellipse"] = [new("cx"), new("cy"), new("rx"), new("ry")],
             ["line"] = [new("x1"), new("y1"), new("x2"), new("y2")],
-            ["text"] = [new("x"), new("y")],
+            ["text"] =
+            [
+                new("x"),
+                new("y"),
+                OptionalEnum("direction", DirectionValues),
+                OptionalEnum("unicode-bidi", UnicodeBidiValues),
+                OptionalEnum("text-anchor", TextAnchorValues)
+            ],
+            ["tspan"] =
+            [
+                new("x"),
+                new("y"),
+                OptionalEnum("direction", DirectionValues),
+                OptionalEnum("unicode-bidi", UnicodeBidiValues),
+                OptionalEnum("text-anchor", TextAnchorValues)
+            ],
             ["path"] = [new("d", IsReadOnly: true)]
         };
 
@@ -52,4 +73,12 @@ public static class SvgPropertySchema
         return GetProperties(elementName).FirstOrDefault(property =>
             property.Name.Equals(attributeName, StringComparison.Ordinal));
     }
+
+    private static SvgPropertyDefinition OptionalEnum(
+        string name,
+        IReadOnlyList<string> allowedValues) =>
+        new(
+            name,
+            RemoveWhenEmpty: true,
+            AllowedValues: allowedValues);
 }

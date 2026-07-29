@@ -4,6 +4,8 @@ public readonly record struct UserPreferences(
     bool WordWrap,
     PreviewZoomState PreviewZoom)
 {
+    public bool AutoSaveEnabled { get; init; }
+
     public bool ReopenLastDocumentOnStartup { get; init; } = true;
 
     public string? LastDocumentPath { get; init; }

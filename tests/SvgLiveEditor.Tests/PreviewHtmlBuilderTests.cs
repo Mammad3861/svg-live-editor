@@ -31,6 +31,26 @@ public sealed class PreviewHtmlBuilderTests
     }
 
     [TestMethod]
+    public void Build_PreservesExactMixedBidiSourceInsideTheIsolatedDataImage()
+    {
+        const string svg =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><text direction=\"rtl\" unicode-bidi=\"embed\" text-anchor=\"start\">سلام! من بهروز هستم. نسخه 2.0 آماده است. قیمت: ۱۲۳٬۴۵۶ تومان. SvgLiveEditor نسخه 0.5 (سلام بهروز) Hello — سلام!</text></svg>";
+        Assert.IsTrue(new SvgValidationService().Validate(svg).IsValid);
+
+        string html = _builder.Build(svg, 700, 100, BridgeToken);
+        string encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(svg));
+
+        StringAssert.Contains(
+            html,
+            $"data:image/svg+xml;base64,{encoded}");
+        Assert.AreEqual(
+            svg,
+            Encoding.UTF8.GetString(Convert.FromBase64String(encoded)));
+        Assert.IsFalse(html.Contains(svg, StringComparison.Ordinal));
+        Assert.IsFalse(html.Contains("bidi-override", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     public void Build_AllowsOnlyTheExactStaticHostScriptByHash()
     {
         const string svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" />";
@@ -67,6 +87,9 @@ public sealed class PreviewHtmlBuilderTests
         StringAssert.Contains(script.Groups[1].Value, "message.renderedWidth <= 10000000");
         StringAssert.Contains(script.Groups[1].Value, "message.centerX <= 1");
         StringAssert.Contains(script.Groups[1].Value, "message.type === 'copyPng'");
+        StringAssert.Contains(script.Groups[1].Value, "message.type === 'horizontalScroll'");
+        StringAssert.Contains(script.Groups[1].Value, "Object.keys(message).length === 3");
+        StringAssert.Contains(script.Groups[1].Value, "Math.abs(message.deltaX) <= 10000");
         StringAssert.Contains(script.Groups[1].Value, "message.width * message.height <= 8000000");
         StringAssert.Contains(script.Groups[1].Value, "canvas.toDataURL('image/png')");
         StringAssert.Contains(script.Groups[1].Value, "context.drawImage(image");
@@ -74,24 +97,75 @@ public sealed class PreviewHtmlBuilderTests
         Assert.IsFalse(script.Groups[1].Value.Contains(
             "nativeZoomFallback",
             StringComparison.Ordinal));
+        Assert.IsFalse(script.Groups[1].Value.Contains(
+            "inputDiagnostic",
+            StringComparison.Ordinal));
     }
 
     [TestMethod]
-    public void Build_SeparatesZoomWheelFromNormalAndShiftWheel()
+    public void Build_NormalizesAndRoutesWheelAxesWithoutDuplicateShiftMovement()
     {
         const string svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" />";
 
         string script = ExtractHostScript(
             _builder.Build(svg, 1000, 500, BridgeToken));
 
+        StringAssert.Contains(script, "const normalizeWheelDelta = (value, deltaMode, pageSize) =>");
+        StringAssert.Contains(script, "!Number.isFinite(value)");
+        StringAssert.Contains(script, "!Number.isInteger(deltaMode)");
+        StringAssert.Contains(script, "deltaMode === 0");
+        StringAssert.Contains(script, "deltaMode === 1");
+        StringAssert.Contains(script, "deltaMode === 2");
+        StringAssert.Contains(script, "const maximumDelta = pageSize * 4");
+        StringAssert.Contains(script, "event.deltaX");
+        StringAssert.Contains(script, "event.deltaY");
         StringAssert.Contains(script, "if (event.ctrlKey)");
-        StringAssert.Contains(script, "event.deltaY < 0 ? 'in' : 'out'");
-        StringAssert.Contains(script, "if (event.shiftKey)");
-        StringAssert.Contains(script, "viewport.scrollLeft += horizontalDelta");
+        StringAssert.Contains(script, "verticalDelta < 0 ? 'in' : 'out'");
+        StringAssert.Contains(script, "const scrollLeft = event.shiftKey");
+        StringAssert.Contains(script, "horizontalDelta !== 0 ? horizontalDelta : verticalDelta");
+        StringAssert.Contains(script, "const scrollTop = event.shiftKey ? 0 : verticalDelta");
+        StringAssert.Contains(script, "viewport.scrollBy({");
+        StringAssert.Contains(script, "behavior: 'auto'");
         StringAssert.Contains(script, "postZoomRequest(");
         Assert.IsFalse(script.Contains(
-            "viewport.scrollTop += horizontalDelta",
+            "behavior: 'smooth'",
             StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void Build_NativeHorizontalMessageIsExactTokenBoundAndScrollOnly()
+    {
+        const string svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" />";
+        string script = ExtractHostScript(
+            _builder.Build(svg, 1000, 500, BridgeToken));
+
+        int tokenGuard = script.IndexOf(
+            "message.token !== bridgeToken",
+            StringComparison.Ordinal);
+        int horizontal = script.IndexOf(
+            "message.type === 'horizontalScroll'",
+            tokenGuard,
+            StringComparison.Ordinal);
+        int exactSchema = script.IndexOf(
+            "Object.keys(message).length === 3",
+            horizontal,
+            StringComparison.Ordinal);
+        int scroll = script.IndexOf(
+            "viewport.scrollBy({",
+            exactSchema,
+            StringComparison.Ordinal);
+
+        Assert.IsTrue(tokenGuard >= 0);
+        Assert.IsTrue(horizontal > tokenGuard);
+        Assert.IsTrue(exactSchema > horizontal);
+        Assert.IsTrue(scroll > exactSchema);
+        StringAssert.Contains(
+            script[horizontal..(scroll + 120)],
+            "top: 0");
+        Assert.IsFalse(
+            script[horizontal..(scroll + 120)].Contains(
+                "bridge.postMessage",
+                StringComparison.Ordinal));
     }
 
     [TestMethod]

@@ -279,7 +279,7 @@ public partial class MainWindow
         object sender,
         KeyboardFocusChangedEventArgs e)
     {
-        if (sender is TextBox { Tag: SvgPropertyViewModel property })
+        if (sender is FrameworkElement { Tag: SvgPropertyViewModel property })
         {
             ApplyInspectorProperty(property);
         }
@@ -287,7 +287,7 @@ public partial class MainWindow
 
     private void OnInspectorPropertyKeyDown(object sender, KeyEventArgs e)
     {
-        if (sender is not TextBox { Tag: SvgPropertyViewModel property })
+        if (sender is not FrameworkElement { Tag: SvgPropertyViewModel property })
         {
             return;
         }

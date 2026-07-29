@@ -81,6 +81,70 @@ public sealed class SvgAttributeEditServiceTests
     }
 
     [TestMethod]
+    public void CreateEdit_ChangesOnlyTheRequestedTextDirectionAttribute()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><text x=\"640\" direction=\"ltr\" unicode-bidi=\"embed\" text-anchor=\"start\">سلام! من بهروز هستم.</text></svg>";
+        SvgElementNode text = FindElement(source, "text");
+
+        SvgAttributeEditResult result = _editService.CreateEdit(
+            source,
+            text,
+            "direction",
+            "rtl");
+
+        Assert.IsTrue(result.IsSuccess, result.ErrorMessage);
+        Assert.AreEqual(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><text x=\"640\" direction=\"rtl\" unicode-bidi=\"embed\" text-anchor=\"start\">سلام! من بهروز هستم.</text></svg>",
+            result.Edit!.Apply(source));
+    }
+
+    [TestMethod]
+    public void CreateEdit_RemovesAnOptionalBidiAttributeCleanly()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><text direction=\"rtl\" unicode-bidi=\"embed\" text-anchor=\"start\">سلام!</text></svg>";
+        SvgElementNode text = FindElement(source, "text");
+
+        SvgAttributeEditResult result = _editService.CreateEdit(
+            source,
+            text,
+            "unicode-bidi",
+            string.Empty);
+
+        Assert.IsTrue(result.IsSuccess, result.ErrorMessage);
+        Assert.AreEqual(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><text direction=\"rtl\" text-anchor=\"start\">سلام!</text></svg>",
+            result.Edit!.Apply(source));
+    }
+
+    [TestMethod]
+    [DataRow("direction", "auto")]
+    [DataRow("direction", "rtl\" onload=\"alert(1)")]
+    [DataRow("unicode-bidi", "bidi-override")]
+    [DataRow("unicode-bidi", "isolate-override")]
+    [DataRow("unicode-bidi", "url(https://example.test/style)")]
+    [DataRow("text-anchor", "left")]
+    public void CreateEdit_RejectsUnsupportedBidiPresentationValues(
+        string attribute,
+        string value)
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><text>سلام!</text></svg>";
+        SvgElementNode text = FindElement(source, "text");
+
+        SvgAttributeEditResult result = _editService.CreateEdit(
+            source,
+            text,
+            attribute,
+            value);
+
+        Assert.IsFalse(result.IsSuccess);
+        Assert.IsNull(result.Edit);
+        StringAssert.Contains(result.ErrorMessage, "supported values");
+    }
+
+    [TestMethod]
     [DataRow("opacity", "1.2")]
     [DataRow("width", "-1")]
     [DataRow("fill", "url(https://example.test/paint.svg)")]

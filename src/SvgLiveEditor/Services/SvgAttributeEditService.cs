@@ -41,6 +41,8 @@ public sealed class SvgAttributeEditService
         {
             return SvgAttributeEditResult.Invalid(valueError);
         }
+        SvgPropertyDefinition definition =
+            SvgPropertySchema.Find(element.Name, attributeName)!;
 
         if (!IsCurrentSpan(source, element.StartTagSpan)
             || element.StartTagSpan.Start + 1 > source.Length - element.QualifiedName.Length
@@ -54,6 +56,13 @@ public sealed class SvgAttributeEditService
         }
 
         SvgAttributeSpan? existing = element.FindAttribute(attributeName);
+        if (existing is null
+            && value.Length == 0
+            && definition.RemoveWhenEmpty)
+        {
+            return SvgAttributeEditResult.Success(edit: null);
+        }
+
         SourceTextEdit edit;
         if (existing is not null)
         {
@@ -70,18 +79,43 @@ public sealed class SvgAttributeEditService
                     "The source changed; select the element again.");
             }
 
-            string escapedValue = EscapeAttributeValue(value, existing.Quote);
-            if (source.AsSpan(
-                    existing.ValueSpan.Start,
-                    existing.ValueSpan.Length).SequenceEqual(escapedValue))
+            if (value.Length == 0 && definition.RemoveWhenEmpty)
             {
-                return SvgAttributeEditResult.Success(edit: null);
-            }
+                int attributeEnd = existing.ValueSpan.End + 1;
+                if (attributeEnd > source.Length
+                    || source[attributeEnd - 1] != existing.Quote)
+                {
+                    return SvgAttributeEditResult.Invalid(
+                        "The source changed; select the element again.");
+                }
 
-            edit = new SourceTextEdit(
-                existing.ValueSpan.Start,
-                existing.ValueSpan.Length,
-                escapedValue);
+                int attributeStart = existing.NameSpan.Start;
+                if (attributeStart > element.StartTagSpan.Start
+                    && source[attributeStart - 1] is ' ' or '\t')
+                {
+                    attributeStart--;
+                }
+
+                edit = new SourceTextEdit(
+                    attributeStart,
+                    attributeEnd - attributeStart,
+                    string.Empty);
+            }
+            else
+            {
+                string escapedValue = EscapeAttributeValue(value, existing.Quote);
+                if (source.AsSpan(
+                        existing.ValueSpan.Start,
+                        existing.ValueSpan.Length).SequenceEqual(escapedValue))
+                {
+                    return SvgAttributeEditResult.Success(edit: null);
+                }
+
+                edit = new SourceTextEdit(
+                    existing.ValueSpan.Start,
+                    existing.ValueSpan.Length,
+                    escapedValue);
+            }
         }
         else
         {

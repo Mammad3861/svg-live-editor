@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>SvgLiveEditor</AssemblyName>
     <RootNamespace>SvgLiveEditor</RootNamespace>
-    <Version>0.4.0</Version>
+    <Version>0.5.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\SvgLiveEditor.ico</ApplicationIcon>
   </PropertyGroup>
@@ -20,6 +20,9 @@
   <ItemGroup>
     <EmbeddedResource Include="..\..\samples\welcome.svg">
       <LogicalName>SvgLiveEditor.Samples.welcome.svg</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\..\templates\*.svg">
+      <LogicalName>SvgLiveEditor.Templates.%(Filename)%(Extension)</LogicalName>
     </EmbeddedResource>
     <Resource Include="Assets\SvgLiveEditor.ico" />
   </ItemGroup>

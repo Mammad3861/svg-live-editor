@@ -370,6 +370,19 @@ public sealed class PreviewHtmlBuilder
                 return;
               }
 
+              if (message.type === 'horizontalScroll' &&
+                  Object.keys(message).length === 3 &&
+                  Number.isFinite(message.deltaX) &&
+                  message.deltaX !== 0 &&
+                  Math.abs(message.deltaX) <= 10000) {
+                viewport.scrollBy({
+                  left: message.deltaX,
+                  top: 0,
+                  behavior: 'auto'
+                });
+                return;
+              }
+
               if (message.type === 'copyPng' &&
                   Object.keys(message).length === 5 &&
                   typeof message.requestId === 'string' &&
@@ -386,24 +399,70 @@ public sealed class PreviewHtmlBuilder
             });
           }
 
+          const normalizeWheelDelta = (value, deltaMode, pageSize) => {
+            if (!Number.isFinite(value) ||
+                !Number.isInteger(deltaMode) ||
+                !Number.isFinite(pageSize) ||
+                pageSize <= 0) {
+              return 0;
+            }
+
+            let scale;
+            if (deltaMode === 0) {
+              scale = 1;
+            } else if (deltaMode === 1) {
+              scale = 16;
+            } else if (deltaMode === 2) {
+              scale = pageSize;
+            } else {
+              return 0;
+            }
+
+            const pixels = value * scale;
+            if (!Number.isFinite(pixels)) {
+              return 0;
+            }
+
+            const maximumDelta = pageSize * 4;
+            return Math.max(-maximumDelta, Math.min(maximumDelta, pixels));
+          };
+
           const handleWheel = event => {
             rememberPointer(event);
+            const horizontalDelta = normalizeWheelDelta(
+              event.deltaX,
+              event.deltaMode,
+              viewport.clientWidth);
+            const verticalDelta = normalizeWheelDelta(
+              event.deltaY,
+              event.deltaMode,
+              viewport.clientHeight);
+
             if (event.ctrlKey) {
               event.preventDefault();
-              postZoomRequest(
-                event.deltaY < 0 ? 'in' : 'out',
-                lastPointerX,
-                lastPointerY);
+              if (verticalDelta !== 0) {
+                postZoomRequest(
+                  verticalDelta < 0 ? 'in' : 'out',
+                  lastPointerX,
+                  lastPointerY);
+              }
               return;
             }
 
-            if (event.shiftKey) {
-              const horizontalDelta = event.deltaY !== 0 ? event.deltaY : event.deltaX;
-              if (horizontalDelta !== 0) {
-                event.preventDefault();
-                viewport.scrollLeft += horizontalDelta;
-              }
+            const scrollLeft = event.shiftKey
+              ? (horizontalDelta !== 0 ? horizontalDelta : verticalDelta)
+              : horizontalDelta;
+            const scrollTop = event.shiftKey ? 0 : verticalDelta;
+            if (scrollLeft === 0 && scrollTop === 0) {
+              return;
             }
+
+            event.preventDefault();
+            viewport.scrollBy({
+              left: scrollLeft,
+              top: scrollTop,
+              behavior: 'auto'
+            });
           };
 
           // WebView2 must allow Ctrl+Wheel into the renderer before this handler can

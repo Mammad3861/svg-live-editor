@@ -15,6 +15,28 @@ namespace SvgLiveEditor.Tests;
 public sealed class PreviewBridgeIntegrationTests
 {
     private const string BridgeToken = "00112233445566778899AABBCCDDEEFF";
+    private sealed record WheelResult(
+        bool HorizontalPositiveScrolled,
+        bool HorizontalNegativeScrolled,
+        bool HorizontalPreservedVertical,
+        bool FractionalHorizontalPreserved,
+        bool ClampedAtBothEnds,
+        bool NoOverflowDidNotMove,
+        bool VerticalScrolled,
+        bool VerticalPreservedHorizontal,
+        bool DiagonalScrolledBothAxes,
+        bool ShiftFallbackScrolledHorizontally,
+        bool ShiftNativeHorizontalWasNotDoubled,
+        bool LineModeNormalized,
+        bool PageModeNormalized,
+        bool MalformedDeltaIgnored,
+        bool NativeHostMessageScrolledOnce,
+        bool NativeHostMessagePreservedVertical,
+        bool StaleAndExtraNativeMessagesIgnored,
+        bool CtrlWheelCanceled,
+        bool CtrlWheelDidNotScroll,
+        bool OrdinaryWheelDidNotZoom);
+
     private sealed record BridgeResult(
         string Direction,
         string DisplayText,
@@ -23,8 +45,7 @@ public sealed class PreviewBridgeIntegrationTests
         double WebViewZoomFactor,
         string BackgroundSize,
         int ZoomMessageCount,
-        bool CtrlWheelCanceled,
-        bool ShiftWheelScrolled,
+        WheelResult Wheel,
         bool SourceRefreshPreservedViewport,
         int PngWidth,
         int PngHeight,
@@ -37,7 +58,7 @@ public sealed class PreviewBridgeIntegrationTests
 
     [TestMethod]
     [TestCategory("DesktopIntegration")]
-    public async Task TrustedPage_CtrlWheelDomHandler_TraversesBridgeOnceAndUpdatesOnlyImage()
+    public async Task TrustedPage_DomWheelAndNativeHostScroll_StaySingleAndIsolated()
     {
         TaskCompletionSource<BridgeResult> completion = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -61,8 +82,26 @@ public sealed class PreviewBridgeIntegrationTests
             "24px 24px, 24px 24px, 24px 24px, 24px 24px",
             result.BackgroundSize);
         Assert.AreEqual(1, result.ZoomMessageCount);
-        Assert.IsTrue(result.CtrlWheelCanceled);
-        Assert.IsTrue(result.ShiftWheelScrolled);
+        Assert.IsTrue(result.Wheel.HorizontalPositiveScrolled);
+        Assert.IsTrue(result.Wheel.HorizontalNegativeScrolled);
+        Assert.IsTrue(result.Wheel.HorizontalPreservedVertical);
+        Assert.IsTrue(result.Wheel.FractionalHorizontalPreserved);
+        Assert.IsTrue(result.Wheel.ClampedAtBothEnds);
+        Assert.IsTrue(result.Wheel.NoOverflowDidNotMove);
+        Assert.IsTrue(result.Wheel.VerticalScrolled);
+        Assert.IsTrue(result.Wheel.VerticalPreservedHorizontal);
+        Assert.IsTrue(result.Wheel.DiagonalScrolledBothAxes);
+        Assert.IsTrue(result.Wheel.ShiftFallbackScrolledHorizontally);
+        Assert.IsTrue(result.Wheel.ShiftNativeHorizontalWasNotDoubled);
+        Assert.IsTrue(result.Wheel.LineModeNormalized);
+        Assert.IsTrue(result.Wheel.PageModeNormalized);
+        Assert.IsTrue(result.Wheel.MalformedDeltaIgnored);
+        Assert.IsTrue(result.Wheel.NativeHostMessageScrolledOnce);
+        Assert.IsTrue(result.Wheel.NativeHostMessagePreservedVertical);
+        Assert.IsTrue(result.Wheel.StaleAndExtraNativeMessagesIgnored);
+        Assert.IsTrue(result.Wheel.CtrlWheelCanceled);
+        Assert.IsTrue(result.Wheel.CtrlWheelDidNotScroll);
+        Assert.IsTrue(result.Wheel.OrdinaryWheelDidNotZoom);
         Assert.IsTrue(result.SourceRefreshPreservedViewport);
         Assert.AreEqual(300, result.PngWidth);
         Assert.AreEqual(150, result.PngHeight);
@@ -215,6 +254,10 @@ public sealed class PreviewBridgeIntegrationTests
                 }
             };
 
+            WheelResult wheel = await RunWheelInputChecksAsync(
+                core,
+                () => zoomMessageCount);
+
             const string pngRequestId =
                 "FFEEDDCCBBAA99887766554433221100";
             PreviewPngSize requestedPngSize = new(300, 150);
@@ -321,51 +364,6 @@ public sealed class PreviewBridgeIntegrationTests
                 """);
             await Task.Delay(50);
 
-            await core.ExecuteScriptAsync(
-                """
-                window.dispatchEvent(new WheelEvent('wheel', {
-                  deltaY: 120,
-                  clientX: 320,
-                  clientY: 240,
-                  bubbles: true,
-                  cancelable: true
-                }))
-                """);
-            await Task.Delay(50);
-            if (zoomMessageCount != 0)
-            {
-                throw new InvalidOperationException(
-                    "A normal wheel event unexpectedly requested preview zoom.");
-            }
-
-            double scrollBeforeShift = ParseScriptNumber(await core.ExecuteScriptAsync(
-                "document.querySelector('.preview-viewport').scrollLeft"));
-            await core.ExecuteScriptAsync(
-                """
-                window.dispatchEvent(new WheelEvent('wheel', {
-                  deltaY: 120,
-                  shiftKey: true,
-                  clientX: 320,
-                  clientY: 240,
-                  bubbles: true,
-                  cancelable: true
-                }))
-                """);
-            double scrollAfterShift = ParseScriptNumber(await core.ExecuteScriptAsync(
-                "document.querySelector('.preview-viewport').scrollLeft"));
-
-            string dispatchResult = await core.ExecuteScriptAsync(
-                """
-                window.dispatchEvent(new WheelEvent('wheel', {
-                  deltaY: -120,
-                  ctrlKey: true,
-                  clientX: 320,
-                  clientY: 240,
-                  bubbles: true,
-                  cancelable: true
-                }))
-                """);
-
             (string source, string json) =
                 await messageReceived.Task.WaitAsync(TimeSpan.FromSeconds(10));
             await Task.Delay(150);
@@ -430,8 +428,7 @@ public sealed class PreviewBridgeIntegrationTests
                 webView.ZoomFactor,
                 root.GetProperty("backgroundSize").GetString() ?? string.Empty,
                 zoomMessageCount,
-                dispatchResult.Equals("false", StringComparison.Ordinal),
-                scrollAfterShift > scrollBeforeShift,
+                wheel,
                 sourceRefreshPreservedViewport,
                 pngPayload.Size.Width,
                 pngPayload.Size.Height,
@@ -460,6 +457,385 @@ public sealed class PreviewBridgeIntegrationTests
     private static double ParseScriptNumber(string json)
     {
         return JsonSerializer.Deserialize<double>(json);
+    }
+
+    private sealed record ViewportMetrics(
+        double Left,
+        double Top,
+        double ClientWidth,
+        double ClientHeight,
+        double MaxLeft,
+        double MaxTop);
+
+    private static async Task<WheelResult> RunWheelInputChecksAsync(
+        CoreWebView2 core,
+        Func<int> getZoomMessageCount)
+    {
+        await SetViewportAsync(core, 100, 100);
+        ViewportMetrics beforeHorizontal = await GetViewportMetricsAsync(core);
+        await DispatchWheelAsync(core, deltaX: 80, deltaY: 0);
+        ViewportMetrics afterHorizontal = await GetViewportMetricsAsync(core);
+        bool horizontalPositiveScrolled =
+            afterHorizontal.Left > beforeHorizontal.Left;
+        bool horizontalPreservedVertical =
+            NearlyEqual(afterHorizontal.Top, beforeHorizontal.Top);
+
+        await SetViewportAsync(core, 100, 100);
+        ViewportMetrics beforeNegative = await GetViewportMetricsAsync(core);
+        await DispatchWheelAsync(core, deltaX: -40, deltaY: 0);
+        ViewportMetrics afterNegative = await GetViewportMetricsAsync(core);
+        bool horizontalNegativeScrolled =
+            afterNegative.Left < beforeNegative.Left;
+
+        await SetViewportAsync(core, 100, 100);
+        ViewportMetrics beforeFractional = await GetViewportMetricsAsync(core);
+        await DispatchWheelAsync(core, deltaX: 0.75, deltaY: 0);
+        ViewportMetrics afterFractional = await GetViewportMetricsAsync(core);
+        bool fractionalHorizontalPreserved = NearlyEqual(
+            afterFractional.Left - beforeFractional.Left,
+            0.75,
+            tolerance: 0.2);
+
+        await SetViewportAsync(core, 100, 100);
+        ViewportMetrics beforeVertical = await GetViewportMetricsAsync(core);
+        await DispatchWheelAsync(core, deltaX: 0, deltaY: 60);
+        ViewportMetrics afterVertical = await GetViewportMetricsAsync(core);
+        bool verticalScrolled = afterVertical.Top > beforeVertical.Top;
+        bool verticalPreservedHorizontal =
+            NearlyEqual(afterVertical.Left, beforeVertical.Left);
+
+        await SetViewportAsync(core, 100, 100);
+        ViewportMetrics beforeDiagonal = await GetViewportMetricsAsync(core);
+        await DispatchWheelAsync(core, deltaX: 45, deltaY: 35);
+        ViewportMetrics afterDiagonal = await GetViewportMetricsAsync(core);
+        bool diagonalScrolledBothAxes =
+            afterDiagonal.Left > beforeDiagonal.Left
+            && afterDiagonal.Top > beforeDiagonal.Top;
+
+        await SetViewportAsync(core, 100, 100);
+        ViewportMetrics beforeShiftFallback = await GetViewportMetricsAsync(core);
+        await DispatchWheelAsync(
+            core,
+            deltaX: 0,
+            deltaY: 50,
+            modifiers: 8);
+        ViewportMetrics afterShiftFallback = await GetViewportMetricsAsync(core);
+        bool shiftFallbackScrolledHorizontally =
+            afterShiftFallback.Left > beforeShiftFallback.Left
+            && NearlyEqual(afterShiftFallback.Top, beforeShiftFallback.Top);
+
+        await SetViewportAsync(core, 100, 100);
+        ViewportMetrics beforeNativeShift = await GetViewportMetricsAsync(core);
+        await DispatchWheelAsync(
+            core,
+            deltaX: 25,
+            deltaY: 80,
+            modifiers: 8);
+        ViewportMetrics afterNativeShift = await GetViewportMetricsAsync(core);
+        bool shiftNativeHorizontalWasNotDoubled =
+            NearlyEqual(
+                afterNativeShift.Left - beforeNativeShift.Left,
+                25,
+                tolerance: 1)
+            && NearlyEqual(afterNativeShift.Top, beforeNativeShift.Top);
+
+        await SetViewportAsync(core, 100, 100);
+        ViewportMetrics beforeLine = await GetViewportMetricsAsync(core);
+        await DispatchDomWheelAsync(
+            core,
+            deltaX: 1,
+            deltaY: 0,
+            deltaMode: 1);
+        ViewportMetrics afterLine = await GetViewportMetricsAsync(core);
+        bool lineModeNormalized = NearlyEqual(
+            afterLine.Left - beforeLine.Left,
+            16,
+            tolerance: 0.6);
+
+        await SetViewportAsync(core, 0, 100);
+        ViewportMetrics beforePage = await GetViewportMetricsAsync(core);
+        await DispatchDomWheelAsync(
+            core,
+            deltaX: 1,
+            deltaY: 0,
+            deltaMode: 2);
+        ViewportMetrics afterPage = await GetViewportMetricsAsync(core);
+        bool pageModeNormalized = NearlyEqual(
+            afterPage.Left - beforePage.Left,
+            beforePage.ClientWidth,
+            tolerance: 1.5);
+
+        await SetViewportAsync(core, 100, 100);
+        ViewportMetrics beforeMalformed = await GetViewportMetricsAsync(core);
+        await core.ExecuteScriptAsync(
+            """
+            window.dispatchEvent(new WheelEvent('wheel', {
+              deltaX: Number.NaN,
+              deltaY: Number.POSITIVE_INFINITY,
+              deltaMode: 99,
+              clientX: 200,
+              clientY: 150,
+              bubbles: true,
+              cancelable: true
+            }))
+            """);
+        ViewportMetrics afterMalformed = await GetViewportMetricsAsync(core);
+        bool malformedDeltaIgnored =
+            NearlyEqual(afterMalformed.Left, beforeMalformed.Left)
+            && NearlyEqual(afterMalformed.Top, beforeMalformed.Top);
+
+        await SetViewportAsync(core, 0, 0);
+        await DispatchWheelAsync(core, deltaX: -80, deltaY: 0);
+        ViewportMetrics atStart = await GetViewportMetricsAsync(core);
+        await SetViewportToEndAsync(core);
+        ViewportMetrics beforeEndClamp = await GetViewportMetricsAsync(core);
+        await DispatchWheelAsync(core, deltaX: 80, deltaY: 80);
+        ViewportMetrics atEnd = await GetViewportMetricsAsync(core);
+        bool clampedAtBothEnds =
+            NearlyEqual(atStart.Left, 0)
+            && NearlyEqual(atStart.Top, 0)
+            && beforeEndClamp.Left > 0
+            && beforeEndClamp.Top > 0
+            && NearlyEqual(atEnd.Left, beforeEndClamp.Left)
+            && NearlyEqual(atEnd.Top, beforeEndClamp.Top);
+
+        PreviewPageMessageBuilder pageMessageBuilder = new();
+        core.PostWebMessageAsJson(
+            pageMessageBuilder.BuildZoomStateMessage(
+                BridgeToken,
+                100,
+                50,
+                PreviewViewportPosition.Center));
+        await Task.Delay(100);
+        await SetViewportAsync(core, 0, 0);
+        await DispatchWheelAsync(core, deltaX: 80, deltaY: 0);
+        ViewportMetrics withoutOverflow = await GetViewportMetricsAsync(core);
+        bool noOverflowDidNotMove =
+            NearlyEqual(withoutOverflow.MaxLeft, 0)
+            && NearlyEqual(withoutOverflow.Left, 0);
+
+        core.PostWebMessageAsJson(
+            pageMessageBuilder.BuildZoomStateMessage(
+                BridgeToken,
+                1800,
+                900,
+                PreviewViewportPosition.Center));
+        await Task.Delay(100);
+
+        await SetViewportAsync(core, 100, 100);
+        ViewportMetrics beforeNativeHost = await GetViewportMetricsAsync(core);
+        core.PostWebMessageAsJson(
+            pageMessageBuilder.BuildHorizontalScrollMessage(
+                BridgeToken,
+                deltaX: 40.5));
+        await Task.Delay(50);
+        ViewportMetrics afterNativeHost = await GetViewportMetricsAsync(core);
+        bool nativeHostMessageScrolledOnce = NearlyEqual(
+            afterNativeHost.Left - beforeNativeHost.Left,
+            40.5,
+            tolerance: 0.6);
+        bool nativeHostMessagePreservedVertical = NearlyEqual(
+            afterNativeHost.Top,
+            beforeNativeHost.Top);
+
+        string staleToken = "FFEEDDCCBBAA99887766554433221100";
+        core.PostWebMessageAsJson(JsonSerializer.Serialize(new
+        {
+            type = "horizontalScroll",
+            token = staleToken,
+            deltaX = 40.5
+        }));
+        core.PostWebMessageAsJson(JsonSerializer.Serialize(new
+        {
+            type = "horizontalScroll",
+            token = BridgeToken,
+            deltaX = 40.5,
+            extra = true
+        }));
+        await Task.Delay(50);
+        ViewportMetrics afterRejectedNativeHost =
+            await GetViewportMetricsAsync(core);
+        bool staleAndExtraNativeMessagesIgnored =
+            NearlyEqual(
+                afterRejectedNativeHost.Left,
+                afterNativeHost.Left)
+            && NearlyEqual(
+                afterRejectedNativeHost.Top,
+                afterNativeHost.Top);
+
+        bool ordinaryWheelDidNotZoom = getZoomMessageCount() == 0;
+        await SetViewportAsync(core, 100, 100);
+        ViewportMetrics beforeCtrl = await GetViewportMetricsAsync(core);
+        await core.ExecuteScriptAsync(
+            """
+            window.__svgLiveEditorCtrlWheelCanceled = false;
+            window.addEventListener(
+              'wheel',
+              event => {
+                window.__svgLiveEditorCtrlWheelCanceled =
+                  event.defaultPrevented;
+              },
+              { once: true });
+            """);
+        await DispatchWheelAsync(
+            core,
+            deltaX: 0,
+            deltaY: -120,
+            modifiers: 2);
+        ViewportMetrics afterCtrl = await GetViewportMetricsAsync(core);
+        bool ctrlWheelCanceled = JsonSerializer.Deserialize<bool>(
+            await core.ExecuteScriptAsync(
+                "window.__svgLiveEditorCtrlWheelCanceled"));
+        bool ctrlWheelDidNotScroll =
+            NearlyEqual(afterCtrl.Left, beforeCtrl.Left)
+            && NearlyEqual(afterCtrl.Top, beforeCtrl.Top);
+
+        return new WheelResult(
+            horizontalPositiveScrolled,
+            horizontalNegativeScrolled,
+            horizontalPreservedVertical,
+            fractionalHorizontalPreserved,
+            clampedAtBothEnds,
+            noOverflowDidNotMove,
+            verticalScrolled,
+            verticalPreservedHorizontal,
+            diagonalScrolledBothAxes,
+            shiftFallbackScrolledHorizontally,
+            shiftNativeHorizontalWasNotDoubled,
+            lineModeNormalized,
+            pageModeNormalized,
+            malformedDeltaIgnored,
+            nativeHostMessageScrolledOnce,
+            nativeHostMessagePreservedVertical,
+            staleAndExtraNativeMessagesIgnored,
+            ctrlWheelCanceled,
+            ctrlWheelDidNotScroll,
+            ordinaryWheelDidNotZoom);
+    }
+
+    private static async Task DispatchWheelAsync(
+        CoreWebView2 core,
+        double deltaX,
+        double deltaY,
+        int modifiers = 0)
+    {
+        string parameters = JsonSerializer.Serialize(new
+        {
+            type = "mouseWheel",
+            x = 200,
+            y = 150,
+            deltaX,
+            deltaY,
+            modifiers,
+            pointerType = "mouse"
+        });
+        await core.CallDevToolsProtocolMethodAsync(
+            "Input.dispatchMouseEvent",
+            parameters);
+        await Task.Delay(50);
+    }
+
+    private static async Task DispatchDomWheelAsync(
+        CoreWebView2 core,
+        double deltaX,
+        double deltaY,
+        int deltaMode)
+    {
+        string parameters = JsonSerializer.Serialize(new
+        {
+            deltaX,
+            deltaY,
+            deltaMode
+        });
+        await core.ExecuteScriptAsync(
+            $$"""
+            (() => {
+              const input = {{parameters}};
+              window.dispatchEvent(new WheelEvent('wheel', {
+                deltaX: input.deltaX,
+                deltaY: input.deltaY,
+                deltaMode: input.deltaMode,
+                clientX: 200,
+                clientY: 150,
+                bubbles: true,
+                cancelable: true
+              }));
+            })()
+            """);
+        await Task.Delay(20);
+    }
+
+    private static async Task SetViewportAsync(
+        CoreWebView2 core,
+        double left,
+        double top)
+    {
+        string parameters = JsonSerializer.Serialize(new
+        {
+            left,
+            top
+        });
+        await core.ExecuteScriptAsync(
+            $$"""
+            (() => {
+              const point = {{parameters}};
+              const viewport = document.querySelector('.preview-viewport');
+              viewport.scrollLeft = point.left;
+              viewport.scrollTop = point.top;
+            })()
+            """);
+        await Task.Delay(20);
+    }
+
+    private static async Task SetViewportToEndAsync(CoreWebView2 core)
+    {
+        await core.ExecuteScriptAsync(
+            """
+            (() => {
+              const viewport = document.querySelector('.preview-viewport');
+              viewport.scrollLeft = viewport.scrollWidth;
+              viewport.scrollTop = viewport.scrollHeight;
+            })()
+            """);
+        await Task.Delay(20);
+    }
+
+    private static async Task<ViewportMetrics> GetViewportMetricsAsync(
+        CoreWebView2 core)
+    {
+        string result = await core.ExecuteScriptAsync(
+            """
+            JSON.stringify((() => {
+              const viewport = document.querySelector('.preview-viewport');
+              return {
+                left: viewport.scrollLeft,
+                top: viewport.scrollTop,
+                clientWidth: viewport.clientWidth,
+                clientHeight: viewport.clientHeight,
+                maxLeft: Math.max(0, viewport.scrollWidth - viewport.clientWidth),
+                maxTop: Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+              };
+            })())
+            """);
+        string json = JsonSerializer.Deserialize<string>(result)
+            ?? throw new InvalidOperationException(
+                "WebView2 returned no viewport metrics.");
+        return JsonSerializer.Deserialize<ViewportMetrics>(
+            json,
+            new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            })
+            ?? throw new InvalidOperationException(
+                "WebView2 returned invalid viewport metrics.");
+    }
+
+    private static bool NearlyEqual(
+        double first,
+        double second,
+        double tolerance = 0.01)
+    {
+        return Math.Abs(first - second) <= tolerance;
     }
 
     private static bool IsTopLeftTransparent(byte[] pngBytes)
