@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="500" viewBox="0 0 1000 500">
+  <defs>
+    <linearGradient id="rtl-background" x1="0" y1="0" x2="1000" y2="500">
+      <stop offset="0" stop-color="#ecfeff"/>
+      <stop offset="1" stop-color="#ede9fe"/>
+    </linearGradient>
+  </defs>
+  <rect width="1000" height="500" fill="url(#rtl-background)"/>
+  <rect x="80" y="70" width="840" height="360" rx="36" fill="#ffffff" stroke="#c4b5fd" stroke-width="3"/>
+  <text x="860" y="125" direction="rtl" unicode-bidi="embed" text-anchor="start" fill="#312e81" font-family="Segoe UI, Tahoma, sans-serif" font-size="34" font-weight="700">سلام، ویرایشگر زندهٔ SVG</text>
+  <text x="860" y="170" direction="rtl" unicode-bidi="embed" text-anchor="start" fill="#475569" font-family="Segoe UI, Tahoma, sans-serif" font-size="22">سلام! من بهروز هستم.</text>
+  <text x="860" y="210" direction="rtl" unicode-bidi="embed" text-anchor="start" fill="#475569" font-family="Segoe UI, Tahoma, sans-serif" font-size="22">این یک متن فارسی است!</text>
+  <text x="860" y="250" direction="rtl" unicode-bidi="embed" text-anchor="start" fill="#475569" font-family="Segoe UI, Tahoma, sans-serif" font-size="22">نسخه 2.0 آماده است.</text>
+  <text x="860" y="290" direction="rtl" unicode-bidi="embed" text-anchor="start" fill="#475569" font-family="Segoe UI, Tahoma, sans-serif" font-size="22">قیمت: ۱۲۳٬۴۵۶ تومان.</text>
+  <text x="860" y="330" direction="rtl" unicode-bidi="embed" text-anchor="start" fill="#475569" font-family="Segoe UI, Tahoma, sans-serif" font-size="22">SvgLiveEditor نسخه 0.5</text>
+  <text x="860" y="370" direction="rtl" unicode-bidi="embed" text-anchor="start" fill="#475569" font-family="Segoe UI, Tahoma, sans-serif" font-size="22">(سلام بهروز)</text>
+  <text x="860" y="410" direction="rtl" unicode-bidi="embed" text-anchor="start" fill="#475569" font-family="Segoe UI, Tahoma, sans-serif" font-size="22">Hello — سلام!</text>
+  <circle cx="155" cy="335" r="44" fill="#7c3aed"/>
+  <path d="M135 335h40M155 315v40" stroke="#ffffff" stroke-width="8" stroke-linecap="round"/>
+</svg>

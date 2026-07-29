@@ -21,6 +21,10 @@
     <None Include="..\..\scripts\Publish-WinX64.ps1" Link="scripts\Publish-WinX64.ps1" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\src\SvgLiveEditor\MainWindow.xaml" Link="ui\MainWindow.xaml" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\src\SvgLiveEditor\MainWindow.xaml.cs" Link="ui\MainWindow.xaml.cs" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\SvgLiveEditor\MainWindow.PreviewNativeInput.cs" Link="ui\MainWindow.PreviewNativeInput.cs" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\SvgLiveEditor\MainWindow.Persistence.cs" Link="ui\MainWindow.Persistence.cs" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\SvgLiveEditor\TemplateGalleryWindow.xaml" Link="ui\TemplateGalleryWindow.xaml" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\src\SvgLiveEditor\RecoveryWindow.xaml" Link="ui\RecoveryWindow.xaml" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\src\SvgLiveEditor\Properties\PublishProfiles\win-x64.pubxml" Link="publish\win-x64.pubxml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

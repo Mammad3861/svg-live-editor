@@ -68,6 +68,34 @@ public sealed class PersianEditorSourceTests
     }
 
     [TestMethod]
+    public void MixedPersianPunctuationUndoRedoNeverReordersOrDeletesCharacters()
+    {
+        TextDocument document = new(EmptyTextSource);
+        document.UndoStack.MarkAsOriginalFile();
+        int insertionOffset =
+            document.Text.IndexOf("</text>", StringComparison.Ordinal);
+        const string mixed =
+            "سلام! من بهروز هستم. نسخه 2.0 آماده است. قیمت: ۱۲۳٬۴۵۶ تومان. (سلام بهروز) Hello — سلام!";
+
+        document.UndoStack.StartUndoGroup();
+        try
+        {
+            document.Insert(insertionOffset, mixed);
+        }
+        finally
+        {
+            document.UndoStack.EndUndoGroup();
+        }
+
+        string edited = EmptyTextSource.Insert(insertionOffset, mixed);
+        Assert.AreEqual(edited, document.Text);
+        document.UndoStack.Undo();
+        Assert.AreEqual(EmptyTextSource, document.Text);
+        document.UndoStack.Redo();
+        Assert.AreEqual(edited, document.Text);
+    }
+
+    [TestMethod]
     public void DelayedStaleIndexResult_CannotReplaceRapidPersianInput()
     {
         TextDocument document = new(EmptyTextSource);

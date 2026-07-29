@@ -2,7 +2,7 @@
 param(
     [Parameter()]
     [ValidatePattern('^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')]
-    [string]$Version = '0.4.0',
+    [string]$Version = '0.5.0',
 
     [Parameter()]
     [string]$RepositoryRoot
@@ -85,6 +85,7 @@ function Get-ForbiddenPackageReason {
             $segment -ieq 'tests' -or
             $segment -ieq 'TestResults' -or
             $segment -ieq 'DragOut' -or
+            $segment -ieq 'Recovery' -or
             $segment -ieq 'EBWebView' -or
             $segment -ieq 'WebView2' -or
             $segment.EndsWith('.WebView2', [StringComparison]::OrdinalIgnoreCase)) {
@@ -130,6 +131,7 @@ function Get-ForbiddenPackageReason {
             '.cmd',
             '.bat',
             '.pdb',
+            '.tmp',
             '.user',
             '.suo',
             '.pfx',

@@ -70,6 +70,41 @@ public sealed class DocumentInspectorViewModelTests
     }
 
     [TestMethod]
+    public void TextAndTspanExposeConstrainedBidiPresentationProperties()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><text><tspan>سلام!</tspan></text></svg>";
+        SvgDocumentIndex index = _indexService.Build(source).Document!;
+        DocumentInspectorViewModel inspector = new();
+        inspector.Load(index, preferredSelection: null);
+
+        foreach (string elementName in new[] { "text", "tspan" })
+        {
+            inspector.SelectNode(index.Elements.Single(element =>
+                element.Name == elementName));
+
+            foreach (string propertyName in
+                     new[] { "direction", "unicode-bidi", "text-anchor" })
+            {
+                SvgPropertyViewModel property =
+                    inspector.Properties.Single(item =>
+                        item.Name == propertyName);
+                Assert.IsTrue(property.HasAllowedValues);
+                CollectionAssert.Contains(
+                    property.AllowedValues.ToArray(),
+                    string.Empty);
+            }
+        }
+
+        SvgPropertyViewModel direction =
+            inspector.Properties.Single(property =>
+                property.Name == "direction");
+        CollectionAssert.AreEqual(
+            new[] { "", "ltr", "rtl" },
+            direction.AllowedValues.ToArray());
+    }
+
+    [TestMethod]
     public void ShowUnavailable_ClearsTreeSelectionAndProperties()
     {
         const string source =

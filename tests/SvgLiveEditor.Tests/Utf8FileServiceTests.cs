@@ -86,4 +86,19 @@ public sealed class Utf8FileServiceTests
             Encoding.UTF8.GetBytes(source),
             File.ReadAllBytes(path));
     }
+
+    [TestMethod]
+    public void SaveAndReopen_PreservesPersianTerminalPunctuationExactly()
+    {
+        string path = Path.Combine(_temporaryDirectory, "persian-punctuation.svg");
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><text direction=\"rtl\" unicode-bidi=\"embed\" text-anchor=\"start\">سلام! من بهروز هستم.</text></svg>";
+
+        _service.WriteAllText(path, source);
+
+        Assert.AreEqual(source, _service.ReadAllText(path));
+        CollectionAssert.AreEqual(
+            Encoding.UTF8.GetBytes(source),
+            File.ReadAllBytes(path));
+    }
 }

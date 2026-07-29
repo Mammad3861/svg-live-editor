@@ -43,11 +43,14 @@ public sealed class MainViewModel : ObservableObject
 
     public DocumentInspectorViewModel Inspector { get; } = new();
 
-    public void LoadDocument(string text, string? path)
+    public void LoadDocument(
+        string text,
+        string? path,
+        bool isModified = false)
     {
         _documentText = text;
         _currentFilePath = path;
-        _isModified = false;
+        _isModified = isModified;
         _validationStatus = "Validating...";
         _isSvgValid = false;
         RaiseDocumentProperties();

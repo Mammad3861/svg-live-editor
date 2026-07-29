@@ -50,6 +50,11 @@ public sealed partial class SvgPropertyValueValidator
             return $"Attribute '{attributeName}' is read-only in this version.";
         }
 
+        if (value.Length == 0 && definition.RemoveWhenEmpty)
+        {
+            return null;
+        }
+
         if (value.Length > MaximumPropertyLength)
         {
             return "The value is too long.";
@@ -60,6 +65,14 @@ public sealed partial class SvgPropertyValueValidator
                 && character is not '\t' and not '\r' and not '\n'))
         {
             return "The value contains unsupported control characters.";
+        }
+
+        if (definition.AllowedValues is not null
+            && !definition.AllowedValues.Contains(
+                value,
+                StringComparer.Ordinal))
+        {
+            return $"Use one of the supported values for {attributeName}.";
         }
 
         return attributeName switch

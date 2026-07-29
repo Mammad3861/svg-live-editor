@@ -4,7 +4,8 @@ namespace SvgLiveEditor.Services;
 
 public enum ApplicationShortcut
 {
-    ToggleWordWrap
+    ToggleWordWrap,
+    NewFromTemplate
 }
 
 public static class ApplicationShortcutResolver
@@ -14,6 +15,12 @@ public static class ApplicationShortcutResolver
         bool isAltZ = modifiers == ModifierKeys.Alt && key == Key.Z;
         bool isControlAltW = modifiers == (ModifierKeys.Control | ModifierKeys.Alt)
             && key == Key.W;
+        if (modifiers == (ModifierKeys.Control | ModifierKeys.Alt)
+            && key == Key.N)
+        {
+            return ApplicationShortcut.NewFromTemplate;
+        }
+
         return isAltZ || isControlAltW
             ? ApplicationShortcut.ToggleWordWrap
             : null;

@@ -29,10 +29,21 @@
     <Menu DockPanel.Dock="Top" Background="White">
       <MenuItem Header="_File">
         <MenuItem Header="_New" InputGestureText="Ctrl+N" Click="OnNewClick" />
+        <MenuItem Header="New from _Template..."
+                  InputGestureText="Ctrl+Alt+N"
+                  Click="OnNewFromTemplateClick"
+                  AutomationProperties.Name="New from Template" />
         <MenuItem Header="_Open..." InputGestureText="Ctrl+O" Click="OnOpenClick" />
         <Separator />
         <MenuItem Header="_Save" InputGestureText="Ctrl+S" Click="OnSaveClick" />
         <MenuItem Header="Save _As..." InputGestureText="Ctrl+Shift+S" Click="OnSaveAsClick" />
+        <Separator />
+        <MenuItem x:Name="AutoSaveMenuItem"
+                  Header="_Auto Save"
+                  IsCheckable="True"
+                  IsChecked="False"
+                  Click="OnAutoSaveClick"
+                  AutomationProperties.Name="Auto Save" />
         <Separator />
         <MenuItem Header="E_xit" Click="OnExitClick" />
       </MenuItem>
@@ -84,6 +95,10 @@
     <ToolBarTray DockPanel.Dock="Top" Background="#F1F5F9" IsLocked="True">
       <ToolBar Background="Transparent" BorderThickness="0">
         <Button Content="New" ToolTip="New (Ctrl+N)" Click="OnNewClick" />
+        <Button Content="Templates"
+                ToolTip="New from Template (Ctrl+Alt+N)"
+                Click="OnNewFromTemplateClick"
+                AutomationProperties.Name="New from Template" />
         <Button Content="Open" ToolTip="Open SVG or TXT (Ctrl+O)" Click="OnOpenClick" />
         <Button Content="Save" ToolTip="Save (Ctrl+S)" Click="OnSaveClick" />
         <Separator />
@@ -305,17 +320,48 @@
                                    Text="{Binding Name}"
                                    Foreground="#334155"
                                    ToolTip="{Binding PresenceText}" />
-                        <TextBox Grid.Row="0"
-                                 Grid.Column="1"
-                                 MinHeight="28"
-                                 Padding="5,3"
-                                 Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                 IsReadOnly="{Binding IsReadOnly}"
-                                 Tag="{Binding}"
-                                 ToolTip="{Binding PresenceText}"
-                                 LostKeyboardFocus="OnInspectorPropertyLostKeyboardFocus"
-                                 KeyDown="OnInspectorPropertyKeyDown"
-                                 AutomationProperties.Name="{Binding Name}" />
+                        <Grid Grid.Row="0" Grid.Column="1">
+                          <TextBox MinHeight="28"
+                                   Padding="5,3"
+                                   Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                   IsReadOnly="{Binding IsReadOnly}"
+                                   Tag="{Binding}"
+                                   ToolTip="{Binding PresenceText}"
+                                   LostKeyboardFocus="OnInspectorPropertyLostKeyboardFocus"
+                                   KeyDown="OnInspectorPropertyKeyDown"
+                                   AutomationProperties.Name="{Binding Name}">
+                            <TextBox.Style>
+                              <Style TargetType="TextBox">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                  <DataTrigger Binding="{Binding HasAllowedValues}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                  </DataTrigger>
+                                </Style.Triggers>
+                              </Style>
+                            </TextBox.Style>
+                          </TextBox>
+                          <ComboBox MinHeight="28"
+                                    Padding="5,3"
+                                    ItemsSource="{Binding AllowedValues}"
+                                    SelectedItem="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                    Tag="{Binding}"
+                                    ToolTip="Choose a supported value. The blank choice removes this optional attribute."
+                                    LostKeyboardFocus="OnInspectorPropertyLostKeyboardFocus"
+                                    KeyDown="OnInspectorPropertyKeyDown"
+                                    AutomationProperties.Name="{Binding Name}">
+                            <ComboBox.Style>
+                              <Style TargetType="ComboBox">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                  <DataTrigger Binding="{Binding HasAllowedValues}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                  </DataTrigger>
+                                </Style.Triggers>
+                              </Style>
+                            </ComboBox.Style>
+                          </ComboBox>
+                        </Grid>
                         <TextBlock Grid.Row="1"
                                    Grid.Column="1"
                                    Margin="0,3,0,0"
