@@ -105,6 +105,35 @@ public sealed class DocumentInspectorViewModelTests
     }
 
     [TestMethod]
+    public void TextExposesEditableFontSuggestionsAndTypographyProperties()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><text x=\"1\" y=\"20\" font-family=\"Segoe UI, sans-serif\" font-size=\"18\">Text</text></svg>";
+        SvgDocumentIndex index = _indexService.Build(source).Document!;
+        DocumentInspectorViewModel inspector = new();
+        inspector.SetFontFamilySuggestions(
+            ["Segoe UI", "Arial", "Tahoma", "sans-serif"]);
+        inspector.Load(index, preferredSelection: null);
+        inspector.SelectNode(index.Elements.Single(element =>
+            element.Name == "text"));
+
+        SvgPropertyViewModel family = inspector.Properties.Single(property =>
+            property.Name == "font-family");
+        Assert.IsTrue(family.HasSuggestedValues);
+        Assert.IsFalse(family.HasAllowedValues);
+        Assert.AreEqual("Segoe UI, sans-serif", family.Value);
+        CollectionAssert.Contains(
+            family.SuggestedValues.ToArray(),
+            "Tahoma");
+        foreach (string propertyName in
+                 new[] { "font-size", "font-weight", "font-style" })
+        {
+            Assert.IsTrue(inspector.Properties.Any(property =>
+                property.Name == propertyName));
+        }
+    }
+
+    [TestMethod]
     public void ShowUnavailable_ClearsTreeSelectionAndProperties()
     {
         const string source =

@@ -10,7 +10,7 @@ public sealed class PreviewDirectDragGestureTests
     private readonly PreviewPointerGestureArbiter _arbiter = new();
 
     [TestMethod]
-    public void PlainPrimaryMouseDragOverArtwork_SelectsOutboundDrag()
+    public void AltPrimaryMouseDragOverArtwork_SelectsOutboundDrag()
     {
         Assert.AreEqual(
             PreviewPointerGestureAction.OutboundDrag,
@@ -58,7 +58,7 @@ public sealed class PreviewDirectDragGestureTests
     }
 
     [TestMethod]
-    public void NonPrimaryNonMouseAndOtherModifiedDrags_DoNotExport()
+    public void NonPrimaryNonMouseAndConflictingModifiedDrags_DoNotExport()
     {
         Assert.AreEqual(
             PreviewPointerGestureAction.None,
@@ -71,7 +71,7 @@ public sealed class PreviewDirectDragGestureTests
             _arbiter.Resolve(CreateGesture() with { ShiftHeld = true }));
         Assert.AreEqual(
             PreviewPointerGestureAction.None,
-            _arbiter.Resolve(CreateGesture() with { AltHeld = true }));
+            _arbiter.Resolve(CreateGesture() with { AltHeld = false }));
         Assert.AreEqual(
             PreviewPointerGestureAction.None,
             _arbiter.Resolve(CreateGesture() with { MetaHeld = true }));
@@ -250,7 +250,7 @@ public sealed class PreviewDirectDragGestureTests
             IsMouse: true,
             ControlHeld: false,
             ShiftHeld: false,
-            AltHeld: false,
+            AltHeld: true,
             MetaHeld: false,
             SpaceHeld: false,
             PanModeEnabled: false);

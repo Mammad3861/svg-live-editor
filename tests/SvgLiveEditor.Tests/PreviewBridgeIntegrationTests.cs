@@ -54,7 +54,12 @@ public sealed class PreviewBridgeIntegrationTests
         bool ContextMenuCanceled,
         bool ContextMenuParsed,
         bool PlainCopyCanceled,
-        int CopyCommandCount);
+        int CopyCommandCount,
+        bool VisualSelectionStayedTokenAndRevisionBound,
+        bool EnglishTextMeasured,
+        bool PersianTextMeasured,
+        bool TextOverlayAligned,
+        bool FontChangeMeasured);
 
     [TestMethod]
     [TestCategory("DesktopIntegration")]
@@ -111,6 +116,12 @@ public sealed class PreviewBridgeIntegrationTests
         Assert.IsTrue(result.ContextMenuParsed);
         Assert.IsTrue(result.PlainCopyCanceled);
         Assert.AreEqual(1, result.CopyCommandCount);
+        Assert.IsTrue(
+            result.VisualSelectionStayedTokenAndRevisionBound);
+        Assert.IsTrue(result.EnglishTextMeasured);
+        Assert.IsTrue(result.PersianTextMeasured);
+        Assert.IsTrue(result.TextOverlayAligned);
+        Assert.IsTrue(result.FontChangeMeasured);
         Assert.IsTrue(thread.Join(TimeSpan.FromSeconds(5)));
     }
 
@@ -153,6 +164,12 @@ public sealed class PreviewBridgeIntegrationTests
             webView.ZoomFactor = 1.0;
 
             PreviewHtmlBuilder htmlBuilder = new();
+            SvgVisualViewport visualViewport = new(
+                0,
+                0,
+                300,
+                150,
+                SvgPreserveAspectRatio.Default);
             const string svg =
                 "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 300 150\"><rect width=\"300\" height=\"150\" fill=\"white\" /></svg>";
             PreviewViewportPosition preservedViewport = new(0.75, 0.75);
@@ -163,7 +180,9 @@ public sealed class PreviewBridgeIntegrationTests
                     1200,
                     600,
                     BridgeToken,
-                    preservedViewport));
+                    preservedViewport,
+                    sourceRevision: 7,
+                    visualViewport: visualViewport));
             string hostScriptReady = await core.ExecuteScriptAsync(
                 "document.body.dataset.hostScriptReady || 'false'");
             if (!hostScriptReady.Equals("\"true\"", StringComparison.Ordinal))
@@ -182,7 +201,9 @@ public sealed class PreviewBridgeIntegrationTests
                     1800,
                     900,
                     BridgeToken,
-                    preservedViewport));
+                    preservedViewport,
+                    sourceRevision: 7,
+                    visualViewport: visualViewport));
             await Task.Delay(100);
             string restoredJson = JsonSerializer.Deserialize<string>(
                 await core.ExecuteScriptAsync(
@@ -206,6 +227,64 @@ public sealed class PreviewBridgeIntegrationTests
                 && Math.Abs(restored.GetProperty("centerX").GetDouble() - 0.75) < 0.02
                 && Math.Abs(restored.GetProperty("centerY").GetDouble() - 0.75) < 0.02;
 
+            PreviewPageMessageBuilder visualMessageBuilder = new();
+            core.PostWebMessageAsJson(
+                visualMessageBuilder.BuildVisualSelectionMessage(
+                    BridgeToken,
+                    sourceRevision: 7,
+                    new PreviewVisualSelection(
+                        SvgVisualElementKind.Rect,
+                        new SvgVisualShapeGeometry(
+                            SvgVisualElementKind.Rect,
+                            10,
+                            20,
+                            110,
+                            70),
+                        5,
+                        -5)));
+            await Task.Delay(50);
+            string acceptedVisualSelection =
+                await ReadVisualSelectionAsync(core);
+            core.PostWebMessageAsJson(JsonSerializer.Serialize(new
+            {
+                type = "visualSelection",
+                token = BridgeToken,
+                sourceRevision = 6,
+                visible = false,
+                kind = "none",
+                x1 = 0,
+                y1 = 0,
+                x2 = 0,
+                y2 = 0,
+                deltaX = 0,
+                deltaY = 0
+            }));
+            core.PostWebMessageAsJson(JsonSerializer.Serialize(new
+            {
+                type = "visualSelection",
+                token = BridgeToken,
+                sourceRevision = 7,
+                visible = false,
+                kind = "none",
+                x1 = 0,
+                y1 = 0,
+                x2 = 0,
+                y2 = 0,
+                deltaX = 0,
+                deltaY = 0,
+                extra = true
+            }));
+            await Task.Delay(50);
+            string rejectedVisualSelection =
+                await ReadVisualSelectionAsync(core);
+            bool visualSelectionStayedTokenAndRevisionBound =
+                acceptedVisualSelection.Equals(
+                    "rect|15|15|100|50",
+                    StringComparison.Ordinal)
+                && rejectedVisualSelection.Equals(
+                    acceptedVisualSelection,
+                    StringComparison.Ordinal);
+
             TaskCompletionSource<(string Source, string Json)> messageReceived = new(
                 TaskCreationOptions.RunContinuationsAsynchronously);
             TaskCompletionSource<(string Source, string Json)> pngMessageReceived = new(
@@ -214,8 +293,13 @@ public sealed class PreviewBridgeIntegrationTests
                 TaskCreationOptions.RunContinuationsAsynchronously);
             TaskCompletionSource<(string Source, string Json)> copyCommandReceived = new(
                 TaskCreationOptions.RunContinuationsAsynchronously);
+            TaskCompletionSource<string> firstTextMeasurementReceived = new(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            TaskCompletionSource<string> secondTextMeasurementReceived = new(
+                TaskCreationOptions.RunContinuationsAsynchronously);
             int zoomMessageCount = 0;
             int copyCommandCount = 0;
+            int textMeasurementMessageCount = 0;
             int zoomNavigationCount = 0;
             core.NavigationStarting += (_, _) => zoomNavigationCount++;
             core.WebMessageReceived += (_, args) =>
@@ -252,7 +336,132 @@ public sealed class PreviewBridgeIntegrationTests
                     copyCommandReceived.TrySetResult(
                         (args.Source, args.WebMessageAsJson));
                 }
+                else if (message.RootElement.TryGetProperty(
+                         "type",
+                         out type)
+                    && type.GetString() == "textMeasurements")
+                {
+                    textMeasurementMessageCount++;
+                    (textMeasurementMessageCount == 1
+                        ? firstTextMeasurementReceived
+                        : secondTextMeasurementReceived)
+                        .TrySetResult(args.WebMessageAsJson);
+                }
             };
+
+            PreviewPageMessageBuilder textMessageBuilder = new();
+            const string textRequestId =
+                "11223344556677889900AABBCCDDEEFF";
+            SvgVisualTextMeasurementSpec[] textItems =
+            [
+                new(
+                    0,
+                    "English text",
+                    30,
+                    60,
+                    24,
+                    "Segoe UI, sans-serif",
+                    "400",
+                    "normal",
+                    "start",
+                    "ltr",
+                    "normal"),
+                new(
+                    1,
+                    "سلام SVG، نسخه ۶.",
+                    280,
+                    110,
+                    26,
+                    "Tahoma, sans-serif",
+                    "700",
+                    "normal",
+                    "end",
+                    "rtl",
+                    "plaintext")
+            ];
+            core.PostWebMessageAsJson(
+                textMessageBuilder.BuildTextMeasurementMessage(
+                    BridgeToken,
+                    7,
+                    textRequestId,
+                    textItems));
+            string textMeasurementJson =
+                await firstTextMeasurementReceived.Task.WaitAsync(
+                    TimeSpan.FromSeconds(5));
+            PendingPreviewTextMeasurement textPending = new(
+                BridgeToken,
+                7,
+                textRequestId,
+                [0, 1]);
+            bool textParsed =
+                new PreviewTextMeasurementMessageParser().TryParse(
+                    textMeasurementJson,
+                    textPending,
+                    out IReadOnlyList<SvgVisualTextMeasurementResult>
+                        textResults);
+            SvgVisualTextMeasurementResult? english =
+                textResults.FirstOrDefault(result => result.Index == 0);
+            SvgVisualTextMeasurementResult? persian =
+                textResults.FirstOrDefault(result => result.Index == 1);
+            bool englishTextMeasured =
+                textParsed && english is { IsSuccess: true, Bounds: not null }
+                && english.Bounds.Value.Left >= 25
+                && english.Bounds.Value.Right > english.Bounds.Value.Left;
+            bool persianTextMeasured =
+                textParsed && persian is { IsSuccess: true, Bounds: not null }
+                && double.IsFinite(persian.Bounds.Value.Left)
+                && double.IsFinite(persian.Bounds.Value.Right)
+                && persian.Bounds.Value.Right > persian.Bounds.Value.Left;
+
+            SvgVisualBounds englishBounds = english?.Bounds
+                ?? throw new InvalidOperationException(
+                    "English browser text bounds were unavailable.");
+            core.PostWebMessageAsJson(
+                visualMessageBuilder.BuildVisualSelectionMessage(
+                    BridgeToken,
+                    7,
+                    new PreviewVisualSelection(
+                        SvgVisualElementKind.Text,
+                        new SvgVisualShapeGeometry(
+                            SvgVisualElementKind.Text,
+                            englishBounds.Left,
+                            englishBounds.Top,
+                            englishBounds.Right,
+                            englishBounds.Bottom),
+                        0,
+                        0)));
+            await Task.Delay(50);
+            string textOverlay = await ReadVisualSelectionAsync(core);
+            bool textOverlayAligned =
+                textOverlay.StartsWith("rect|", StringComparison.Ordinal)
+                && textOverlay.Split('|').Length == 5;
+
+            const string fontChangeRequestId =
+                "22334455667788990011AABBCCDDEEFF";
+            core.PostWebMessageAsJson(
+                textMessageBuilder.BuildTextMeasurementMessage(
+                    BridgeToken,
+                    7,
+                    fontChangeRequestId,
+                    [textItems[0] with
+                    {
+                        Index = 2,
+                        FontFamily = "Tahoma, sans-serif"
+                    }]));
+            string fontChangeJson =
+                await secondTextMeasurementReceived.Task.WaitAsync(
+                    TimeSpan.FromSeconds(5));
+            bool fontChangeMeasured =
+                new PreviewTextMeasurementMessageParser().TryParse(
+                    fontChangeJson,
+                    new PendingPreviewTextMeasurement(
+                        BridgeToken,
+                        7,
+                        fontChangeRequestId,
+                        [2]),
+                    out IReadOnlyList<SvgVisualTextMeasurementResult>
+                        fontResults)
+                && fontResults.Single().IsSuccess;
 
             WheelResult wheel = await RunWheelInputChecksAsync(
                 core,
@@ -437,7 +646,12 @@ public sealed class PreviewBridgeIntegrationTests
                 contextMenuDispatch.Equals("false", StringComparison.Ordinal),
                 contextMenuParsed,
                 copyDispatch.Equals("false", StringComparison.Ordinal),
-                copyCommandCount));
+                copyCommandCount,
+                visualSelectionStayedTokenAndRevisionBound,
+                englishTextMeasured,
+                persianTextMeasured,
+                textOverlayAligned,
+                fontChangeMeasured));
         }
         catch (Exception exception)
         {
@@ -452,6 +666,28 @@ public sealed class PreviewBridgeIntegrationTests
             Dispatcher.CurrentDispatcher.BeginInvokeShutdown(
                 DispatcherPriority.Background);
         }
+    }
+
+    private static async Task<string> ReadVisualSelectionAsync(
+        CoreWebView2 core)
+    {
+        string json = await core.ExecuteScriptAsync(
+            """
+            (() => {
+              const shape = document.querySelector(
+                '.selection-overlay > .selection-shape');
+              return shape
+                ? [
+                    shape.localName,
+                    shape.getAttribute('x'),
+                    shape.getAttribute('y'),
+                    shape.getAttribute('width'),
+                    shape.getAttribute('height')
+                  ].join('|')
+                : '';
+            })()
+            """);
+        return JsonSerializer.Deserialize<string>(json) ?? string.Empty;
     }
 
     private static double ParseScriptNumber(string json)

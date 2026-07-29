@@ -9,6 +9,11 @@ public static class SvgPropertySchema
         ["", "normal", "embed", "isolate", "plaintext"];
     private static readonly string[] TextAnchorValues =
         ["", "start", "middle", "end"];
+    private static readonly string[] FontWeightValues =
+        ["", "normal", "bold", "100", "200", "300", "400", "500",
+         "600", "700", "800", "900", "bolder", "lighter"];
+    private static readonly string[] FontStyleValues =
+        ["", "normal", "italic", "oblique"];
 
     private static readonly SvgPropertyDefinition[] Common =
     [
@@ -39,6 +44,13 @@ public static class SvgPropertySchema
             [
                 new("x"),
                 new("y"),
+                new(
+                    "font-family",
+                    RemoveWhenEmpty: true,
+                    UsesFontFamilySuggestions: true),
+                new("font-size", RemoveWhenEmpty: true),
+                OptionalEnum("font-weight", FontWeightValues),
+                OptionalEnum("font-style", FontStyleValues),
                 OptionalEnum("direction", DirectionValues),
                 OptionalEnum("unicode-bidi", UnicodeBidiValues),
                 OptionalEnum("text-anchor", TextAnchorValues)

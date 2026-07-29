@@ -2,7 +2,7 @@
 param(
     [Parameter()]
     [ValidatePattern('^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')]
-    [string]$Version = '0.5.0',
+    [string]$Version = '0.6.0',
 
     [Parameter()]
     [string]$RepositoryRoot

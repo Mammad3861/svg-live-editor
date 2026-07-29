@@ -59,6 +59,8 @@ public partial class MainWindow : Window
     private readonly WebView2UserDataFolderProvider _webView2UserDataFolderProvider = new();
     private readonly SourceRevisionTracker _sourceRevisionTracker = new();
     private readonly ApplicationInfoService _applicationInfoService = new();
+    private readonly InstalledFontFamilyProvider
+        _installedFontFamilyProvider = new();
     private readonly DispatcherTimer _fitResizeTimer = new()
     {
         Interval = TimeSpan.FromMilliseconds(150)
@@ -110,6 +112,8 @@ public partial class MainWindow : Window
         _dragFileCleanupTimer.Start();
         _previewDragFileStore.TryCleanup();
         InitializeDocumentInspector();
+        _viewModel.Inspector.SetFontFamilySuggestions(
+            _installedFontFamilyProvider.GetFontFamilies());
 
         _userPreferences = _userPreferencesService.Load();
         _previewZoomState = _userPreferences.PreviewZoom;
@@ -270,6 +274,7 @@ public partial class MainWindow : Window
         if (_isPreviewNavigationRequested)
         {
             ClosePreviewContextMenu();
+            CancelVisualEditGesture();
             _previewDirectDragHandshake.Reset();
             CancelPendingPreviewPngRequest(
                 "Preview changed before the PNG copy completed. Try again.");
@@ -295,18 +300,21 @@ public partial class MainWindow : Window
 
         if (_previewNavigationCoordinator.HasPending)
         {
+            OnVisualPreviewNavigationCompleted(isSuccess: false);
             StartPendingPreviewNavigation();
             return;
         }
 
         if (e.IsSuccess && wasLatest)
         {
+            OnVisualPreviewNavigationCompleted(isSuccess: true);
             ShowPreviewReady();
             TryUpdatePreviewZoomInPlace();
             TryUpdatePreviewPanModeInPlace();
             return;
         }
 
+        OnVisualPreviewNavigationCompleted(isSuccess: false);
         CancelPendingPreviewPngRequest();
         _activePreviewBridgeToken = null;
         ShowPreviewError(
@@ -323,6 +331,7 @@ public partial class MainWindow : Window
         _activePreviewRevision = null;
         _activePreviewBridgeToken = null;
         _previewDirectDragHandshake.Reset();
+        OnVisualPreviewReset();
         CancelPendingPreviewPngRequest();
         _previewNavigationCoordinator.Reset();
         ShowPreviewError(
@@ -387,6 +396,20 @@ public partial class MainWindow : Window
             }
         }
         else if (messageJson.Length > 16_384)
+        {
+            return;
+        }
+
+        if (TryHandlePreviewVisualInteraction(
+                messageJson,
+                bridgeToken))
+        {
+            return;
+        }
+
+        if (TryHandlePreviewTextMeasurements(
+                messageJson,
+                bridgeToken))
         {
             return;
         }
@@ -943,6 +966,7 @@ public partial class MainWindow : Window
             PreviewPngSourceState.PendingValidation;
         _viewModel.UpdateTextFromEditor(SourceEditor.Text);
         _viewModel.SetOperationStatus("Modified");
+        OnVisualSourceChanged();
         MarkDocumentInspectorSourceChanged();
         QueuePreviewUpdate();
         QueuePersistenceForCurrentEdit();
@@ -991,9 +1015,25 @@ public partial class MainWindow : Window
             ? PreviewPngSourceState.CurrentValid
             : PreviewPngSourceState.CurrentInvalid;
         _viewModel.ApplyValidation(result);
+        if (result.IsValid)
+        {
+            _lastValidCanvasSize =
+                _svgCanvasSizeReader.Read(sourceSnapshot);
+            OnVisualValidationCompleted(
+                indexResult,
+                _lastValidCanvasSize.Value,
+                sourceRevision,
+                sourceSnapshot);
+        }
         ApplyDocumentInspectorResult(indexResult);
         if (!result.IsValid)
         {
+            OnVisualValidationCompleted(
+                indexResult,
+                _lastValidCanvasSize
+                    ?? new SvgCanvasSize(300, 150),
+                sourceRevision,
+                sourceSnapshot);
             if (!_hasVisiblePreview)
             {
                 ShowLastValidPreview();
@@ -1002,7 +1042,6 @@ public partial class MainWindow : Window
         }
 
         _lastValidSvg = sourceSnapshot;
-        _lastValidCanvasSize = _svgCanvasSizeReader.Read(sourceSnapshot);
         ShowLastValidPreview();
     }
 
@@ -1011,14 +1050,20 @@ public partial class MainWindow : Window
         if (!_isWebViewReady
             || _lastValidSvg is null
             || _lastValidCanvasSize is not SvgCanvasSize canvasSize
+            || _lastValidVisualDocument
+                is not SvgVisualDocument visualDocument
+            || _lastValidVisualSourceRevision
+                is not long sourceRevision
             || PreviewWebView.CoreWebView2 is null)
         {
             return;
         }
 
         _previewNavigationCoordinator.Enqueue(
+            sourceRevision,
             _lastValidSvg,
             canvasSize,
+            visualDocument,
             _previewZoomState,
             _previewZoomState.Mode == PreviewZoomMode.Manual
                 ? _previewViewport
@@ -1058,13 +1103,18 @@ public partial class MainWindow : Window
                 renderedWidth,
                 renderedHeight,
                 bridgeToken,
-                request.Viewport);
+                request.Viewport,
+                request.SourceRevision,
+                request.VisualDocument.Viewport);
             PreviewWebView.UpdateLayout();
             PreviewWebView.ZoomFactor = 1.0;
 
             _activePreviewNavigationId = null;
             _activePreviewRevision = request.Revision;
             _activePreviewBridgeToken = bridgeToken;
+            OnVisualPreviewNavigationStarted(
+                request.VisualDocument,
+                request.SourceRevision);
             _previewDirectDragHandshake.Reset();
             _isPreviewNavigationRequested = true;
             core.NavigateToString(html);
@@ -1075,6 +1125,7 @@ public partial class MainWindow : Window
             _activePreviewNavigationId = null;
             _activePreviewRevision = null;
             _activePreviewBridgeToken = null;
+            OnVisualPreviewNavigationCompleted(isSuccess: false);
             _previewDirectDragHandshake.Reset();
             _previewNavigationCoordinator.TryComplete(request.Revision, out _);
             if (_previewNavigationCoordinator.HasPending)
@@ -1121,6 +1172,7 @@ public partial class MainWindow : Window
         SetPanMode(enabled: false, announce: false);
         _previewPngSourceState =
             PreviewPngSourceState.PendingValidation;
+        OnVisualDocumentLoaded();
         _previewViewport = PreviewViewportPosition.Center;
         _isUpdatingEditor = true;
         try
@@ -1153,6 +1205,10 @@ public partial class MainWindow : Window
         string welcomeSource = _welcomeSvgProvider.Load();
         _lastValidSvg = welcomeSource;
         _lastValidCanvasSize = _svgCanvasSizeReader.Read(welcomeSource);
+        InitializeLastValidVisualDocument(
+            welcomeSource,
+            _lastValidCanvasSize.Value,
+            sourceRevision: 0);
 
         if (TryRestoreRecoverySnapshot())
         {
@@ -1528,11 +1584,21 @@ public partial class MainWindow : Window
         SetPanMode(PanModeButton.IsChecked == true);
     }
 
+    private void OnSelectModeClick(object sender, RoutedEventArgs e)
+    {
+        SetPanMode(enabled: false);
+    }
+
     private void SetPanMode(bool enabled, bool announce = true)
     {
+        CancelVisualEditGesture();
         _isPanModeEnabled = enabled;
         _previewDirectDragHandshake.Reset();
         PanModeButton.IsChecked = enabled;
+        SelectModeButton.IsChecked = !enabled;
+        SelectModeButton.ToolTip = enabled
+            ? "Select and move supported SVG elements (V)"
+            : "Select tool active; drag rect, circle, ellipse, or line (V)";
         PanModeButton.ToolTip = enabled
             ? "Pan mode active; left drag an overflowing preview (Escape exits)"
             : "Pan overflowing preview with left drag (H toggles, Escape exits)";
@@ -1576,6 +1642,7 @@ public partial class MainWindow : Window
             _fileDropOverlayState.Transition(
                 FileDropOverlayEvent.WindowDeactivated));
         ResetDragImageGesture();
+        CancelVisualEditGesture();
         _previewDirectDragHandshake.Reset();
         CancelPendingDirectArtworkDrag();
         // Re-sending the current state asks the trusted page to terminate any
@@ -1588,6 +1655,7 @@ public partial class MainWindow : Window
         KeyboardFocusChangedEventArgs e)
     {
         _previewDirectDragHandshake.Reset();
+        CancelVisualEditGesture();
         CancelPendingDirectArtworkDrag();
         TryUpdatePreviewPanModeInPlace();
     }
@@ -1597,6 +1665,20 @@ public partial class MainWindow : Window
         KeyEventArgs e)
     {
         Key pressedKey = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (Keyboard.Modifiers == ModifierKeys.Control
+            && pressedKey == Key.Z)
+        {
+            OnUndoClick(sender, new RoutedEventArgs());
+            e.Handled = true;
+            return;
+        }
+        if (Keyboard.Modifiers == ModifierKeys.Control
+            && pressedKey == Key.Y)
+        {
+            OnRedoClick(sender, new RoutedEventArgs());
+            e.Handled = true;
+            return;
+        }
         if (Keyboard.Modifiers != ModifierKeys.Control
             || pressedKey != Key.C)
         {
@@ -1764,6 +1846,7 @@ public partial class MainWindow : Window
         Key pressedKey = e.Key == Key.System ? e.SystemKey : e.Key;
         if (pressedKey == Key.Escape)
         {
+            CancelVisualEditGesture("Visual gesture cancelled");
             _previewDirectDragHandshake.Reset();
         }
 
@@ -1827,6 +1910,13 @@ public partial class MainWindow : Window
             && CanUseHostPanShortcut())
         {
             SetPanMode(!_isPanModeEnabled);
+            e.Handled = true;
+        }
+        else if (modifiers == ModifierKeys.None
+            && pressedKey == Key.V
+            && CanUseHostPanShortcut())
+        {
+            SetPanMode(enabled: false);
             e.Handled = true;
         }
         else if (pressedKey == Key.Escape

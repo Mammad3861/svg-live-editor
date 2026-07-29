@@ -2,15 +2,15 @@
 
 ## Project purpose and scope
 
-SvgLiveEditor is an open-source Windows desktop application for editing UTF-8 SVG/XML source and viewing a live, security-restricted preview. Version 0.5.0 adds five embedded safe templates, bounded LocalAppData crash-recovery snapshots, and opt-in validation-gated atomic Auto Save to the v0.4 inspector, preview, PNG sharing, file drop, and Pan functionality while keeping source text as the single source of truth. It does not cover direct canvas manipulation, explicit image/PDF file export, installers, updates, cloud features, full visual SVG editing, BPMN, or AI generation.
+SvgLiveEditor is an open-source Windows desktop application for editing UTF-8 SVG/XML source and viewing a live, security-restricted preview. Version 0.6.0 adds host-side selection and movement for a deliberately small set of basic shapes and direct simple text, plus an installed-font suggestion picker, while preserving the v0.5 templates, recovery, validation-gated Auto Save, Inspector, preview, PNG sharing, file drop, and Pan functionality. Source text remains the single source of truth. It does not cover resize or rotation handles, multi-selection, element creation/deletion, inline canvas text editing, complex text layout, path-node editing, explicit image/PDF file export, installers, updates, cloud features, full Figma-style editing, BPMN, or AI generation.
 
 ## Architecture overview
 
 - `src/SvgLiveEditor`: one WPF application targeting `net10.0-windows`.
 - `ViewModels`: window state, inspector tree/property state, and presentation-friendly document metadata.
-- `Services`: testable SVG validation, validated source indexing, minimal attribute edits, secure preview/PNG bridge generation, bounded clipboard/drag payloads, bounded UTF-8 file access, embedded template loading, recovery retention, safe path/atomic Auto Save policy, drag-file cleanup, debounce behavior, sample loading, and unsaved-change policy.
-- `Models`: immutable results, source spans, indexed SVG nodes, text edits, and decisions shared by services and view models.
-- `MainWindow`: WPF-only integration for AvalonEdit, the document inspector, dialogs, composition-mode WebView2, keyboard input, drag/drop, and document persistence. Inspector-specific code stays in `MainWindow.Inspector.cs`; template/recovery/Auto Save integration stays in `MainWindow.Persistence.cs`.
+- `Services`: testable SVG validation, validated source and visual-geometry indexing, conservative browser-backed simple-text measurement, installed-font enumeration, coordinate mapping, conservative hit testing, minimal attribute edits, secure preview/PNG bridge generation, bounded clipboard/drag payloads, bounded UTF-8 file access, embedded template loading, recovery retention, safe path/atomic Auto Save policy, drag-file cleanup, debounce behavior, sample loading, and unsaved-change policy.
+- `Models`: immutable results, source spans, indexed SVG nodes and visual geometry, text edits, and decisions shared by services and view models.
+- `MainWindow`: WPF-only integration for AvalonEdit, the document inspector, dialogs, composition-mode WebView2, keyboard input, drag/drop, visual selection/movement, and document persistence. Inspector-specific code stays in `MainWindow.Inspector.cs`; visual-editing integration stays in `MainWindow.VisualEditing.cs`; template/recovery/Auto Save integration stays in `MainWindow.Persistence.cs`.
 - `tests/SvgLiveEditor.Tests`: tests for security-sensitive and document logic that does not require launching WPF.
 - `samples/welcome.svg`: the repository's original, safe starter SVG.
 - `templates`: five original safe SVG resources embedded into the application; opening one creates a detached Modified document and never writes the resource.
@@ -26,6 +26,9 @@ Keep the application in one project until a concrete need justifies another prod
 - Reject scripts, inline event handlers, `foreignObject`, active embedded content, processing instructions, style elements, and non-fragment resource references before preview.
 - Never insert raw SVG into host HTML. Preview only a Base64 data image under a restrictive CSP.
 - Keep user SVG scripts, host objects, downloads, permissions, external navigation, pop-ups, and external resource requests disabled or blocked. If a fixed app-owned host interaction script is technically required, authorize only its exact CSP hash, keep the SVG isolated as a Base64 image, and accept only narrowly typed, strictly validated web messages.
+- Visual hit testing must remain host-side over the current validated source index. Unsupported topmost artwork must not permit click-through: localize only bounds that can be derived conservatively, and otherwise fail closed. Keep visual messages exact-schema, navigation-token-bound, source-revision-bound, coordinate-bounded, and stale-safe; the app-owned overlay must contain only host-generated bounded geometry.
+- Text measurement may send only bounded host-validated direct text and constrained typography to the exact-hash trusted page. Keep requests and results token-, source-revision-, request-ID-, schema-, count-, and range-bound; never insert source markup, use `innerHTML`, expose the SVG DOM, or accept browser-supplied styling.
+- Font suggestions may enumerate installed Windows families once per process and include generic fallbacks. Never download, embed, remotely load, or package fonts; preserve validated fallback entries when replacing the selected first family.
 - Treat PNG bridge payloads as untrusted: enforce request, token, schema, dimension, pixel, encoded-length, decoded-length, MIME, PNG signature, and image-header checks before clipboard use.
 - Direct preview drag must remain a paired, token-bound trusted-page gesture. Require an actual primary left-button pointer start on the isolated image, Pan-off arbitration, bounded coordinates, the Windows drag threshold, and a matching host-side armed gesture before requesting the existing validated PNG pipeline.
 - Accept inbound drag data only from one local FileDrop `.svg` or `.txt` path. Reject text/HTML/URL payloads, remote paths, links, directories, unsupported extensions, and files above the documented 10,000,000-byte limit.
@@ -45,7 +48,7 @@ dotnet build SvgLiveEditor.sln --configuration Release --no-restore
 dotnet test SvgLiveEditor.sln --configuration Release --no-build
 dotnet run --project src/SvgLiveEditor/SvgLiveEditor.csproj
 dotnet publish src/SvgLiveEditor/SvgLiveEditor.csproj --configuration Release --runtime win-x64 --self-contained true --property:PublishProfile=win-x64
-./scripts/Publish-WinX64.ps1 -Version 0.5.0
+./scripts/Publish-WinX64.ps1 -Version 0.6.0
 ```
 
 The publish output is under `dist/win-x64/`. The publish script audits the self-contained win-x64 package and creates both `releases/SvgLiveEditor-vX.Y.Z-win-x64.zip` and its `.sha256` file locally. Packaged users do not need a separate .NET installation, but they must install Microsoft Edge WebView2 Evergreen Runtime and extract the full ZIP before running `SvgLiveEditor.exe`.

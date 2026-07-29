@@ -7,7 +7,7 @@
         Icon="Assets/SvgLiveEditor.ico"
         Width="1280"
         Height="800"
-        MinWidth="1020"
+        MinWidth="900"
         MinHeight="560"
         AllowDrop="True"
         Background="#F8FAFC"
@@ -127,6 +127,12 @@
             <TextBlock Text="Drag Image" />
           </StackPanel>
         </Button>
+        <ToggleButton x:Name="SelectModeButton"
+                      Content="Select"
+                      IsChecked="True"
+                      ToolTip="Select and move supported SVG elements (V)"
+                      AutomationProperties.Name="Select preview tool"
+                      Click="OnSelectModeClick" />
         <ToggleButton x:Name="PanModeButton"
                       Content="Pan"
                       ToolTip="Pan overflowing preview with left drag (H toggles, Escape exits)"
@@ -179,11 +185,11 @@
 
     <Grid Margin="10">
       <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="270" MinWidth="220" MaxWidth="460" />
+        <ColumnDefinition Width="250" MinWidth="200" MaxWidth="460" />
         <ColumnDefinition Width="7" />
-        <ColumnDefinition Width="*" MinWidth="320" />
+        <ColumnDefinition Width="*" MinWidth="280" />
         <ColumnDefinition Width="7" />
-        <ColumnDefinition Width="*" MinWidth="320" />
+        <ColumnDefinition Width="*" MinWidth="280" />
       </Grid.ColumnDefinitions>
 
       <Border Grid.Column="0"
@@ -307,7 +313,7 @@
                       <Grid>
                         <Grid.ColumnDefinitions>
                           <ColumnDefinition Width="92" />
-                          <ColumnDefinition Width="*" />
+                          <ColumnDefinition Width="*" MinWidth="0" />
                         </Grid.ColumnDefinitions>
                         <Grid.RowDefinitions>
                           <RowDefinition Height="Auto" />
@@ -322,7 +328,10 @@
                                    ToolTip="{Binding PresenceText}" />
                         <Grid Grid.Row="0" Grid.Column="1">
                           <TextBox MinHeight="28"
+                                   MinWidth="0"
                                    Padding="5,3"
+                                   HorizontalAlignment="Stretch"
+                                   ClipToBounds="True"
                                    Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                    IsReadOnly="{Binding IsReadOnly}"
                                    Tag="{Binding}"
@@ -337,12 +346,19 @@
                                   <DataTrigger Binding="{Binding HasAllowedValues}" Value="True">
                                     <Setter Property="Visibility" Value="Collapsed" />
                                   </DataTrigger>
+                                  <DataTrigger Binding="{Binding HasSuggestedValues}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                  </DataTrigger>
                                 </Style.Triggers>
                               </Style>
                             </TextBox.Style>
                           </TextBox>
                           <ComboBox MinHeight="28"
+                                    MinWidth="0"
                                     Padding="5,3"
+                                    HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Stretch"
+                                    MaxDropDownHeight="320"
                                     ItemsSource="{Binding AllowedValues}"
                                     SelectedItem="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                     Tag="{Binding}"
@@ -355,6 +371,36 @@
                                 <Setter Property="Visibility" Value="Collapsed" />
                                 <Style.Triggers>
                                   <DataTrigger Binding="{Binding HasAllowedValues}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                  </DataTrigger>
+                                </Style.Triggers>
+                              </Style>
+                            </ComboBox.Style>
+                          </ComboBox>
+                          <ComboBox MinHeight="28"
+                                    MinWidth="0"
+                                    Padding="5,3"
+                                    HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Stretch"
+                                    MaxDropDownHeight="320"
+                                    ClipToBounds="True"
+                                    IsEditable="True"
+                                    IsTextSearchEnabled="True"
+                                    StaysOpenOnEdit="True"
+                                    ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                    ItemsSource="{Binding SuggestedValues}"
+                                    Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                    Tag="{Binding}"
+                                    ToolTip="{Binding Value}"
+                                    SelectionChanged="OnInspectorSuggestedPropertySelectionChanged"
+                                    LostKeyboardFocus="OnInspectorPropertyLostKeyboardFocus"
+                                    KeyDown="OnInspectorPropertyKeyDown"
+                                    AutomationProperties.Name="{Binding Name}">
+                            <ComboBox.Style>
+                              <Style TargetType="ComboBox">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                  <DataTrigger Binding="{Binding HasSuggestedValues}" Value="True">
                                     <Setter Property="Visibility" Value="Visible" />
                                   </DataTrigger>
                                 </Style.Triggers>

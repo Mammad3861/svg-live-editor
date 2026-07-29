@@ -15,6 +15,10 @@ public partial class MainWindow
     private readonly AvalonEditDocumentEditService _documentEditService = new();
     private readonly InspectorSourceGuard _inspectorSourceGuard = new();
     private readonly InspectorSelectionCoordinator _inspectorSelectionCoordinator = new();
+    private readonly SvgFontFamilyStackService
+        _svgFontFamilyStackService = new();
+    private readonly InstalledFontGlyphCoverageService
+        _installedFontGlyphCoverageService = new();
     private readonly DispatcherTimer _inspectorCaretTimer = new()
     {
         Interval = TimeSpan.FromMilliseconds(160)
@@ -88,6 +92,7 @@ public partial class MainWindow
         {
             _isSynchronizingInspectorSelection = false;
         }
+        OnVisualInspectorResultApplied();
     }
 
     private void QueueInspectorCaretSynchronization()
@@ -148,6 +153,7 @@ public partial class MainWindow
         {
             _isSynchronizingInspectorSelection = false;
         }
+        SynchronizeVisualSelectionFromInspector();
     }
 
     private void OnInspectorTreeSelectionChanged(
@@ -167,6 +173,9 @@ public partial class MainWindow
         _isExplicitInspectorKeyboardNavigation = false;
         _viewModel.Inspector.AcceptTreeSelection(element);
         NavigateToInspectorElement(element, origin);
+        SynchronizeVisualSelectionFromInspector(
+            announce: origin
+                == InspectorSelectionOrigin.ExplicitTreeNavigation);
     }
 
     private void OnInspectorTreePreviewMouseLeftButtonDown(
@@ -281,7 +290,7 @@ public partial class MainWindow
     {
         if (sender is FrameworkElement { Tag: SvgPropertyViewModel property })
         {
-            ApplyInspectorProperty(property);
+            _ = ApplyInspectorProperty(property);
         }
     }
 
@@ -294,7 +303,7 @@ public partial class MainWindow
 
         if (e.Key == Key.Enter)
         {
-            ApplyInspectorProperty(property);
+            _ = ApplyInspectorProperty(property);
             e.Handled = true;
         }
         else if (e.Key == Key.Escape)
@@ -304,11 +313,52 @@ public partial class MainWindow
         }
     }
 
-    private void ApplyInspectorProperty(SvgPropertyViewModel property)
+    private void OnInspectorSuggestedPropertySelectionChanged(
+        object sender,
+        SelectionChangedEventArgs e)
+    {
+        if (sender is not ComboBox
+            {
+                Tag: SvgPropertyViewModel property
+            } comboBox
+            || !property.Name.Equals(
+                "font-family",
+                StringComparison.Ordinal)
+            || e.AddedItems.Count != 1
+            || e.AddedItems[0] is not string selectedFamily
+            || !comboBox.IsDropDownOpen
+            || !_svgFontFamilyStackService.TryCreateForSuggestion(
+                property.OriginalValue,
+                selectedFamily,
+                out string fontStack))
+        {
+            return;
+        }
+
+        string? selectedText = _lastValidVisualDocument?
+            .FindElement(property.Element.Identity)?
+            .TextMeasurement?
+            .Text;
+        FontGlyphCoverage coverage = selectedText is null
+            ? FontGlyphCoverage.Unknown
+            : _installedFontGlyphCoverageService.Check(
+                selectedFamily,
+                selectedText);
+        property.Value = fontStack;
+        if (ApplyInspectorProperty(property)
+            && coverage == FontGlyphCoverage.Incomplete)
+        {
+            _viewModel.SetOperationStatus(
+                "The selected font may not support every character; fallback fonts will be used.");
+        }
+        e.Handled = true;
+    }
+
+    private bool ApplyInspectorProperty(SvgPropertyViewModel property)
     {
         if (property.IsReadOnly)
         {
-            return;
+            return false;
         }
 
         if (property.Value.Equals(
@@ -316,8 +366,13 @@ public partial class MainWindow
                 StringComparison.Ordinal))
         {
             property.ErrorMessage = string.Empty;
-            return;
+            return true;
         }
+        if (property.WasCurrentValueAlreadyAttempted)
+        {
+            return false;
+        }
+        property.MarkCommitAttempt();
 
         long expectedRevision = _inspectorSourceRevision;
         if (!_inspectorSourceGuard.CanUseIndex(
@@ -328,7 +383,7 @@ public partial class MainWindow
         {
             property.ErrorMessage =
                 "The source changed; select the element again.";
-            return;
+            return false;
         }
 
         string sourceSnapshot = SourceEditor.Text;
@@ -344,20 +399,20 @@ public partial class MainWindow
         catch (InvalidOperationException exception)
         {
             property.ErrorMessage = exception.Message;
-            return;
+            return false;
         }
 
         if (!result.IsSuccess)
         {
             property.ErrorMessage =
                 result.ErrorMessage ?? "The property value is invalid.";
-            return;
+            return false;
         }
 
         if (result.Edit is null)
         {
             property.MarkApplied();
-            return;
+            return true;
         }
 
         if (!_sourceRevisionTracker.IsCurrent(expectedRevision)
@@ -365,7 +420,7 @@ public partial class MainWindow
         {
             property.ErrorMessage =
                 "The source changed; select the element again.";
-            return;
+            return false;
         }
 
         SvgElementIdentity preferredSelection = property.Element.Identity;
@@ -375,6 +430,7 @@ public partial class MainWindow
         SvgDocumentIndexResult rebuilt =
             _documentIndexService.Build(SourceEditor.Text);
         ApplyDocumentInspectorResult(rebuilt, preferredSelection);
+        return true;
     }
 
     private void OnEditorTextCompositionStarted(

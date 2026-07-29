@@ -15,6 +15,7 @@ public sealed class DocumentInspectorViewModel : ObservableObject
     private string _stateTitle = "Indexing source";
     private string _stateMessage = "The element tree will appear after secure SVG validation.";
     private string _selectedElementSummary = "No element selected";
+    private IReadOnlyList<string> _fontFamilySuggestions = [];
 
     public ObservableCollection<SvgElementViewModel> Roots { get; } = [];
 
@@ -56,6 +57,13 @@ public sealed class DocumentInspectorViewModel : ObservableObject
 
     public SvgElementIdentity? CaptureSelectionIdentity() =>
         _selectedElement?.Element.Identity;
+
+    public void SetFontFamilySuggestions(
+        IReadOnlyList<string> fontFamilySuggestions)
+    {
+        _fontFamilySuggestions = fontFamilySuggestions
+            ?? throw new ArgumentNullException(nameof(fontFamilySuggestions));
+    }
 
     public void Load(
         SvgDocumentIndex documentIndex,
@@ -177,7 +185,10 @@ public sealed class DocumentInspectorViewModel : ObservableObject
                 Properties.Add(new SvgPropertyViewModel(
                     element.Element,
                     definition,
-                    element.Element.FindAttribute(definition.Name)));
+                    element.Element.FindAttribute(definition.Name),
+                    definition.UsesFontFamilySuggestions
+                        ? _fontFamilySuggestions
+                        : null));
             }
         }
 

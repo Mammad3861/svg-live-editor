@@ -4,5 +4,6 @@ public enum InspectorSelectionOrigin
 {
     SourceCaretSync,
     InspectorRestore,
-    ExplicitTreeNavigation
+    ExplicitTreeNavigation,
+    PreviewNavigation
 }

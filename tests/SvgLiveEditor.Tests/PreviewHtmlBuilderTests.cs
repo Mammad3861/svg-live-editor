@@ -72,7 +72,15 @@ public sealed class PreviewHtmlBuilderTests
         StringAssert.Contains(script.Groups[1].Value, "{ capture: true, passive: false }");
         StringAssert.Contains(script.Groups[1].Value, "event.button === 1");
         StringAssert.Contains(script.Groups[1].Value, "spaceHeld || event.ctrlKey || panModeEnabled");
-        StringAssert.Contains(script.Groups[1].Value, "event.target !== image");
+        StringAssert.Contains(
+            script.Groups[1].Value,
+            "event.target === image");
+        StringAssert.Contains(
+            script.Groups[1].Value,
+            "event.altKey && !event.shiftKey");
+        StringAssert.Contains(
+            script.Groups[1].Value,
+            "return 'visual'");
         StringAssert.Contains(script.Groups[1].Value, "!event.isTrusted || !event.isPrimary");
         StringAssert.Contains(script.Groups[1].Value, "event.pointerType !== 'mouse'");
         StringAssert.Contains(script.Groups[1].Value, "type: 'directDrag'");
@@ -88,6 +96,11 @@ public sealed class PreviewHtmlBuilderTests
         StringAssert.Contains(script.Groups[1].Value, "message.centerX <= 1");
         StringAssert.Contains(script.Groups[1].Value, "message.type === 'copyPng'");
         StringAssert.Contains(script.Groups[1].Value, "message.type === 'horizontalScroll'");
+        StringAssert.Contains(script.Groups[1].Value, "message.type === 'measureText'");
+        StringAssert.Contains(script.Groups[1].Value, "type: 'textMeasurements'");
+        StringAssert.Contains(script.Groups[1].Value, "context.measureText(item.text)");
+        StringAssert.Contains(script.Groups[1].Value, "probe.textContent = text");
+        StringAssert.Contains(script.Groups[1].Value, "Object.keys(item).length === 11");
         StringAssert.Contains(script.Groups[1].Value, "Object.keys(message).length === 3");
         StringAssert.Contains(script.Groups[1].Value, "Math.abs(message.deltaX) <= 10000");
         StringAssert.Contains(script.Groups[1].Value, "message.width * message.height <= 8000000");
@@ -99,6 +112,9 @@ public sealed class PreviewHtmlBuilderTests
             StringComparison.Ordinal));
         Assert.IsFalse(script.Groups[1].Value.Contains(
             "inputDiagnostic",
+            StringComparison.Ordinal));
+        Assert.IsFalse(script.Groups[1].Value.Contains(
+            "innerHTML",
             StringComparison.Ordinal));
     }
 
@@ -197,7 +213,18 @@ public sealed class PreviewHtmlBuilderTests
         StringAssert.Contains(html, "cursor: grab");
         StringAssert.Contains(html, "pointer-events: auto");
         StringAssert.Contains(script, "const choosePointerAction = event =>");
-        StringAssert.Contains(script, "event.target !== image");
+        StringAssert.Contains(
+            script,
+            "event.altKey && !event.shiftKey && !event.metaKey");
+        StringAssert.Contains(
+            script,
+            "event.shiftKey || event.altKey || event.metaKey) {\n" +
+            "        stopVisualGesture(event);");
+        StringAssert.Contains(
+            script,
+            "event.shiftKey || !event.altKey || event.metaKey) {\n" +
+            "        stopDirectDrag(event);");
+        StringAssert.Contains(script, "event.target === image");
         StringAssert.Contains(script, "!event.isTrusted || !event.isPrimary");
         StringAssert.Contains(script, "event.pointerType !== 'mouse'");
         StringAssert.Contains(script, "minimumHorizontalDragDistance");
