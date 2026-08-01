@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Media;
@@ -54,7 +55,18 @@ public sealed class PreviewBridgeIntegrationTests
         bool ContextMenuCanceled,
         bool ContextMenuParsed,
         bool PlainCopyCanceled,
-        int CopyCommandCount);
+        int CopyCommandCount,
+        bool VisualSelectionStayedTokenAndRevisionBound,
+        bool EnglishTextMeasured,
+        bool PersianTextMeasured,
+        bool TextOverlayAligned,
+        bool TextBoundsMatchBrowserSvg,
+        bool PersianLtrHitMatchesVisibleText,
+        bool OldMirroredPersianLocationDoesNotHit,
+        bool TextMeasurementDidNotModifySource,
+        bool MeasurementSurfaceWasRemoved,
+        bool InvalidTextMeasurementRequestsWereIgnored,
+        bool FontChangeMeasured);
 
     [TestMethod]
     [TestCategory("DesktopIntegration")]
@@ -111,6 +123,18 @@ public sealed class PreviewBridgeIntegrationTests
         Assert.IsTrue(result.ContextMenuParsed);
         Assert.IsTrue(result.PlainCopyCanceled);
         Assert.AreEqual(1, result.CopyCommandCount);
+        Assert.IsTrue(
+            result.VisualSelectionStayedTokenAndRevisionBound);
+        Assert.IsTrue(result.EnglishTextMeasured);
+        Assert.IsTrue(result.PersianTextMeasured);
+        Assert.IsTrue(result.TextOverlayAligned);
+        Assert.IsTrue(result.TextBoundsMatchBrowserSvg);
+        Assert.IsTrue(result.PersianLtrHitMatchesVisibleText);
+        Assert.IsTrue(result.OldMirroredPersianLocationDoesNotHit);
+        Assert.IsTrue(result.TextMeasurementDidNotModifySource);
+        Assert.IsTrue(result.MeasurementSurfaceWasRemoved);
+        Assert.IsTrue(result.InvalidTextMeasurementRequestsWereIgnored);
+        Assert.IsTrue(result.FontChangeMeasured);
         Assert.IsTrue(thread.Join(TimeSpan.FromSeconds(5)));
     }
 
@@ -153,6 +177,12 @@ public sealed class PreviewBridgeIntegrationTests
             webView.ZoomFactor = 1.0;
 
             PreviewHtmlBuilder htmlBuilder = new();
+            SvgVisualViewport visualViewport = new(
+                0,
+                0,
+                300,
+                150,
+                SvgPreserveAspectRatio.Default);
             const string svg =
                 "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 300 150\"><rect width=\"300\" height=\"150\" fill=\"white\" /></svg>";
             PreviewViewportPosition preservedViewport = new(0.75, 0.75);
@@ -163,7 +193,9 @@ public sealed class PreviewBridgeIntegrationTests
                     1200,
                     600,
                     BridgeToken,
-                    preservedViewport));
+                    preservedViewport,
+                    sourceRevision: 7,
+                    visualViewport: visualViewport));
             string hostScriptReady = await core.ExecuteScriptAsync(
                 "document.body.dataset.hostScriptReady || 'false'");
             if (!hostScriptReady.Equals("\"true\"", StringComparison.Ordinal))
@@ -182,7 +214,9 @@ public sealed class PreviewBridgeIntegrationTests
                     1800,
                     900,
                     BridgeToken,
-                    preservedViewport));
+                    preservedViewport,
+                    sourceRevision: 7,
+                    visualViewport: visualViewport));
             await Task.Delay(100);
             string restoredJson = JsonSerializer.Deserialize<string>(
                 await core.ExecuteScriptAsync(
@@ -206,6 +240,64 @@ public sealed class PreviewBridgeIntegrationTests
                 && Math.Abs(restored.GetProperty("centerX").GetDouble() - 0.75) < 0.02
                 && Math.Abs(restored.GetProperty("centerY").GetDouble() - 0.75) < 0.02;
 
+            PreviewPageMessageBuilder visualMessageBuilder = new();
+            core.PostWebMessageAsJson(
+                visualMessageBuilder.BuildVisualSelectionMessage(
+                    BridgeToken,
+                    sourceRevision: 7,
+                    new PreviewVisualSelection(
+                        SvgVisualElementKind.Rect,
+                        new SvgVisualShapeGeometry(
+                            SvgVisualElementKind.Rect,
+                            10,
+                            20,
+                            110,
+                            70),
+                        5,
+                        -5)));
+            await Task.Delay(50);
+            string acceptedVisualSelection =
+                await ReadVisualSelectionAsync(core);
+            core.PostWebMessageAsJson(JsonSerializer.Serialize(new
+            {
+                type = "visualSelection",
+                token = BridgeToken,
+                sourceRevision = 6,
+                visible = false,
+                kind = "none",
+                x1 = 0,
+                y1 = 0,
+                x2 = 0,
+                y2 = 0,
+                deltaX = 0,
+                deltaY = 0
+            }));
+            core.PostWebMessageAsJson(JsonSerializer.Serialize(new
+            {
+                type = "visualSelection",
+                token = BridgeToken,
+                sourceRevision = 7,
+                visible = false,
+                kind = "none",
+                x1 = 0,
+                y1 = 0,
+                x2 = 0,
+                y2 = 0,
+                deltaX = 0,
+                deltaY = 0,
+                extra = true
+            }));
+            await Task.Delay(50);
+            string rejectedVisualSelection =
+                await ReadVisualSelectionAsync(core);
+            bool visualSelectionStayedTokenAndRevisionBound =
+                acceptedVisualSelection.Equals(
+                    "rect|15|15|100|50",
+                    StringComparison.Ordinal)
+                && rejectedVisualSelection.Equals(
+                    acceptedVisualSelection,
+                    StringComparison.Ordinal);
+
             TaskCompletionSource<(string Source, string Json)> messageReceived = new(
                 TaskCreationOptions.RunContinuationsAsynchronously);
             TaskCompletionSource<(string Source, string Json)> pngMessageReceived = new(
@@ -214,8 +306,13 @@ public sealed class PreviewBridgeIntegrationTests
                 TaskCreationOptions.RunContinuationsAsynchronously);
             TaskCompletionSource<(string Source, string Json)> copyCommandReceived = new(
                 TaskCreationOptions.RunContinuationsAsynchronously);
+            TaskCompletionSource<string> firstTextMeasurementReceived = new(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            TaskCompletionSource<string> secondTextMeasurementReceived = new(
+                TaskCreationOptions.RunContinuationsAsynchronously);
             int zoomMessageCount = 0;
             int copyCommandCount = 0;
+            int textMeasurementMessageCount = 0;
             int zoomNavigationCount = 0;
             core.NavigationStarting += (_, _) => zoomNavigationCount++;
             core.WebMessageReceived += (_, args) =>
@@ -252,7 +349,358 @@ public sealed class PreviewBridgeIntegrationTests
                     copyCommandReceived.TrySetResult(
                         (args.Source, args.WebMessageAsJson));
                 }
+                else if (message.RootElement.TryGetProperty(
+                         "type",
+                         out type)
+                    && type.GetString() == "textMeasurements")
+                {
+                    textMeasurementMessageCount++;
+                    (textMeasurementMessageCount == 1
+                        ? firstTextMeasurementReceived
+                        : secondTextMeasurementReceived)
+                        .TrySetResult(args.WebMessageAsJson);
+                }
             };
+
+            PreviewPageMessageBuilder textMessageBuilder = new();
+            const string textRequestId =
+                "11223344556677889900AABBCCDDEEFF";
+            SvgVisualTextMeasurementSpec[] textItems =
+            [
+                new(
+                    0,
+                    "English text",
+                    30,
+                    60,
+                    24,
+                    "Segoe UI, sans-serif",
+                    "400",
+                    "normal",
+                    "start",
+                    "ltr",
+                    "normal"),
+                new(
+                    1,
+                    "سلام SVG، نسخه ۶.",
+                    280,
+                    110,
+                    26,
+                    "Tahoma, sans-serif",
+                    "700",
+                    "normal",
+                    "end",
+                    "rtl",
+                    "plaintext"),
+                new(
+                    2,
+                    "بهروز",
+                    128,
+                    244,
+                    72,
+                    "\"Segoe UI\", sans-serif",
+                    "700",
+                    "normal",
+                    "start",
+                    "ltr",
+                    "plaintext"),
+                new(
+                    3,
+                    "بهروز",
+                    128,
+                    244,
+                    72,
+                    "\"Segoe UI\", sans-serif",
+                    "700",
+                    "normal",
+                    "start",
+                    "rtl",
+                    "plaintext"),
+                new(
+                    4,
+                    "English text",
+                    220,
+                    80,
+                    28,
+                    "Segoe UI, sans-serif",
+                    "400",
+                    "normal",
+                    "start",
+                    "rtl",
+                    "plaintext"),
+                new(
+                    5,
+                    "بهروز English",
+                    180,
+                    120,
+                    30,
+                    "Tahoma, sans-serif",
+                    "400",
+                    "normal",
+                    "start",
+                    "ltr",
+                    "plaintext"),
+                new(
+                    6,
+                    "English بهروز",
+                    180,
+                    160,
+                    30,
+                    "Tahoma, sans-serif",
+                    "400",
+                    "italic",
+                    "start",
+                    "rtl",
+                    "plaintext"),
+                new(
+                    7,
+                    "بهروز 123",
+                    160,
+                    200,
+                    32,
+                    "Tahoma, sans-serif",
+                    "700",
+                    "normal",
+                    "start",
+                    "ltr",
+                    "plaintext"),
+                new(
+                    8,
+                    "بهروز ۱۲۳: (آزمون).؟!",
+                    260,
+                    240,
+                    32,
+                    "Tahoma, sans-serif",
+                    "700",
+                    "normal",
+                    "start",
+                    "rtl",
+                    "plaintext"),
+                new(
+                    9,
+                    "بهروز (۱۲۳): تست.?!",
+                    200,
+                    280,
+                    30,
+                    "Tahoma, sans-serif",
+                    "400",
+                    "normal",
+                    "middle",
+                    "rtl",
+                    "plaintext"),
+                new(
+                    10,
+                    "بهروز",
+                    180,
+                    310,
+                    30,
+                    "Tahoma, sans-serif",
+                    "400",
+                    "normal",
+                    "middle",
+                    "ltr",
+                    "plaintext"),
+                new(
+                    11,
+                    "بهروز",
+                    220,
+                    340,
+                    30,
+                    "Tahoma, sans-serif",
+                    "400",
+                    "normal",
+                    "end",
+                    "ltr",
+                    "plaintext"),
+                new(
+                    12,
+                    "بهروز fallback",
+                    140,
+                    370,
+                    30,
+                    "\"SvgLiveEditor Missing Font\", \"Segoe UI\", sans-serif",
+                    "400",
+                    "normal",
+                    "start",
+                    "ltr",
+                    "plaintext")
+            ];
+            core.PostWebMessageAsJson(
+                textMessageBuilder.BuildTextMeasurementMessage(
+                    BridgeToken,
+                    7,
+                    textRequestId,
+                    textItems));
+            string textMeasurementJson =
+                await firstTextMeasurementReceived.Task.WaitAsync(
+                    TimeSpan.FromSeconds(5));
+            PendingPreviewTextMeasurement textPending = new(
+                BridgeToken,
+                7,
+                textRequestId,
+                textItems.Select(item => item.Index).ToArray());
+            bool textParsed =
+                new PreviewTextMeasurementMessageParser().TryParse(
+                    textMeasurementJson,
+                    textPending,
+                    out IReadOnlyList<SvgVisualTextMeasurementResult>
+                        textResults);
+            SvgVisualTextMeasurementResult? english =
+                textResults.FirstOrDefault(result => result.Index == 0);
+            SvgVisualTextMeasurementResult? persian =
+                textResults.FirstOrDefault(result => result.Index == 1);
+            SvgVisualTextMeasurementResult? exactPersianLtr =
+                textResults.FirstOrDefault(result => result.Index == 2);
+            bool englishTextMeasured =
+                textParsed && english is { IsSuccess: true, Bounds: not null }
+                && english.Bounds.Value.Left >= 25
+                && english.Bounds.Value.Right > english.Bounds.Value.Left;
+            bool persianTextMeasured =
+                textParsed && persian is { IsSuccess: true, Bounds: not null }
+                && double.IsFinite(persian.Bounds.Value.Left)
+                && double.IsFinite(persian.Bounds.Value.Right)
+                && persian.Bounds.Value.Right > persian.Bounds.Value.Left;
+
+            IReadOnlyDictionary<int, SvgVisualBounds> browserBounds =
+                await MeasureReferenceTextBoundsAsync(core, textItems);
+            bool textBoundsMatchBrowserSvg = textParsed
+                && textResults.All(result =>
+                    result is { IsSuccess: true, Bounds: not null }
+                    && browserBounds.TryGetValue(
+                        result.Index,
+                        out SvgVisualBounds expected)
+                    && BoundsMatch(
+                        result.Bounds.Value,
+                        expected,
+                        tolerance: 0.25));
+            int bodyMeasurementSurfaces = (int)ParseScriptNumber(
+                await core.ExecuteScriptAsync(
+                    "document.querySelectorAll('body > svg').length"));
+            bool measurementSurfaceWasRemoved =
+                bodyMeasurementSurfaces == 0;
+
+            const string exactPersianSource =
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 500 400\"><text id=\"name\" x=\"128\" y=\"244\" direction=\"ltr\" unicode-bidi=\"plaintext\" text-anchor=\"start\" font-family=\"&quot;Segoe UI&quot;, sans-serif\" font-size=\"72\" font-weight=\"700\">بهروز</text></svg>";
+            string exactPersianSnapshot = exactPersianSource;
+            SvgDocumentIndexResult exactIndex =
+                new SvgDocumentIndexService().Build(exactPersianSource);
+            SvgVisualDocument exactPending =
+                new SvgVisualGeometryIndexService().Build(
+                    exactIndex.Document
+                        ?? throw new InvalidOperationException(
+                            exactIndex.IndexError),
+                    new SvgCanvasSizeReader().Read(exactPersianSource),
+                    exactPersianSource);
+            SvgVisualBounds exactBounds = exactPersianLtr?.Bounds
+                ?? throw new InvalidOperationException(
+                    "The exact Persian LTR bounds were unavailable.");
+            SvgVisualDocument exactMeasured =
+                new SvgVisualTextMeasurementService().Apply(
+                    exactPending,
+                    [new SvgVisualTextMeasurementResult(
+                        0,
+                        true,
+                        exactBounds)]);
+            SvgVisualHitTestService hitTest = new();
+            double exactCenterX =
+                (exactBounds.Left + exactBounds.Right) / 2;
+            double exactCenterY =
+                (exactBounds.Top + exactBounds.Bottom) / 2;
+            bool persianLtrHitMatchesVisibleText =
+                hitTest.HitTest(
+                    exactMeasured,
+                    new SvgMappedPreviewPoint(
+                        new SvgVisualPoint(exactCenterX, exactCenterY),
+                        0))?.SourceElement.Id == "name";
+            double oldMirroredCenterX = (2 * 128) - exactCenterX;
+            bool oldMirroredPersianLocationDoesNotHit =
+                hitTest.HitTest(
+                    exactMeasured,
+                    new SvgMappedPreviewPoint(
+                        new SvgVisualPoint(
+                            oldMirroredCenterX,
+                            exactCenterY),
+                        0)) is null;
+            bool textMeasurementDidNotModifySource =
+                exactPersianSource.Equals(
+                    exactPersianSnapshot,
+                    StringComparison.Ordinal);
+
+            core.PostWebMessageAsJson(
+                visualMessageBuilder.BuildVisualSelectionMessage(
+                    BridgeToken,
+                    7,
+                    new PreviewVisualSelection(
+                        SvgVisualElementKind.Text,
+                        new SvgVisualShapeGeometry(
+                            SvgVisualElementKind.Text,
+                            exactBounds.Left,
+                            exactBounds.Top,
+                            exactBounds.Right,
+                            exactBounds.Bottom),
+                        0,
+                        0)));
+            await Task.Delay(50);
+            string textOverlay = await ReadVisualSelectionAsync(core);
+            bool textOverlayAligned = TryReadOverlayBounds(
+                    textOverlay,
+                    out SvgVisualBounds overlayBounds)
+                && BoundsMatch(
+                    overlayBounds,
+                    browserBounds[2],
+                    tolerance: 0.25);
+
+            const string invalidTextRequestId =
+                "33445566778899001122AABBCCDDEEFF";
+            string invalidTextRequest =
+                textMessageBuilder.BuildTextMeasurementMessage(
+                    BridgeToken,
+                    7,
+                    invalidTextRequestId,
+                    [textItems[0]]);
+            core.PostWebMessageAsJson(invalidTextRequest.Replace(
+                "\"sourceRevision\":7",
+                "\"sourceRevision\":6",
+                StringComparison.Ordinal));
+            core.PostWebMessageAsJson(invalidTextRequest.Replace(
+                BridgeToken,
+                "10112233445566778899AABBCCDDEEFF",
+                StringComparison.Ordinal));
+            core.PostWebMessageAsJson(
+                invalidTextRequest[..^1] + ",\"extra\":true}");
+            core.PostWebMessageAsJson(invalidTextRequest.Replace(
+                "\"unicodeBidi\":\"normal\"",
+                "\"unicodeBidi\":\"normal\",\"extra\":true",
+                StringComparison.Ordinal));
+            await Task.Delay(75);
+            bool invalidTextMeasurementRequestsWereIgnored =
+                textMeasurementMessageCount == 1;
+
+            const string fontChangeRequestId =
+                "22334455667788990011AABBCCDDEEFF";
+            core.PostWebMessageAsJson(
+                textMessageBuilder.BuildTextMeasurementMessage(
+                    BridgeToken,
+                    7,
+                    fontChangeRequestId,
+                    [textItems[0] with
+                    {
+                        Index = 2,
+                        FontFamily = "Tahoma, sans-serif"
+                    }]));
+            string fontChangeJson =
+                await secondTextMeasurementReceived.Task.WaitAsync(
+                    TimeSpan.FromSeconds(5));
+            bool fontChangeMeasured =
+                new PreviewTextMeasurementMessageParser().TryParse(
+                    fontChangeJson,
+                    new PendingPreviewTextMeasurement(
+                        BridgeToken,
+                        7,
+                        fontChangeRequestId,
+                        [2]),
+                    out IReadOnlyList<SvgVisualTextMeasurementResult>
+                        fontResults)
+                && fontResults.Single().IsSuccess;
 
             WheelResult wheel = await RunWheelInputChecksAsync(
                 core,
@@ -437,7 +885,18 @@ public sealed class PreviewBridgeIntegrationTests
                 contextMenuDispatch.Equals("false", StringComparison.Ordinal),
                 contextMenuParsed,
                 copyDispatch.Equals("false", StringComparison.Ordinal),
-                copyCommandCount));
+                copyCommandCount,
+                visualSelectionStayedTokenAndRevisionBound,
+                englishTextMeasured,
+                persianTextMeasured,
+                textOverlayAligned,
+                textBoundsMatchBrowserSvg,
+                persianLtrHitMatchesVisibleText,
+                oldMirroredPersianLocationDoesNotHit,
+                textMeasurementDidNotModifySource,
+                measurementSurfaceWasRemoved,
+                invalidTextMeasurementRequestsWereIgnored,
+                fontChangeMeasured));
         }
         catch (Exception exception)
         {
@@ -452,6 +911,155 @@ public sealed class PreviewBridgeIntegrationTests
             Dispatcher.CurrentDispatcher.BeginInvokeShutdown(
                 DispatcherPriority.Background);
         }
+    }
+
+    private static async Task<IReadOnlyDictionary<int, SvgVisualBounds>>
+        MeasureReferenceTextBoundsAsync(
+            CoreWebView2 core,
+            IReadOnlyList<SvgVisualTextMeasurementSpec> items)
+    {
+        string serializedItems = JsonSerializer.Serialize(items.Select(item =>
+            new
+            {
+                index = item.Index,
+                text = item.Text,
+                x = item.X,
+                y = item.Y,
+                fontSize = item.FontSize,
+                fontFamily = item.FontFamily,
+                fontWeight = item.FontWeight,
+                fontStyle = item.FontStyle,
+                textAnchor = item.TextAnchor,
+                direction = item.Direction,
+                unicodeBidi = item.UnicodeBidi
+            }));
+        string script =
+            """
+            (() => {
+              const namespace = 'http://www.w3.org/2000/svg';
+              const surface = document.createElementNS(namespace, 'svg');
+              surface.style.position = 'fixed';
+              surface.style.left = '-100000px';
+              surface.style.top = '-100000px';
+              surface.style.overflow = 'visible';
+              surface.style.opacity = '0';
+              document.body.appendChild(surface);
+              try {
+                const results = __ITEMS__.map(item => {
+                  const text = document.createElementNS(namespace, 'text');
+                  text.setAttribute('x', String(item.x));
+                  text.setAttribute('y', String(item.y));
+                  text.setAttribute('font-size', String(item.fontSize));
+                  text.setAttribute('font-family', item.fontFamily);
+                  text.setAttribute('font-weight', item.fontWeight);
+                  text.setAttribute('font-style', item.fontStyle);
+                  text.setAttribute('text-anchor', item.textAnchor);
+                  text.setAttribute('direction', item.direction);
+                  text.setAttribute('unicode-bidi', item.unicodeBidi);
+                  text.textContent = item.text;
+                  surface.appendChild(text);
+                  const bounds = text.getBBox();
+                  text.remove();
+                  return {
+                    index: item.index,
+                    left: bounds.x,
+                    top: bounds.y,
+                    right: bounds.x + bounds.width,
+                    bottom: bounds.y + bounds.height
+                  };
+                });
+                return JSON.stringify(results);
+              } finally {
+                surface.remove();
+              }
+            })()
+            """.Replace(
+                "__ITEMS__",
+                serializedItems,
+                StringComparison.Ordinal);
+        string encoded = await core.ExecuteScriptAsync(script);
+        string json = JsonSerializer.Deserialize<string>(encoded)
+            ?? throw new InvalidOperationException(
+                "WebView2 returned no reference text bounds.");
+        using JsonDocument document = JsonDocument.Parse(json);
+        return document.RootElement.EnumerateArray().ToDictionary(
+            item => item.GetProperty("index").GetInt32(),
+            item => new SvgVisualBounds(
+                item.GetProperty("left").GetDouble(),
+                item.GetProperty("top").GetDouble(),
+                item.GetProperty("right").GetDouble(),
+                item.GetProperty("bottom").GetDouble()));
+    }
+
+    private static bool TryReadOverlayBounds(
+        string value,
+        out SvgVisualBounds bounds)
+    {
+        bounds = default;
+        string[] parts = value.Split('|');
+        if (parts.Length != 5
+            || !parts[0].Equals("rect", StringComparison.Ordinal)
+            || !double.TryParse(
+                parts[1],
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out double left)
+            || !double.TryParse(
+                parts[2],
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out double top)
+            || !double.TryParse(
+                parts[3],
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out double width)
+            || !double.TryParse(
+                parts[4],
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out double height))
+        {
+            return false;
+        }
+
+        bounds = new SvgVisualBounds(
+            left,
+            top,
+            left + width,
+            top + height);
+        return true;
+    }
+
+    private static bool BoundsMatch(
+        SvgVisualBounds actual,
+        SvgVisualBounds expected,
+        double tolerance) =>
+        NearlyEqual(actual.Left, expected.Left, tolerance)
+        && NearlyEqual(actual.Top, expected.Top, tolerance)
+        && NearlyEqual(actual.Right, expected.Right, tolerance)
+        && NearlyEqual(actual.Bottom, expected.Bottom, tolerance);
+
+    private static async Task<string> ReadVisualSelectionAsync(
+        CoreWebView2 core)
+    {
+        string json = await core.ExecuteScriptAsync(
+            """
+            (() => {
+              const shape = document.querySelector(
+                '.selection-overlay > .selection-shape');
+              return shape
+                ? [
+                    shape.localName,
+                    shape.getAttribute('x'),
+                    shape.getAttribute('y'),
+                    shape.getAttribute('width'),
+                    shape.getAttribute('height')
+                  ].join('|')
+                : '';
+            })()
+            """);
+        return JsonSerializer.Deserialize<string>(json) ?? string.Empty;
     }
 
     private static double ParseScriptNumber(string json)

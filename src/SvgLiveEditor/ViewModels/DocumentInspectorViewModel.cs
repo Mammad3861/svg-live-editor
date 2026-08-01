@@ -15,6 +15,8 @@ public sealed class DocumentInspectorViewModel : ObservableObject
     private string _stateTitle = "Indexing source";
     private string _stateMessage = "The element tree will appear after secure SVG validation.";
     private string _selectedElementSummary = "No element selected";
+    private string _selectionAdvisory = string.Empty;
+    private IReadOnlyList<string> _fontFamilySuggestions = [];
 
     public ObservableCollection<SvgElementViewModel> Roots { get; } = [];
 
@@ -54,8 +56,26 @@ public sealed class DocumentInspectorViewModel : ObservableObject
         private set => SetProperty(ref _selectedElementSummary, value);
     }
 
+    public string SelectionAdvisory
+    {
+        get => _selectionAdvisory;
+        private set => SetProperty(ref _selectionAdvisory, value);
+    }
+
     public SvgElementIdentity? CaptureSelectionIdentity() =>
         _selectedElement?.Element.Identity;
+
+    public void SetFontFamilySuggestions(
+        IReadOnlyList<string> fontFamilySuggestions)
+    {
+        _fontFamilySuggestions = fontFamilySuggestions
+            ?? throw new ArgumentNullException(nameof(fontFamilySuggestions));
+    }
+
+    public void SetSelectionAdvisory(string? message)
+    {
+        SelectionAdvisory = message ?? string.Empty;
+    }
 
     public void Load(
         SvgDocumentIndex documentIndex,
@@ -98,6 +118,7 @@ public sealed class DocumentInspectorViewModel : ObservableObject
         StateTitle = "Source cannot be indexed";
         StateMessage = message;
         SelectedElementSummary = "No element selected";
+        SelectionAdvisory = string.Empty;
         OnPropertyChanged(nameof(DocumentIndex));
         OnPropertyChanged(nameof(SelectedElement));
     }
@@ -142,6 +163,7 @@ public sealed class DocumentInspectorViewModel : ObservableObject
 
         _selectedElement = element;
         Properties.Clear();
+        SelectionAdvisory = string.Empty;
 
         if (element is null)
         {
@@ -177,7 +199,10 @@ public sealed class DocumentInspectorViewModel : ObservableObject
                 Properties.Add(new SvgPropertyViewModel(
                     element.Element,
                     definition,
-                    element.Element.FindAttribute(definition.Name)));
+                    element.Element.FindAttribute(definition.Name),
+                    definition.UsesFontFamilySuggestions
+                        ? _fontFamilySuggestions
+                        : null));
             }
         }
 

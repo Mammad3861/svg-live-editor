@@ -15,7 +15,9 @@ public sealed class InspectorSelectionCoordinator
         out SourceSpan navigationSpan)
     {
         navigationSpan = default;
-        if (origin != InspectorSelectionOrigin.ExplicitTreeNavigation
+        if (origin is not (
+                InspectorSelectionOrigin.ExplicitTreeNavigation
+                or InspectorSelectionOrigin.PreviewNavigation)
             || !isIndexCurrent
             || indexRevision != sourceRevision
             || isEditorTextCompositionActive

@@ -119,6 +119,91 @@ public sealed class SvgAttributeEditServiceTests
     }
 
     [TestMethod]
+    public void FontFamilyFallbackStackIsPreservedAndBlankRemovesIt()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><text x=\"4\" y=\"20\" font-family=\"Segoe UI, sans-serif\">سلام</text></svg>";
+        SvgElementNode text = FindElement(source, "text");
+
+        SvgAttributeEditResult changed = _editService.CreateEdit(
+            source,
+            text,
+            "font-family",
+            "'Noto Sans', Tahoma, sans-serif");
+        Assert.IsTrue(changed.IsSuccess, changed.ErrorMessage);
+        string updated = changed.Edit!.Apply(source);
+        StringAssert.Contains(
+            updated,
+            "font-family=\"'Noto Sans', Tahoma, sans-serif\"");
+        StringAssert.Contains(updated, ">سلام</text>");
+
+        SvgElementNode updatedText = FindElement(updated, "text");
+        SvgAttributeEditResult removed = _editService.CreateEdit(
+            updated,
+            updatedText,
+            "font-family",
+            string.Empty);
+        Assert.IsTrue(removed.IsSuccess, removed.ErrorMessage);
+        Assert.AreEqual(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><text x=\"4\" y=\"20\">سلام</text></svg>",
+            removed.Edit!.Apply(updated));
+    }
+
+    [TestMethod]
+    [DataRow("Arial; fill:red")]
+    [DataRow("Arial, url(https://example.test/font)")]
+    [DataRow("Arial\nTahoma")]
+    [DataRow("Arial,,Tahoma")]
+    [DataRow("\"Arial")]
+    [DataRow("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")]
+    public void FontFamilyRejectsInjectionControlsAndMalformedStacks(
+        string value)
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><text>Text</text></svg>";
+
+        SvgAttributeEditResult result = _editService.CreateEdit(
+            source,
+            FindElement(source, "text"),
+            "font-family",
+            value);
+
+        Assert.IsFalse(result.IsSuccess);
+        Assert.IsNull(result.Edit);
+    }
+
+    [TestMethod]
+    public void FontFamilyEditFeedsValidationRecoveryAndExactUtf8Persistence()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><text x=\"10\" y=\"24\" font-size=\"18\">سلام SVG</text></svg>";
+        SvgAttributeEditResult edit = _editService.CreateEdit(
+            source,
+            FindElement(source, "text"),
+            "font-family",
+            "Tahoma, 'Noto Sans', sans-serif");
+        Assert.IsTrue(edit.IsSuccess, edit.ErrorMessage);
+        string updated = edit.Edit!.Apply(source);
+        SvgValidationResult validation =
+            new SvgValidationService().Validate(updated);
+        RecoverySnapshot snapshot = RecoverySnapshotStore.CreateSnapshot(
+            RecoverySnapshotStore.CreateSnapshotId(),
+            null,
+            "Untitled.svg",
+            updated,
+            3,
+            DateTimeOffset.UtcNow);
+
+        Assert.IsTrue(validation.IsValid, validation.Message);
+        Assert.IsTrue(new AutoSavePolicy().Evaluate(validation).CanWrite);
+        Assert.AreEqual(updated, snapshot.Source);
+        StringAssert.Contains(updated, "سلام SVG");
+        CollectionAssert.AreEqual(
+            Encoding.UTF8.GetBytes(updated),
+            Encoding.UTF8.GetBytes(snapshot.Source));
+    }
+
+    [TestMethod]
     [DataRow("direction", "auto")]
     [DataRow("direction", "rtl\" onload=\"alert(1)")]
     [DataRow("unicode-bidi", "bidi-override")]

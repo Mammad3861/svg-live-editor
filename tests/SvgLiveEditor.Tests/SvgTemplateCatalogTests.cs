@@ -89,7 +89,7 @@ public sealed class SvgTemplateCatalogTests
             "این یک متن فارسی است!",
             "نسخه 2.0 آماده است.",
             "قیمت: ۱۲۳٬۴۵۶ تومان.",
-            "SvgLiveEditor نسخه 0.5",
+            "SvgLiveEditor نسخه 0.6",
             "(سلام بهروز)",
             "Hello — سلام!"
         ];

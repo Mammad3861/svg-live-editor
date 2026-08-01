@@ -28,7 +28,7 @@ public sealed class PreviewPointerGestureArbiter
             || !input.IsPrimary
             || !input.IsMouse
             || input.ShiftHeld
-            || input.AltHeld
+            || !input.AltHeld
             || input.MetaHeld)
         {
             return PreviewPointerGestureAction.None;

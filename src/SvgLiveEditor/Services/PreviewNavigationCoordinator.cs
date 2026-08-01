@@ -11,16 +11,25 @@ public sealed class PreviewNavigationCoordinator
     public bool HasPending => _pending is not null;
 
     public PreviewRenderRequest Enqueue(
+        long sourceRevision,
         string svg,
         SvgCanvasSize canvasSize,
+        SvgVisualDocument visualDocument,
         PreviewZoomState zoomState,
         PreviewViewportPosition viewport)
     {
         ArgumentNullException.ThrowIfNull(svg);
+        ArgumentNullException.ThrowIfNull(visualDocument);
+        if (sourceRevision < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sourceRevision));
+        }
         PreviewRenderRequest request = new(
             checked(++_nextRevision),
+            sourceRevision,
             svg,
             canvasSize,
+            visualDocument,
             zoomState,
             viewport);
         _pending = request;

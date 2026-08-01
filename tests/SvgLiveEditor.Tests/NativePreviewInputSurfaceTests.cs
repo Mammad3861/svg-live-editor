@@ -99,13 +99,13 @@ public sealed class NativePreviewInputSurfaceTests
         Assert.IsTrue(inspector >= 0);
         Assert.IsTrue(source > inspector);
         Assert.IsTrue(preview > source);
-        StringAssert.Contains(xaml, "MinWidth=\"1020\"");
+        StringAssert.Contains(xaml, "MinWidth=\"900\"");
         StringAssert.Contains(
             xaml,
-            "<ColumnDefinition Width=\"270\" MinWidth=\"220\" MaxWidth=\"460\" />");
+            "<ColumnDefinition Width=\"250\" MinWidth=\"200\" MaxWidth=\"460\" />");
         Assert.AreEqual(
             2,
-            CountOccurrences(xaml, "<ColumnDefinition Width=\"*\" MinWidth=\"320\" />"));
+            CountOccurrences(xaml, "<ColumnDefinition Width=\"*\" MinWidth=\"280\" />"));
         Assert.AreEqual(
             2,
             CountOccurrences(xaml, "<GridSplitter Grid.Column="));
@@ -121,6 +121,129 @@ public sealed class NativePreviewInputSurfaceTests
             CountOccurrences(persistence, "Owner = this"));
         Assert.IsTrue(
             CountOccurrences(persistence, "ShowDialog()") >= 2);
+    }
+
+    [TestMethod]
+    public void TextFontFamilyUsesAnEditableSuggestedValueComboBox()
+    {
+        string xaml = ReadUi("MainWindow.xaml");
+        string main = ReadUi("MainWindow.xaml.cs");
+
+        StringAssert.Contains(xaml, "IsEditable=\"True\"");
+        StringAssert.Contains(
+            xaml,
+            "ItemsSource=\"{Binding SuggestedValues}\"");
+        StringAssert.Contains(
+            xaml,
+            "Text=\"{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}\"");
+        StringAssert.Contains(
+            xaml,
+            "DataTrigger Binding=\"{Binding HasSuggestedValues}\"");
+        StringAssert.Contains(
+            main,
+            "_installedFontFamilyProvider.GetFontFamilies()");
+    }
+
+    [TestMethod]
+    public void FontSelectionCommitsImmediatelyAndTypedEditsRemainExplicit()
+    {
+        string xaml = ReadUi("MainWindow.xaml");
+        string inspector = ReadUi("MainWindow.Inspector.cs");
+
+        StringAssert.Contains(
+            xaml,
+            "SelectionChanged=\"OnInspectorSuggestedPropertySelectionChanged\"");
+        StringAssert.Contains(
+            inspector,
+            "OnInspectorSuggestedPropertySelectionChanged");
+        StringAssert.Contains(
+            inspector,
+            "_svgFontFamilyStackService.TryCreateForPrimary(");
+        StringAssert.Contains(
+            inspector,
+            "property.Value = selectedFamily;");
+        StringAssert.Contains(
+            inspector,
+            "property.MarkApplied(commitValue)");
+        StringAssert.Contains(
+            inspector,
+            "|| !comboBox.IsDropDownOpen");
+        StringAssert.Contains(
+            inspector,
+            "ApplyInspectorProperty(property)");
+        StringAssert.Contains(inspector, "e.Key == Key.Enter");
+        StringAssert.Contains(inspector, "e.Key == Key.Escape");
+        StringAssert.Contains(inspector, "property.Revert()");
+        StringAssert.Contains(
+            inspector,
+            "OnInspectorPropertyLostKeyboardFocus");
+        StringAssert.Contains(
+            inspector,
+            "property.WasCurrentValueAlreadyAttempted");
+        Assert.IsTrue(CountOccurrences(
+            inspector,
+            "RefreshSelectedTextWarnings();") >= 2);
+        StringAssert.Contains(
+            ReadUi("MainWindow.VisualEditing.cs"),
+            "RefreshSelectedTextWarnings();");
+        StringAssert.Contains(
+            inspector,
+            "SetSelectionAdvisory(directionWarning)");
+        StringAssert.Contains(
+            inspector,
+            "coverage == FontGlyphCoverage.Incomplete");
+    }
+
+    [TestMethod]
+    public void LongEditableFontValueStaysInsideNarrowPropertiesColumn()
+    {
+        string xaml = ReadUi("MainWindow.xaml");
+
+        StringAssert.Contains(
+            xaml,
+            "<ColumnDefinition Width=\"*\" MinWidth=\"0\" />");
+        StringAssert.Contains(xaml, "MaxDropDownHeight=\"320\"");
+        StringAssert.Contains(
+            xaml,
+            "ScrollViewer.HorizontalScrollBarVisibility=\"Auto\"");
+        StringAssert.Contains(
+            xaml,
+            "ToolTip=\"{Binding SerializedValue}\"");
+        StringAssert.Contains(
+            xaml,
+            "Text=\"{Binding Inspector.SelectionAdvisory}\"");
+        Assert.IsTrue(
+            CountOccurrences(xaml, "MinWidth=\"0\"") >= 4);
+        Assert.IsTrue(
+            CountOccurrences(
+                xaml,
+                "HorizontalAlignment=\"Stretch\"") >= 3);
+    }
+
+    [TestMethod]
+    public void SourceAndInspectorWheelInputRemainOutsideNativePreviewRoute()
+    {
+        string nativeInput =
+            ReadUi("MainWindow.PreviewNativeInput.cs");
+
+        StringAssert.Contains(
+            nativeInput,
+            "Point topLeft = PreviewWebView.PointToScreen");
+        StringAssert.Contains(
+            nativeInput,
+            "PreviewWebView.ActualWidth");
+        StringAssert.Contains(
+            nativeInput,
+            "PreviewWebView.ActualHeight");
+        StringAssert.Contains(
+            nativeInput,
+            "_previewScreenHitTester.Contains(");
+        Assert.IsFalse(nativeInput.Contains(
+            "SourceEditor.PointToScreen",
+            StringComparison.Ordinal));
+        Assert.IsFalse(nativeInput.Contains(
+            "InspectorTree.PointToScreen",
+            StringComparison.Ordinal));
     }
 
     private static int CountOccurrences(string value, string search)

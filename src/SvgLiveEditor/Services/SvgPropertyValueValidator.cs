@@ -32,6 +32,12 @@ public sealed partial class SvgPropertyValueValidator
             "stroke-width"
         };
 
+    private static readonly HashSet<string> PositiveLengthAttributes =
+        new(StringComparer.Ordinal)
+        {
+            "font-size"
+        };
+
     public string? Validate(string elementName, string attributeName, string value)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(elementName);
@@ -79,12 +85,15 @@ public sealed partial class SvgPropertyValueValidator
         {
             "id" => ValidateId(value),
             "fill" or "stroke" => ValidatePaint(value),
+            "font-family" => SvgFontFamilyValueValidator.Validate(value),
             "opacity" => ValidateOpacity(value),
             "viewBox" => ValidateViewBox(value),
             _ when CoordinateAttributes.Contains(attributeName) =>
                 ValidateLength(value, requireNonNegative: false),
             _ when NonNegativeLengthAttributes.Contains(attributeName) =>
                 ValidateLength(value, requireNonNegative: true),
+            _ when PositiveLengthAttributes.Contains(attributeName) =>
+                ValidatePositiveLength(value),
             _ => null
         };
     }
@@ -199,6 +208,25 @@ public sealed partial class SvgPropertyValueValidator
         return requireNonNegative && number < 0
             ? "This length cannot be negative."
             : null;
+    }
+
+    private static string? ValidatePositiveLength(string value)
+    {
+        string? error = ValidateLength(value, requireNonNegative: true);
+        if (error is not null)
+        {
+            return error;
+        }
+
+        Match match = LengthPattern().Match(value.Trim());
+        _ = double.TryParse(
+            match.Groups["number"].Value,
+            NumberStyles.Float,
+            CultureInfo.InvariantCulture,
+            out double number);
+        return number > 0
+            ? null
+            : "This length must be greater than zero.";
     }
 
     [GeneratedRegex(

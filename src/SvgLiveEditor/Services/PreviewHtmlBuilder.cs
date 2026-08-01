@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using SvgLiveEditor.Models;
@@ -13,8 +14,13 @@ public sealed class PreviewHtmlBuilder
           const viewport = document.querySelector('.preview-viewport');
           const stage = document.querySelector('main');
           const image = document.querySelector('img');
+          const selectionOverlay = document.querySelector(
+            '.selection-overlay');
           const bridge = window.chrome && window.chrome.webview;
           const bridgeToken = document.body.dataset.bridgeToken;
+          const sourceRevision = Number.parseInt(
+            document.body.dataset.sourceRevision || '-1',
+            10);
           let spaceHeld = false;
           let panModeEnabled = false;
           let minimumHorizontalDragDistance = null;
@@ -22,6 +28,7 @@ public sealed class PreviewHtmlBuilder
           let activePointerId = null;
           let activePanButton = null;
           let activeDirectDrag = null;
+          let activeVisualGesture = null;
           let startX = 0;
           let startY = 0;
           let startScrollLeft = 0;
@@ -46,6 +53,7 @@ public sealed class PreviewHtmlBuilder
               !panModeEnabled &&
               minimumHorizontalDragDistance !== null &&
               minimumVerticalDragDistance !== null);
+            viewport.classList.toggle('select-mode', !panModeEnabled);
           };
 
           const stopPan = event => {
@@ -198,6 +206,53 @@ public sealed class PreviewHtmlBuilder
             });
           };
 
+          const postVisualPointer = (phase, gesture, event = null) => {
+            if (!bridge || !Number.isSafeInteger(sourceRevision) ||
+                sourceRevision < 0) {
+              return;
+            }
+
+            const imageRect = image.getBoundingClientRect();
+            const viewportRect = viewport.getBoundingClientRect();
+            bridge.postMessage({
+              type: 'visualPointer',
+              token: bridgeToken,
+              sourceRevision,
+              phase,
+              gestureId: gesture.gestureId,
+              x: lastPointerX,
+              y: lastPointerY,
+              viewportWidth: viewport.clientWidth,
+              viewportHeight: viewport.clientHeight,
+              imageLeft: imageRect.left - viewportRect.left,
+              imageTop: imageRect.top - viewportRect.top,
+              imageWidth: imageRect.width,
+              imageHeight: imageRect.height,
+              button: 0,
+              buttons: event ? event.buttons : 0,
+              ctrlKey: event ? event.ctrlKey : false,
+              shiftKey: event ? event.shiftKey : false,
+              altKey: event ? event.altKey : false,
+              metaKey: event ? event.metaKey : false,
+              spaceHeld,
+              pointerType: event ? event.pointerType : 'mouse',
+              isPrimary: event ? event.isPrimary : true
+            });
+          };
+
+          const postVisualNudge = (deltaX, deltaY) => {
+            if (bridge && Number.isSafeInteger(sourceRevision) &&
+                sourceRevision >= 0) {
+              bridge.postMessage({
+                type: 'visualNudge',
+                token: bridgeToken,
+                sourceRevision,
+                deltaX,
+                deltaY
+              });
+            }
+          };
+
           const createGestureId = () => {
             if (!globalThis.crypto ||
                 typeof globalThis.crypto.getRandomValues !== 'function') {
@@ -221,13 +276,18 @@ public sealed class PreviewHtmlBuilder
             if (spaceHeld || event.ctrlKey || panModeEnabled) {
               return 'pan';
             }
-            if (event.shiftKey || event.altKey || event.metaKey ||
-                event.target !== image ||
-                !event.isTrusted || !event.isPrimary ||
+            if (!event.isTrusted || !event.isPrimary ||
                 event.pointerType !== 'mouse') {
               return 'none';
             }
-            return 'drag';
+            if (event.altKey && !event.shiftKey && !event.metaKey &&
+                event.target === image) {
+              return 'drag';
+            }
+            if (event.shiftKey || event.altKey || event.metaKey) {
+              return 'none';
+            }
+            return 'visual';
           };
 
           const stopDirectDrag = (event, notify = true) => {
@@ -246,6 +306,162 @@ public sealed class PreviewHtmlBuilder
               postDirectDragSignal('cancel', stopped.gestureId);
             }
             refreshCursor();
+          };
+
+          const stopVisualGesture = (event, notify = true) => {
+            if (activeVisualGesture === null ||
+                (event &&
+                 event.pointerId !== activeVisualGesture.pointerId)) {
+              return;
+            }
+
+            const stopped = activeVisualGesture;
+            activeVisualGesture = null;
+            if (viewport.hasPointerCapture(stopped.pointerId)) {
+              viewport.releasePointerCapture(stopped.pointerId);
+            }
+            if (notify) {
+              postVisualPointer('cancel', stopped, event);
+            }
+            refreshCursor();
+          };
+
+          const renderVisualSelection = message => {
+            selectionOverlay.replaceChildren();
+            if (!message.visible) {
+              return;
+            }
+
+            const namespace = 'http://www.w3.org/2000/svg';
+            const deltaX = message.deltaX;
+            const deltaY = message.deltaY;
+            let shape;
+            if (message.kind === 'line') {
+              shape = document.createElementNS(namespace, 'line');
+              shape.setAttribute('x1', message.x1 + deltaX);
+              shape.setAttribute('y1', message.y1 + deltaY);
+              shape.setAttribute('x2', message.x2 + deltaX);
+              shape.setAttribute('y2', message.y2 + deltaY);
+            } else if (message.kind === 'ellipse') {
+              shape = document.createElementNS(namespace, 'ellipse');
+              shape.setAttribute(
+                'cx',
+                ((message.x1 + message.x2) / 2) + deltaX);
+              shape.setAttribute(
+                'cy',
+                ((message.y1 + message.y2) / 2) + deltaY);
+              shape.setAttribute(
+                'rx',
+                Math.abs(message.x2 - message.x1) / 2);
+              shape.setAttribute(
+                'ry',
+                Math.abs(message.y2 - message.y1) / 2);
+            } else {
+              shape = document.createElementNS(namespace, 'rect');
+              shape.setAttribute(
+                'x',
+                Math.min(message.x1, message.x2) + deltaX);
+              shape.setAttribute(
+                'y',
+                Math.min(message.y1, message.y2) + deltaY);
+              shape.setAttribute(
+                'width',
+                Math.abs(message.x2 - message.x1));
+              shape.setAttribute(
+                'height',
+                Math.abs(message.y2 - message.y1));
+            }
+            shape.classList.add('selection-shape');
+            selectionOverlay.appendChild(shape);
+          };
+
+          const isSafeFontFamily = value => {
+            if (typeof value !== 'string' ||
+                value.length === 0 || value.length > 256 ||
+                /[\u0000-\u001f\u007f]/.test(value) ||
+                /url\s*\(/i.test(value) ||
+                /[;{}<>\\@]/.test(value)) {
+              return false;
+            }
+            return value.split(',').every(part => part.trim().length > 0);
+          };
+
+          const measureTextItems = message => {
+            const svgNamespace = 'http://www.w3.org/2000/svg';
+            const measurementSurface = document.createElementNS(
+              svgNamespace,
+              'svg');
+            measurementSurface.setAttribute('aria-hidden', 'true');
+            measurementSurface.setAttribute('focusable', 'false');
+            measurementSurface.style.position = 'fixed';
+            measurementSurface.style.left = '-100000px';
+            measurementSurface.style.top = '-100000px';
+            measurementSurface.style.width = '1px';
+            measurementSurface.style.height = '1px';
+            measurementSurface.style.overflow = 'visible';
+            measurementSurface.style.opacity = '0';
+            measurementSurface.style.pointerEvents = 'none';
+            document.body.appendChild(measurementSurface);
+            let results;
+            try {
+              results = message.items.map(item => {
+                const measuredText = document.createElementNS(
+                  svgNamespace,
+                  'text');
+                measuredText.setAttribute('x', String(item.x));
+                measuredText.setAttribute('y', String(item.y));
+                measuredText.setAttribute('font-size', String(item.fontSize));
+                measuredText.setAttribute('font-family', item.fontFamily);
+                measuredText.setAttribute('font-weight', item.fontWeight);
+                measuredText.setAttribute('font-style', item.fontStyle);
+                measuredText.setAttribute('text-anchor', item.textAnchor);
+                measuredText.setAttribute('direction', item.direction);
+                measuredText.setAttribute('unicode-bidi', item.unicodeBidi);
+                measuredText.textContent = item.text;
+                measurementSurface.appendChild(measuredText);
+                try {
+                  const bounds = measuredText.getBBox();
+                  const left = bounds.x;
+                  const top = bounds.y;
+                  const right = bounds.x + bounds.width;
+                  const bottom = bounds.y + bounds.height;
+                  if (![left, top, right, bottom].every(Number.isFinite) ||
+                      right <= left || bottom <= top ||
+                      [left, top, right, bottom]
+                        .some(value => Math.abs(value) > 1000000000)) {
+                    throw new Error('Invalid text bounds');
+                  }
+                  return {
+                    index: item.index,
+                    success: true,
+                    left,
+                    top,
+                    right,
+                    bottom
+                  };
+                } catch {
+                  return {
+                    index: item.index,
+                    success: false,
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0
+                  };
+                } finally {
+                  measuredText.remove();
+                }
+              });
+            } finally {
+              measurementSurface.remove();
+            }
+            bridge.postMessage({
+              type: 'textMeasurements',
+              token: bridgeToken,
+              sourceRevision,
+              requestId: message.requestId,
+              results
+            });
           };
 
           const postPngError = requestId => {
@@ -343,6 +559,10 @@ public sealed class PreviewHtmlBuilder
                   message.centerY <= 1) {
                 image.style.width = `${message.renderedWidth}px`;
                 image.style.height = `${message.renderedHeight}px`;
+                selectionOverlay.style.width =
+                  `${message.renderedWidth}px`;
+                selectionOverlay.style.height =
+                  `${message.renderedHeight}px`;
                 stage.style.width = `${message.renderedWidth + 48}px`;
                 stage.style.height = `${message.renderedHeight + 48}px`;
                 requestAnimationFrame(() =>
@@ -366,6 +586,7 @@ public sealed class PreviewHtmlBuilder
                   message.minimumVerticalDragDistance;
                 stopPan();
                 stopDirectDrag();
+                stopVisualGesture(null, false);
                 refreshCursor();
                 return;
               }
@@ -380,6 +601,74 @@ public sealed class PreviewHtmlBuilder
                   top: 0,
                   behavior: 'auto'
                 });
+                return;
+              }
+
+              if (message.type === 'visualSelection' &&
+                  Object.keys(message).length === 11 &&
+                  Number.isSafeInteger(message.sourceRevision) &&
+                  message.sourceRevision === sourceRevision &&
+                  typeof message.visible === 'boolean' &&
+                  ['none', 'rect', 'ellipse', 'line', 'text']
+                    .includes(message.kind) &&
+                  Number.isFinite(message.x1) &&
+                  Math.abs(message.x1) <= 1000000000 &&
+                  Number.isFinite(message.y1) &&
+                  Math.abs(message.y1) <= 1000000000 &&
+                  Number.isFinite(message.x2) &&
+                  Math.abs(message.x2) <= 1000000000 &&
+                  Number.isFinite(message.y2) &&
+                  Math.abs(message.y2) <= 1000000000 &&
+                  Number.isFinite(message.deltaX) &&
+                  Math.abs(message.deltaX) <= 1000000000 &&
+                  Number.isFinite(message.deltaY) &&
+                  Math.abs(message.deltaY) <= 1000000000 &&
+                  ((message.visible && message.kind !== 'none') ||
+                   (!message.visible && message.kind === 'none' &&
+                    message.x1 === 0 && message.y1 === 0 &&
+                    message.x2 === 0 && message.y2 === 0 &&
+                    message.deltaX === 0 && message.deltaY === 0))) {
+                renderVisualSelection(message);
+                return;
+              }
+
+              if (message.type === 'measureText' &&
+                  Object.keys(message).length === 5 &&
+                  Number.isSafeInteger(message.sourceRevision) &&
+                  message.sourceRevision === sourceRevision &&
+                  typeof message.requestId === 'string' &&
+                  /^[0-9a-fA-F]{32}$/.test(message.requestId) &&
+                  Array.isArray(message.items) &&
+                  message.items.length > 0 &&
+                  message.items.length <= 32 &&
+                  message.items.every(item =>
+                    item && typeof item === 'object' &&
+                    Object.keys(item).length === 11 &&
+                    Number.isInteger(item.index) &&
+                    item.index >= 0 && item.index < 32 &&
+                    typeof item.text === 'string' &&
+                    item.text.length > 0 && item.text.length <= 1024 &&
+                    !/[\u0000-\u001f\u007f]/.test(item.text) &&
+                    Number.isFinite(item.x) &&
+                    Math.abs(item.x) <= 1000000000 &&
+                    Number.isFinite(item.y) &&
+                    Math.abs(item.y) <= 1000000000 &&
+                    Number.isFinite(item.fontSize) &&
+                    item.fontSize > 0 && item.fontSize <= 1000000000 &&
+                    isSafeFontFamily(item.fontFamily) &&
+                    ['normal', 'bold', '100', '200', '300', '400',
+                     '500', '600', '700', '800', '900']
+                      .includes(item.fontWeight) &&
+                    ['normal', 'italic', 'oblique']
+                      .includes(item.fontStyle) &&
+                    ['start', 'middle', 'end']
+                      .includes(item.textAnchor) &&
+                    ['ltr', 'rtl'].includes(item.direction) &&
+                    ['normal', 'embed', 'isolate', 'plaintext']
+                      .includes(item.unicodeBidi)) &&
+                  new Set(message.items.map(item => item.index)).size ===
+                    message.items.length) {
+                measureTextItems(message);
                 return;
               }
 
@@ -475,6 +764,29 @@ public sealed class PreviewHtmlBuilder
           viewport.addEventListener('pointerdown', event => {
             rememberPointer(event);
             const action = choosePointerAction(event);
+            if (action === 'visual') {
+              const gestureId = createGestureId();
+              if (gestureId === null) {
+                return;
+              }
+
+              event.preventDefault();
+              stopPan();
+              stopDirectDrag();
+              stopVisualGesture();
+              activeVisualGesture = {
+                gestureId,
+                pointerId: event.pointerId
+              };
+              viewport.setPointerCapture(event.pointerId);
+              postVisualPointer(
+                'down',
+                activeVisualGesture,
+                event);
+              refreshCursor();
+              return;
+            }
+
             if (action === 'drag') {
               if (minimumHorizontalDragDistance === null ||
                   minimumVerticalDragDistance === null) {
@@ -488,6 +800,7 @@ public sealed class PreviewHtmlBuilder
 
               event.preventDefault();
               stopPan();
+              stopVisualGesture();
               activeDirectDrag = {
                 gestureId,
                 pointerId: event.pointerId,
@@ -507,6 +820,7 @@ public sealed class PreviewHtmlBuilder
 
             event.preventDefault();
             stopDirectDrag();
+            stopVisualGesture();
             activePointerId = event.pointerId;
             activePanButton = event.button;
             startX = event.clientX;
@@ -519,12 +833,30 @@ public sealed class PreviewHtmlBuilder
 
           viewport.addEventListener('pointermove', event => {
             rememberPointer(event);
+            if (activeVisualGesture !== null &&
+                event.pointerId === activeVisualGesture.pointerId) {
+              if (!event.isTrusted ||
+                  (event.buttons & 1) === 0 ||
+                  spaceHeld || event.ctrlKey || panModeEnabled ||
+                  event.shiftKey || event.altKey || event.metaKey) {
+                stopVisualGesture(event);
+                return;
+              }
+
+              event.preventDefault();
+              postVisualPointer(
+                'move',
+                activeVisualGesture,
+                event);
+              return;
+            }
+
             if (activeDirectDrag !== null &&
                 event.pointerId === activeDirectDrag.pointerId) {
               if (!event.isTrusted ||
                   (event.buttons & 1) === 0 ||
                   spaceHeld || event.ctrlKey || panModeEnabled ||
-                  event.shiftKey || event.altKey || event.metaKey) {
+                  event.shiftKey || !event.altKey || event.metaKey) {
                 stopDirectDrag(event);
                 return;
               }
@@ -561,27 +893,49 @@ public sealed class PreviewHtmlBuilder
           viewport.addEventListener('pointerup', event => {
             stopPan(event);
             stopDirectDrag(event);
+            if (activeVisualGesture !== null &&
+                event.pointerId === activeVisualGesture.pointerId) {
+              rememberPointer(event);
+              postVisualPointer(
+                'up',
+                activeVisualGesture,
+                event);
+              stopVisualGesture(event, false);
+            }
           });
           viewport.addEventListener('pointercancel', event => {
             stopPan(event);
             stopDirectDrag(event);
+            stopVisualGesture(event);
           });
           viewport.addEventListener('lostpointercapture', event => {
             stopPan(event);
             stopDirectDrag(event);
+            stopVisualGesture(event);
           });
           viewport.addEventListener('pointerleave', event => {
             stopPan(event);
             stopDirectDrag(event);
+            stopVisualGesture(event);
           });
           viewport.addEventListener('scroll', scheduleViewportState);
           window.addEventListener('pointerup', event => {
             stopPan(event);
             stopDirectDrag(event);
+            if (activeVisualGesture !== null &&
+                event.pointerId === activeVisualGesture.pointerId) {
+              rememberPointer(event);
+              postVisualPointer(
+                'up',
+                activeVisualGesture,
+                event);
+              stopVisualGesture(event, false);
+            }
           }, true);
           window.addEventListener('pointercancel', event => {
             stopPan(event);
             stopDirectDrag(event);
+            stopVisualGesture(event);
           }, true);
           viewport.addEventListener('dragstart', event => event.preventDefault());
           viewport.addEventListener('selectstart', event => event.preventDefault());
@@ -593,6 +947,7 @@ public sealed class PreviewHtmlBuilder
           viewport.addEventListener('contextmenu', event => {
             event.preventDefault();
             stopDirectDrag();
+            stopVisualGesture();
             rememberPointer(event);
             viewport.focus({ preventScroll: true });
             postContextMenuRequest();
@@ -607,6 +962,7 @@ public sealed class PreviewHtmlBuilder
             } else if (event.code === 'Space') {
               spaceHeld = true;
               event.preventDefault();
+              stopVisualGesture();
               refreshCursor();
             } else if (event.code === 'KeyH' &&
                        !event.ctrlKey && !event.altKey &&
@@ -614,9 +970,29 @@ public sealed class PreviewHtmlBuilder
                        !event.repeat) {
               event.preventDefault();
               postPanCommand('toggle');
+            } else if (event.code === 'KeyV' &&
+                       !event.ctrlKey && !event.altKey &&
+                       !event.metaKey && !event.shiftKey &&
+                       !event.repeat) {
+              event.preventDefault();
+              stopVisualGesture();
+              postPanCommand('exit');
+            } else if (!panModeEnabled &&
+                       ['ArrowLeft', 'ArrowRight',
+                        'ArrowUp', 'ArrowDown'].includes(event.code) &&
+                       !event.ctrlKey && !event.altKey &&
+                       !event.metaKey) {
+              event.preventDefault();
+              const step = event.shiftKey ? 10 : 1;
+              postVisualNudge(
+                event.code === 'ArrowLeft' ? -step :
+                  event.code === 'ArrowRight' ? step : 0,
+                event.code === 'ArrowUp' ? -step :
+                  event.code === 'ArrowDown' ? step : 0);
             } else if (event.code === 'Escape') {
               event.preventDefault();
               stopDirectDrag();
+              stopVisualGesture();
               postPanCommand('exit');
             }
           });
@@ -634,6 +1010,7 @@ public sealed class PreviewHtmlBuilder
             spaceHeld = false;
             stopPan();
             stopDirectDrag();
+            stopVisualGesture();
             refreshCursor();
           });
 
@@ -666,7 +1043,9 @@ public sealed class PreviewHtmlBuilder
         double renderedWidth,
         double renderedHeight,
         string bridgeToken,
-        PreviewViewportPosition? initialViewport = null)
+        PreviewViewportPosition? initialViewport = null,
+        long sourceRevision = 0,
+        SvgVisualViewport? visualViewport = null)
     {
         ArgumentNullException.ThrowIfNull(validatedSvg);
         ArgumentNullException.ThrowIfNull(bridgeToken);
@@ -684,6 +1063,10 @@ public sealed class PreviewHtmlBuilder
         {
             throw new ArgumentOutOfRangeException(nameof(renderedHeight));
         }
+        if (sourceRevision < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sourceRevision));
+        }
 
         string encodedSvg = Convert.ToBase64String(Encoding.UTF8.GetBytes(validatedSvg));
         string widthCss = renderedWidth.ToString("0.###", CultureInfo.InvariantCulture);
@@ -696,6 +1079,22 @@ public sealed class PreviewHtmlBuilder
             initialViewport ?? PreviewViewportPosition.Center;
         string initialCenterX = ToSafeNormalized(viewport.CenterX);
         string initialCenterY = ToSafeNormalized(viewport.CenterY);
+        SvgVisualViewport overlayViewport = visualViewport
+            ?? new SvgVisualViewport(
+                0,
+                0,
+                renderedWidth,
+                renderedHeight,
+                SvgPreserveAspectRatio.Default);
+        string overlayViewBox = string.Join(
+            " ",
+            ToSafeCoordinate(overlayViewport.MinX),
+            ToSafeCoordinate(overlayViewport.MinY),
+            ToSafePositiveCoordinate(overlayViewport.Width),
+            ToSafePositiveCoordinate(overlayViewport.Height));
+        string overlayPreserveAspectRatio =
+            WebUtility.HtmlEncode(
+                overlayViewport.PreserveAspectRatio.SvgValue);
         // HTML parsers normalize inline-script line endings to LF before CSP hash
         // verification. Normalize once and use the exact same bytes for the hash
         // and script body so Windows CRLF checkouts cannot disable the host script.
@@ -753,8 +1152,11 @@ public sealed class PreviewHtmlBuilder
                 .preview-viewport.panning {
                   cursor: grabbing;
                 }
+                .preview-viewport.select-mode {
+                  cursor: default;
+                }
                 img.drag-ready {
-                  cursor: grab;
+                  cursor: default;
                 }
                 img.drag-armed {
                   cursor: grabbing;
@@ -767,7 +1169,8 @@ public sealed class PreviewHtmlBuilder
                   min-height: 100%;
                   padding: 24px;
                 }
-                img {
+                img,
+                .selection-overlay {
                   display: block;
                   position: absolute;
                   left: 50%;
@@ -777,12 +1180,26 @@ public sealed class PreviewHtmlBuilder
                   height: {{heightCss}}px;
                   max-width: none;
                   max-height: none;
+                }
+                img {
                   pointer-events: auto;
                   user-select: none;
+                }
+                .selection-overlay {
+                  pointer-events: none;
+                  overflow: visible;
+                }
+                .selection-shape {
+                  fill: rgba(37, 99, 235, 0.08);
+                  stroke: #2563eb;
+                  stroke-width: 2;
+                  stroke-dasharray: 6 4;
+                  vector-effect: non-scaling-stroke;
                 }
               </style>
             </head>
             <body data-bridge-token="{{bridgeToken}}"
+                  data-source-revision="{{sourceRevision}}"
                   data-initial-center-x="{{initialCenterX}}"
                   data-initial-center-y="{{initialCenterY}}">
               <div class="preview-viewport"
@@ -791,6 +1208,10 @@ public sealed class PreviewHtmlBuilder
                    aria-label="Live SVG preview">
                 <main aria-label="SVG preview">
                   <img alt="Rendered SVG preview" draggable="false" src="data:image/svg+xml;base64,{{encodedSvg}}">
+                  <svg class="selection-overlay"
+                       aria-hidden="true"
+                       viewBox="{{overlayViewBox}}"
+                       preserveAspectRatio="{{overlayPreserveAspectRatio}}"></svg>
                 </main>
               </div>
               <script>{{normalizedHostScript}}</script>
@@ -803,5 +1224,17 @@ public sealed class PreviewHtmlBuilder
     {
         return (double.IsFinite(value) ? Math.Clamp(value, 0, 1) : 0.5)
             .ToString("0.###", CultureInfo.InvariantCulture);
+    }
+
+    private static string ToSafeCoordinate(double value)
+    {
+        return (double.IsFinite(value) ? value : 0)
+            .ToString("0.######", CultureInfo.InvariantCulture);
+    }
+
+    private static string ToSafePositiveCoordinate(double value)
+    {
+        return (double.IsFinite(value) && value > 0 ? value : 1)
+            .ToString("0.######", CultureInfo.InvariantCulture);
     }
 }
