@@ -140,7 +140,8 @@ public sealed class PreviewPageMessageBuilder
                 ? "none"
                 : value.Kind switch
                 {
-                    SvgVisualElementKind.Rect => "rect",
+                    SvgVisualElementKind.Rect
+                        or SvgVisualElementKind.Unsupported => "rect",
                     SvgVisualElementKind.Circle
                         or SvgVisualElementKind.Ellipse => "ellipse",
                     SvgVisualElementKind.Line => "line",
@@ -186,6 +187,8 @@ public sealed class PreviewPageMessageBuilder
                     is not null
                 || item.FontSize <= 0
                 || !double.IsFinite(item.FontSize)
+                || item.FontSize
+                    > SvgVisualLengthParser.MaximumAbsoluteValue
                 || item.FontWeight is not (
                     "normal" or "bold" or "100" or "200" or "300"
                     or "400" or "500" or "600" or "700" or "800"

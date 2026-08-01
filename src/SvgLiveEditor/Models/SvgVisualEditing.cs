@@ -63,6 +63,8 @@ public sealed record SvgVisualElement(
     SvgVisualTextMeasurementSpec? TextMeasurement = null,
     bool BlocksLowerVisualHits = false)
 {
+    public bool IsSelectable => Geometry is not null;
+
     public bool IsMovable =>
         Geometry is not null && string.IsNullOrWhiteSpace(UnsupportedReason);
 }

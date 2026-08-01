@@ -82,6 +82,65 @@ public sealed class SvgVisualTextTests
     }
 
     [TestMethod]
+    [DataRow("بهروز", "ltr", "start")]
+    [DataRow("بهروز", "rtl", "start")]
+    [DataRow("English", "ltr", "start")]
+    [DataRow("English", "rtl", "start")]
+    [DataRow("بهروز English", "ltr", "start")]
+    [DataRow("English بهروز", "rtl", "start")]
+    [DataRow("بهروز 123", "ltr", "middle")]
+    [DataRow("بهروز ۱۲۳: (آزمون).؟!", "rtl", "end")]
+    public void BidiTextMeasurementInputsRemainSourceOwned(
+        string text,
+        string direction,
+        string anchor)
+    {
+        string source =
+            $"<svg xmlns=\"http://www.w3.org/2000/svg\"><text x=\"128\" y=\"244\" direction=\"{direction}\" unicode-bidi=\"plaintext\" text-anchor=\"{anchor}\" font-family=\"&quot;Segoe UI&quot;, sans-serif\" font-size=\"72\" font-weight=\"700\">{text}</text></svg>";
+
+        SvgVisualTextMeasurementSpec measurement =
+            Build(source).Elements.Single().TextMeasurement!;
+
+        Assert.AreEqual(text, measurement.Text);
+        Assert.AreEqual(direction, measurement.Direction);
+        Assert.AreEqual("plaintext", measurement.UnicodeBidi);
+        Assert.AreEqual(anchor, measurement.TextAnchor);
+        Assert.AreEqual("\"Segoe UI\", sans-serif", measurement.FontFamily);
+    }
+
+    [TestMethod]
+    public void BrowserMeasuredBoundsDriveHitTestingWithoutChangingSource()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><text id=\"name\" x=\"128\" y=\"244\" direction=\"ltr\" unicode-bidi=\"plaintext\" text-anchor=\"start\" font-family=\"&quot;Segoe UI&quot;, sans-serif\" font-size=\"72\" font-weight=\"700\">بهروز</text></svg>";
+        string sourceSnapshot = source;
+        SvgVisualDocument measured = _measurementService.Apply(
+            Build(source),
+            [new SvgVisualTextMeasurementResult(
+                0,
+                true,
+                new SvgVisualBounds(128, 188, 300, 250))]);
+        SvgVisualHitTestService hitTest = new();
+
+        SvgVisualElement? visibleWord = hitTest.HitTest(
+            measured,
+            new SvgMappedPreviewPoint(
+                new SvgVisualPoint(214, 219),
+                0));
+        SvgVisualElement? oldMirroredLocation = hitTest.HitTest(
+            measured,
+            new SvgMappedPreviewPoint(
+                new SvgVisualPoint(42, 219),
+                0));
+
+        Assert.AreEqual("name", visibleWord?.SourceElement.Id);
+        Assert.IsNull(oldMirroredLocation);
+        Assert.IsTrue(source.Equals(
+            sourceSnapshot,
+            StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     public void EntityEncodedTypographyMatchesBrowserXmlDecoding()
     {
         const string source = """

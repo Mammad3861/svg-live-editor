@@ -6,6 +6,13 @@ namespace SvgLiveEditor.Tests;
 [TestClass]
 public sealed class SvgTemplateVisualSelectionTests
 {
+    private sealed record ExpectedElementState(
+        string ElementName,
+        int Count,
+        bool Selectable,
+        bool Movable,
+        string? ReasonFragment = null);
+
     private static readonly IReadOnlyDictionary<
         string,
         (int Supported, int Unsupported)> ExpectedInventory =
@@ -16,6 +23,39 @@ public sealed class SvgTemplateVisualSelectionTests
             ["social-card"] = (7, 0),
             ["flow-diagram"] = (7, 1),
             ["persian-rtl"] = (11, 1)
+        };
+
+    private static readonly IReadOnlyDictionary<
+        string,
+        IReadOnlyList<ExpectedElementState>> ExpectedMatrix =
+        new Dictionary<string, IReadOnlyList<ExpectedElementState>>(
+            StringComparer.Ordinal)
+        {
+            ["blank"] = [],
+            ["app-icon"] =
+            [
+                new("rect", 1, true, true),
+                new("path", 1, true, false, "v0.6.0")
+            ],
+            ["social-card"] =
+            [
+                new("rect", 2, true, true),
+                new("circle", 2, true, true),
+                new("text", 3, true, true)
+            ],
+            ["flow-diagram"] =
+            [
+                new("rect", 4, true, true),
+                new("path", 1, false, false, "marker-decorated"),
+                new("text", 3, true, true)
+            ],
+            ["persian-rtl"] =
+            [
+                new("rect", 2, true, true),
+                new("text", 8, true, true),
+                new("circle", 1, true, true),
+                new("path", 1, true, false, "v0.6.0")
+            ]
         };
 
     [TestMethod]
@@ -57,7 +97,56 @@ public sealed class SvgTemplateVisualSelectionTests
     }
 
     [TestMethod]
-    public void SimpleUnsupportedPathBlocksOnlyItsConservativeLocalBounds()
+    public void EveryBuiltInTemplateMatchesTheSelectionAndMovementMatrix()
+    {
+        foreach (SvgTemplateDefinition template in
+                 new SvgTemplateCatalog().LoadAll())
+        {
+            SvgVisualDocument visual = BuildWithTrustedTextBounds(
+                template.Source);
+            IReadOnlyList<ExpectedElementState> expected =
+                ExpectedMatrix[template.Id];
+            Assert.AreEqual(
+                expected.Sum(row => row.Count),
+                visual.Elements.Count,
+                $"{template.Id} total visible direct elements");
+
+            foreach (ExpectedElementState row in expected)
+            {
+                SvgVisualElement[] matches = visual.Elements
+                    .Where(element => element.SourceElement.Name.Equals(
+                        row.ElementName,
+                        StringComparison.Ordinal))
+                    .ToArray();
+                Assert.HasCount(
+                    row.Count,
+                    matches,
+                    $"{template.Id} {row.ElementName} count");
+                Assert.IsTrue(matches.All(element =>
+                    element.IsSelectable == row.Selectable),
+                    $"{template.Id} {row.ElementName} selectable state");
+                Assert.IsTrue(matches.All(element =>
+                    element.IsMovable == row.Movable),
+                    $"{template.Id} {row.ElementName} movable state");
+                if (row.ReasonFragment is not null)
+                {
+                    Assert.IsTrue(matches.All(element =>
+                        element.UnsupportedReason?.Contains(
+                            row.ReasonFragment,
+                            StringComparison.Ordinal) == true));
+                }
+                else if (row.Movable)
+                {
+                    Assert.IsTrue(matches.All(element =>
+                        string.IsNullOrWhiteSpace(
+                            element.UnsupportedReason)));
+                }
+            }
+        }
+    }
+
+    [TestMethod]
+    public void SimpleUnsupportedPathIsInspectableOnlyWithinItsLocalBounds()
     {
         SvgTemplateDefinition template = new SvgTemplateCatalog()
             .LoadAll()
@@ -82,13 +171,40 @@ public sealed class SvgTemplateVisualSelectionTests
             "circle",
             clearCirclePoint.Element?.SourceElement.Name);
         Assert.IsNull(clearCirclePoint.Blocker);
-        Assert.IsNull(pathCoveredPoint.Element);
         Assert.AreEqual(
             "path",
-            pathCoveredPoint.Blocker?.SourceElement.Name);
+            pathCoveredPoint.Element?.SourceElement.Name);
+        Assert.IsTrue(pathCoveredPoint.Element?.IsSelectable);
+        Assert.IsFalse(pathCoveredPoint.Element?.IsMovable);
+        Assert.IsNull(pathCoveredPoint.Blocker);
         StringAssert.Contains(
-            pathCoveredPoint.Blocker?.UnsupportedReason,
+            pathCoveredPoint.Element?.UnsupportedReason,
             "v0.6.0");
+    }
+
+    [TestMethod]
+    public void UnsupportedPathWithoutReliableBoundsRemainsFailClosed()
+    {
+        const string source = """
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+              <rect id="under" x="5" y="5" width="20" height="20" />
+              <path id="curve" d="M70 70 C80 10 90 90 95 20" />
+            </svg>
+            """;
+
+        SvgVisualHitTestResult result =
+            new SvgVisualHitTestService().HitTestDetailed(
+                Build(source),
+                new SvgMappedPreviewPoint(
+                    new SvgVisualPoint(10, 10),
+                    1));
+
+        Assert.IsNull(result.Element);
+        Assert.AreEqual("curve", result.Blocker?.SourceElement.Id);
+        Assert.IsFalse(result.Blocker?.IsSelectable);
+        StringAssert.Contains(
+            result.Blocker?.UnsupportedReason,
+            "reliable conservative bounds");
     }
 
     [TestMethod]
@@ -161,5 +277,27 @@ public sealed class SvgTemplateVisualSelectionTests
             document,
             new SvgCanvasSizeReader().Read(source),
             source);
+    }
+
+    private static SvgVisualDocument BuildWithTrustedTextBounds(string source)
+    {
+        SvgVisualDocument pending = Build(source);
+        SvgVisualTextMeasurementResult[] measurements = pending.Elements
+            .Where(element => element.TextMeasurement is not null)
+            .Select(element => element.TextMeasurement!)
+            .Select(measurement => new SvgVisualTextMeasurementResult(
+                measurement.Index,
+                true,
+                new SvgVisualBounds(
+                    measurement.X,
+                    measurement.Y - measurement.FontSize,
+                    measurement.X + Math.Max(
+                        measurement.FontSize,
+                        measurement.Text.Length * measurement.FontSize * 0.5),
+                    measurement.Y)))
+            .ToArray();
+        return new SvgVisualTextMeasurementService().Apply(
+            pending,
+            measurements);
     }
 }

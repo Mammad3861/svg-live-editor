@@ -386,79 +386,75 @@ public sealed class PreviewHtmlBuilder
             return value.split(',').every(part => part.trim().length > 0);
           };
 
-          const resolvePlaintextDirection = text => {
-            const probe = document.createElement('span');
-            probe.dir = 'auto';
-            probe.textContent = text;
-            probe.style.position = 'fixed';
-            probe.style.left = '-100000px';
-            probe.style.top = '-100000px';
-            probe.style.visibility = 'hidden';
-            document.body.appendChild(probe);
-            const direction = getComputedStyle(probe).direction;
-            probe.remove();
-            return direction === 'rtl' ? 'rtl' : 'ltr';
-          };
-
           const measureTextItems = message => {
-            const canvas = document.createElement('canvas');
-            const context = canvas.getContext('2d');
-            const results = message.items.map(item => {
-              if (!context) {
-                return {
-                  index: item.index,
-                  success: false,
-                  left: 0,
-                  top: 0,
-                  right: 0,
-                  bottom: 0
-                };
-              }
-
-              try {
-                const direction = item.unicodeBidi === 'plaintext'
-                  ? resolvePlaintextDirection(item.text)
-                  : item.direction;
-                context.direction = direction;
-                context.textAlign = item.textAnchor === 'middle'
-                  ? 'center'
-                  : item.textAnchor;
-                context.textBaseline = 'alphabetic';
-                context.font =
-                  `${item.fontStyle} ${item.fontWeight} ` +
-                  `${item.fontSize}px ${item.fontFamily}`;
-                const metrics = context.measureText(item.text);
-                const left = item.x - metrics.actualBoundingBoxLeft;
-                const right = item.x + metrics.actualBoundingBoxRight;
-                const top = item.y - metrics.actualBoundingBoxAscent;
-                const bottom = item.y + metrics.actualBoundingBoxDescent;
-                if (![left, top, right, bottom].every(Number.isFinite) ||
-                    right <= left || bottom <= top ||
-                    [left, top, right, bottom]
-                      .some(value => Math.abs(value) > 1000000000)) {
-                  throw new Error('Invalid text bounds');
+            const svgNamespace = 'http://www.w3.org/2000/svg';
+            const measurementSurface = document.createElementNS(
+              svgNamespace,
+              'svg');
+            measurementSurface.setAttribute('aria-hidden', 'true');
+            measurementSurface.setAttribute('focusable', 'false');
+            measurementSurface.style.position = 'fixed';
+            measurementSurface.style.left = '-100000px';
+            measurementSurface.style.top = '-100000px';
+            measurementSurface.style.width = '1px';
+            measurementSurface.style.height = '1px';
+            measurementSurface.style.overflow = 'visible';
+            measurementSurface.style.opacity = '0';
+            measurementSurface.style.pointerEvents = 'none';
+            document.body.appendChild(measurementSurface);
+            let results;
+            try {
+              results = message.items.map(item => {
+                const measuredText = document.createElementNS(
+                  svgNamespace,
+                  'text');
+                measuredText.setAttribute('x', String(item.x));
+                measuredText.setAttribute('y', String(item.y));
+                measuredText.setAttribute('font-size', String(item.fontSize));
+                measuredText.setAttribute('font-family', item.fontFamily);
+                measuredText.setAttribute('font-weight', item.fontWeight);
+                measuredText.setAttribute('font-style', item.fontStyle);
+                measuredText.setAttribute('text-anchor', item.textAnchor);
+                measuredText.setAttribute('direction', item.direction);
+                measuredText.setAttribute('unicode-bidi', item.unicodeBidi);
+                measuredText.textContent = item.text;
+                measurementSurface.appendChild(measuredText);
+                try {
+                  const bounds = measuredText.getBBox();
+                  const left = bounds.x;
+                  const top = bounds.y;
+                  const right = bounds.x + bounds.width;
+                  const bottom = bounds.y + bounds.height;
+                  if (![left, top, right, bottom].every(Number.isFinite) ||
+                      right <= left || bottom <= top ||
+                      [left, top, right, bottom]
+                        .some(value => Math.abs(value) > 1000000000)) {
+                    throw new Error('Invalid text bounds');
+                  }
+                  return {
+                    index: item.index,
+                    success: true,
+                    left,
+                    top,
+                    right,
+                    bottom
+                  };
+                } catch {
+                  return {
+                    index: item.index,
+                    success: false,
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0
+                  };
+                } finally {
+                  measuredText.remove();
                 }
-                return {
-                  index: item.index,
-                  success: true,
-                  left,
-                  top,
-                  right,
-                  bottom
-                };
-              } catch {
-                return {
-                  index: item.index,
-                  success: false,
-                  left: 0,
-                  top: 0,
-                  right: 0,
-                  bottom: 0
-                };
-              }
-            });
-            canvas.width = 0;
-            canvas.height = 0;
+              });
+            } finally {
+              measurementSurface.remove();
+            }
             bridge.postMessage({
               type: 'textMeasurements',
               token: bridgeToken,

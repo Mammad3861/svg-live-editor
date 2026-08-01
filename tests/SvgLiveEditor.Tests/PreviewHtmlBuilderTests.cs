@@ -98,8 +98,19 @@ public sealed class PreviewHtmlBuilderTests
         StringAssert.Contains(script.Groups[1].Value, "message.type === 'horizontalScroll'");
         StringAssert.Contains(script.Groups[1].Value, "message.type === 'measureText'");
         StringAssert.Contains(script.Groups[1].Value, "type: 'textMeasurements'");
-        StringAssert.Contains(script.Groups[1].Value, "context.measureText(item.text)");
-        StringAssert.Contains(script.Groups[1].Value, "probe.textContent = text");
+        StringAssert.Contains(script.Groups[1].Value, "document.createElementNS(");
+        StringAssert.Contains(script.Groups[1].Value, "measuredText.textContent = item.text");
+        StringAssert.Contains(script.Groups[1].Value, "measuredText.getBBox()");
+        StringAssert.Contains(script.Groups[1].Value, "'text-anchor', item.textAnchor");
+        StringAssert.Contains(script.Groups[1].Value, "'direction', item.direction");
+        StringAssert.Contains(script.Groups[1].Value, "'unicode-bidi', item.unicodeBidi");
+        StringAssert.Contains(script.Groups[1].Value, "measurementSurface.remove()");
+        Assert.IsFalse(script.Groups[1].Value.Contains(
+            "resolvePlaintextDirection",
+            StringComparison.Ordinal));
+        Assert.IsFalse(script.Groups[1].Value.Contains(
+            "context.measureText(item.text)",
+            StringComparison.Ordinal));
         StringAssert.Contains(script.Groups[1].Value, "Object.keys(item).length === 11");
         StringAssert.Contains(script.Groups[1].Value, "Object.keys(message).length === 3");
         StringAssert.Contains(script.Groups[1].Value, "Math.abs(message.deltaX) <= 10000");

@@ -462,6 +462,7 @@ public partial class MainWindow
         ShowVisualSelection();
         _viewModel.SetOperationStatus(
             $"{element.SourceElement.Name} selected");
+        RefreshSelectedTextWarnings();
     }
 
     private void ClearVisualSelection()
@@ -472,6 +473,7 @@ public partial class MainWindow
             null,
             InspectorSelectionOrigin.PreviewNavigation);
         PostVisualSelection(selection: null);
+        RefreshSelectedTextWarnings();
     }
 
     private void SynchronizeVisualSelectionFromInspector(
@@ -488,7 +490,7 @@ public partial class MainWindow
 
         SvgVisualElement? visualElement =
             _lastValidVisualDocument?.FindElement(identity);
-        if (visualElement is null || !visualElement.IsMovable)
+        if (visualElement is null || !visualElement.IsSelectable)
         {
             PostVisualSelection(selection: null);
             if (announce)
@@ -504,6 +506,12 @@ public partial class MainWindow
         }
 
         ShowVisualSelection();
+        if (announce && !visualElement.IsMovable)
+        {
+            _viewModel.SetOperationStatus(
+                visualElement.UnsupportedReason
+                ?? $"{visualElement.SourceElement.Name} is read-only in Select mode.");
+        }
     }
 
     private void ShowVisualSelection(
@@ -622,6 +630,7 @@ public partial class MainWindow
     private void OnVisualInspectorResultApplied()
     {
         SynchronizeVisualSelectionFromInspector();
+        RefreshSelectedTextWarnings();
     }
 
     private void OnVisualPreviewNavigationStarted(

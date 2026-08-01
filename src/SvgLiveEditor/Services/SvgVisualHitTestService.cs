@@ -30,7 +30,7 @@ public sealed class SvgVisualHitTestService
             {
                 continue;
             }
-            if (element.IsMovable)
+            if (element.IsSelectable)
             {
                 return new SvgVisualHitTestResult(element, null);
             }

@@ -158,7 +158,13 @@ public sealed class NativePreviewInputSurfaceTests
             "OnInspectorSuggestedPropertySelectionChanged");
         StringAssert.Contains(
             inspector,
-            "_svgFontFamilyStackService.TryCreateForSuggestion(");
+            "_svgFontFamilyStackService.TryCreateForPrimary(");
+        StringAssert.Contains(
+            inspector,
+            "property.Value = selectedFamily;");
+        StringAssert.Contains(
+            inspector,
+            "property.MarkApplied(commitValue)");
         StringAssert.Contains(
             inspector,
             "|| !comboBox.IsDropDownOpen");
@@ -174,6 +180,18 @@ public sealed class NativePreviewInputSurfaceTests
         StringAssert.Contains(
             inspector,
             "property.WasCurrentValueAlreadyAttempted");
+        Assert.IsTrue(CountOccurrences(
+            inspector,
+            "RefreshSelectedTextWarnings();") >= 2);
+        StringAssert.Contains(
+            ReadUi("MainWindow.VisualEditing.cs"),
+            "RefreshSelectedTextWarnings();");
+        StringAssert.Contains(
+            inspector,
+            "SetSelectionAdvisory(directionWarning)");
+        StringAssert.Contains(
+            inspector,
+            "coverage == FontGlyphCoverage.Incomplete");
     }
 
     [TestMethod]
@@ -188,7 +206,12 @@ public sealed class NativePreviewInputSurfaceTests
         StringAssert.Contains(
             xaml,
             "ScrollViewer.HorizontalScrollBarVisibility=\"Auto\"");
-        StringAssert.Contains(xaml, "ToolTip=\"{Binding Value}\"");
+        StringAssert.Contains(
+            xaml,
+            "ToolTip=\"{Binding SerializedValue}\"");
+        StringAssert.Contains(
+            xaml,
+            "Text=\"{Binding Inspector.SelectionAdvisory}\"");
         Assert.IsTrue(
             CountOccurrences(xaml, "MinWidth=\"0\"") >= 4);
         Assert.IsTrue(

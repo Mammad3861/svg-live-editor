@@ -11,6 +11,9 @@ namespace SvgLiveEditor;
 
 public partial class MainWindow
 {
+    private const string FontCoverageWarning =
+        "The selected font may not support every character; fallback fonts will be used.";
+
     private readonly SvgAttributeEditService _svgAttributeEditService = new();
     private readonly AvalonEditDocumentEditService _documentEditService = new();
     private readonly InspectorSourceGuard _inspectorSourceGuard = new();
@@ -19,6 +22,8 @@ public partial class MainWindow
         _svgFontFamilyStackService = new();
     private readonly InstalledFontGlyphCoverageService
         _installedFontGlyphCoverageService = new();
+    private readonly SvgTextDirectionAdvisoryService
+        _svgTextDirectionAdvisoryService = new();
     private readonly DispatcherTimer _inspectorCaretTimer = new()
     {
         Interval = TimeSpan.FromMilliseconds(160)
@@ -154,6 +159,7 @@ public partial class MainWindow
             _isSynchronizingInspectorSelection = false;
         }
         SynchronizeVisualSelectionFromInspector();
+        RefreshSelectedTextWarnings();
     }
 
     private void OnInspectorTreeSelectionChanged(
@@ -176,6 +182,7 @@ public partial class MainWindow
         SynchronizeVisualSelectionFromInspector(
             announce: origin
                 == InspectorSelectionOrigin.ExplicitTreeNavigation);
+        RefreshSelectedTextWarnings();
     }
 
     private void OnInspectorTreePreviewMouseLeftButtonDown(
@@ -326,31 +333,13 @@ public partial class MainWindow
                 StringComparison.Ordinal)
             || e.AddedItems.Count != 1
             || e.AddedItems[0] is not string selectedFamily
-            || !comboBox.IsDropDownOpen
-            || !_svgFontFamilyStackService.TryCreateForSuggestion(
-                property.OriginalValue,
-                selectedFamily,
-                out string fontStack))
+            || !comboBox.IsDropDownOpen)
         {
             return;
         }
 
-        string? selectedText = _lastValidVisualDocument?
-            .FindElement(property.Element.Identity)?
-            .TextMeasurement?
-            .Text;
-        FontGlyphCoverage coverage = selectedText is null
-            ? FontGlyphCoverage.Unknown
-            : _installedFontGlyphCoverageService.Check(
-                selectedFamily,
-                selectedText);
-        property.Value = fontStack;
-        if (ApplyInspectorProperty(property)
-            && coverage == FontGlyphCoverage.Incomplete)
-        {
-            _viewModel.SetOperationStatus(
-                "The selected font may not support every character; fallback fonts will be used.");
-        }
+        property.Value = selectedFamily;
+        _ = ApplyInspectorProperty(property);
         e.Handled = true;
     }
 
@@ -374,6 +363,18 @@ public partial class MainWindow
         }
         property.MarkCommitAttempt();
 
+        string commitValue = property.Value;
+        if (property.Definition.UsesFontFamilySuggestions
+            && !_svgFontFamilyStackService.TryCreateForPrimary(
+                property.SerializedValue,
+                property.Value,
+                out commitValue))
+        {
+            property.ErrorMessage =
+                "Enter one safe local font-family name.";
+            return false;
+        }
+
         long expectedRevision = _inspectorSourceRevision;
         if (!_inspectorSourceGuard.CanUseIndex(
                 _isInspectorIndexCurrent,
@@ -394,7 +395,7 @@ public partial class MainWindow
                 sourceSnapshot,
                 property.Element,
                 property.Name,
-                property.Value);
+                commitValue);
         }
         catch (InvalidOperationException exception)
         {
@@ -411,7 +412,7 @@ public partial class MainWindow
 
         if (result.Edit is null)
         {
-            property.MarkApplied();
+            property.MarkApplied(commitValue);
             return true;
         }
 
@@ -425,13 +426,61 @@ public partial class MainWindow
 
         SvgElementIdentity preferredSelection = property.Element.Identity;
         _documentEditService.Apply(SourceEditor.Document, result.Edit);
-        property.MarkApplied();
+        property.MarkApplied(commitValue);
 
         SvgDocumentIndexResult rebuilt =
             _documentIndexService.Build(SourceEditor.Text);
         ApplyDocumentInspectorResult(rebuilt, preferredSelection);
         return true;
     }
+
+    private void RefreshSelectedTextWarnings()
+    {
+        SvgVisualTextMeasurementSpec? selectedMeasurement =
+            _viewModel.Inspector.SelectedElement is SvgElementViewModel selected
+                ? _lastValidVisualDocument?
+                    .FindElement(selected.Element.Identity)?
+                    .TextMeasurement
+                : null;
+        string? directionWarning = selectedMeasurement is null
+            ? null
+            : _svgTextDirectionAdvisoryService.GetWarning(
+                selectedMeasurement.Text,
+                selectedMeasurement.Direction);
+        _viewModel.Inspector.SetSelectionAdvisory(directionWarning);
+        if (directionWarning is not null)
+        {
+            _viewModel.SetOperationStatus(directionWarning);
+            return;
+        }
+
+        SvgPropertyViewModel? property = _viewModel.Inspector.Properties
+            .FirstOrDefault(item => item.Definition.UsesFontFamilySuggestions);
+        string? selectedText = selectedMeasurement?.Text;
+        FontGlyphCoverage coverage = property is null
+            || string.IsNullOrEmpty(selectedText)
+                ? FontGlyphCoverage.Unknown
+                : _installedFontGlyphCoverageService.Check(
+                    property.Value,
+                    selectedText);
+        if (coverage == FontGlyphCoverage.Incomplete)
+        {
+            _viewModel.SetOperationStatus(FontCoverageWarning);
+        }
+        else if (IsSelectedTextWarning(_viewModel.OperationStatus))
+        {
+            _viewModel.SetOperationStatus("Ready");
+        }
+    }
+
+    private static bool IsSelectedTextWarning(string status) =>
+        status.Equals(FontCoverageWarning, StringComparison.Ordinal)
+        || status.Equals(
+            SvgTextDirectionAdvisoryService.RtlTextWithLtrDirection,
+            StringComparison.Ordinal)
+        || status.Equals(
+            SvgTextDirectionAdvisoryService.LtrTextWithRtlDirection,
+            StringComparison.Ordinal);
 
     private void OnEditorTextCompositionStarted(
         object sender,

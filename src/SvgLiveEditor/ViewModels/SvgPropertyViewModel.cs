@@ -5,8 +5,11 @@ namespace SvgLiveEditor.ViewModels;
 
 public sealed class SvgPropertyViewModel : ObservableObject
 {
+    private static readonly SvgFontFamilyStackService FontFamilyStacks = new();
+
     private string _value;
     private string _originalValue;
+    private string _serializedValue;
     private string _errorMessage = string.Empty;
     private string? _lastCommitAttemptValue;
 
@@ -19,7 +22,8 @@ public sealed class SvgPropertyViewModel : ObservableObject
         Element = element ?? throw new ArgumentNullException(nameof(element));
         Definition = definition ?? throw new ArgumentNullException(nameof(definition));
         Attribute = attribute;
-        _value = ReadInitialValue(attribute, definition);
+        _serializedValue = ReadDecodedValue(attribute, definition);
+        _value = ReadDisplayValue(_serializedValue, definition);
         _originalValue = _value;
         SuggestedValues = suggestedValues ?? [];
     }
@@ -61,14 +65,24 @@ public sealed class SvgPropertyViewModel : ObservableObject
 
     public string OriginalValue => _originalValue;
 
+    public string SerializedValue => _serializedValue;
+
     public string ErrorMessage
     {
         get => _errorMessage;
         set => SetProperty(ref _errorMessage, value ?? string.Empty);
     }
 
-    public void MarkApplied()
+    public void MarkApplied(string? serializedValue = null)
     {
+        string appliedSerializedValue = serializedValue ?? _value;
+        if (!_serializedValue.Equals(
+                appliedSerializedValue,
+                StringComparison.Ordinal))
+        {
+            _serializedValue = appliedSerializedValue;
+            OnPropertyChanged(nameof(SerializedValue));
+        }
         _originalValue = _value;
         _lastCommitAttemptValue = _value;
         ErrorMessage = string.Empty;
@@ -92,7 +106,7 @@ public sealed class SvgPropertyViewModel : ObservableObject
         _lastCommitAttemptValue = _value;
     }
 
-    private static string ReadInitialValue(
+    private static string ReadDecodedValue(
         SvgAttributeSpan? attribute,
         SvgPropertyDefinition definition)
     {
@@ -103,5 +117,17 @@ public sealed class SvgPropertyViewModel : ObservableObject
                 out string decoded)
                 ? decoded
                 : rawValue;
+    }
+
+    private static string ReadDisplayValue(
+        string serializedValue,
+        SvgPropertyDefinition definition)
+    {
+        return definition.UsesFontFamilySuggestions
+            && FontFamilyStacks.TryParse(
+                serializedValue,
+                out SvgFontFamilyStack stack)
+                ? stack.PrimaryFamily
+                : serializedValue;
     }
 }

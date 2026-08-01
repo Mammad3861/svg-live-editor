@@ -138,6 +138,30 @@ public sealed class PreviewVisualInteractionTests
     }
 
     [TestMethod]
+    public void InspectOnlyUnsupportedBoundsUseTheFixedRectangleOverlay()
+    {
+        string json = new PreviewPageMessageBuilder()
+            .BuildVisualSelectionMessage(
+                Token,
+                7,
+                new PreviewVisualSelection(
+                    SvgVisualElementKind.Unsupported,
+                    new SvgVisualShapeGeometry(
+                        SvgVisualElementKind.Unsupported,
+                        10,
+                        20,
+                        30,
+                        40),
+                    0,
+                    0));
+        using JsonDocument document = JsonDocument.Parse(json);
+
+        Assert.AreEqual(
+            "rect",
+            document.RootElement.GetProperty("kind").GetString());
+    }
+
+    [TestMethod]
     public void ReadinessRejectsPanInvalidPendingAndStaleRevisions()
     {
         VisualEditingReadinessPolicy policy = new();
