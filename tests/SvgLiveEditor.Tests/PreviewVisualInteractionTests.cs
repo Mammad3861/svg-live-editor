@@ -70,6 +70,63 @@ public sealed class PreviewVisualInteractionTests
     }
 
     [TestMethod]
+    public void ResizePointerRequiresExactTokenRevisionSelectionAndSchema()
+    {
+        string valid = ResizePointerJson();
+
+        Assert.IsTrue(_parser.TryParseResizePointer(
+            valid,
+            Token,
+            7,
+            Gesture,
+            out PreviewVisualResizePointerMessage message));
+        Assert.AreEqual(SvgResizeHandle.BottomRight, message.Handle);
+        Assert.AreEqual(Gesture, message.SelectionId);
+        Assert.IsFalse(_parser.TryParseResizePointer(
+            valid,
+            "11112233445566778899AABBCCDDEEFF",
+            7,
+            Gesture,
+            out _));
+        Assert.IsFalse(_parser.TryParseResizePointer(
+            valid,
+            Token,
+            8,
+            Gesture,
+            out _));
+        Assert.IsFalse(_parser.TryParseResizePointer(
+            valid,
+            Token,
+            7,
+            "11112233445566778899AABBCCDDEEFF",
+            out _));
+        Assert.IsFalse(_parser.TryParseResizePointer(
+            valid[..^1] + ",\"extra\":true}",
+            Token,
+            7,
+            Gesture,
+            out _));
+        Assert.IsFalse(_parser.TryParseResizePointer(
+            valid.Replace(
+                "\"handle\":\"bottom-right\"",
+                "\"handle\":\"rotate\"",
+                StringComparison.Ordinal),
+            Token,
+            7,
+            Gesture,
+            out _));
+        Assert.IsFalse(_parser.TryParseResizePointer(
+            valid.Replace(
+                "\"isTrusted\":true",
+                "\"isTrusted\":false",
+                StringComparison.Ordinal),
+            Token,
+            7,
+            Gesture,
+            out _));
+    }
+
+    [TestMethod]
     public void NudgeAcceptsOnlyOneSupportedAxisAndCurrentRevision()
     {
         const string valid =
@@ -109,14 +166,20 @@ public sealed class PreviewVisualInteractionTests
                     30,
                     40),
                 2,
-                -3));
+                -3,
+                Gesture,
+                [
+                    new SvgResizeHandleDefinition(
+                        SvgResizeHandle.Right,
+                        new SvgVisualPoint(30, 30))
+                ]));
         using JsonDocument document = JsonDocument.Parse(json);
 
         Assert.AreEqual(
-            11,
+            13,
             document.RootElement.EnumerateObject().Count());
         Assert.AreEqual(
-            "ellipse",
+            "circle",
             document.RootElement.GetProperty("kind").GetString());
         Assert.AreEqual(
             7,
@@ -134,7 +197,9 @@ public sealed class PreviewVisualInteractionTests
                         1,
                         1),
                     0,
-                    0)));
+                    0,
+                    Gesture,
+                    [])));
     }
 
     [TestMethod]
@@ -153,12 +218,95 @@ public sealed class PreviewVisualInteractionTests
                         30,
                         40),
                     0,
-                    0));
+                    0,
+                    Gesture,
+                    []));
         using JsonDocument document = JsonDocument.Parse(json);
 
         Assert.AreEqual(
             "rect",
             document.RootElement.GetProperty("kind").GetString());
+    }
+
+    [TestMethod]
+    public void VisualSelectionRejectsMismatchedOrDuplicateResizeHandles()
+    {
+        PreviewPageMessageBuilder builder = new();
+        SvgVisualShapeGeometry geometry = new(
+            SvgVisualElementKind.Rect,
+            10,
+            20,
+            30,
+            40);
+
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>
+            builder.BuildVisualSelectionMessage(
+                Token,
+                7,
+                new PreviewVisualSelection(
+                    SvgVisualElementKind.Rect,
+                    geometry,
+                    0,
+                    0,
+                    Gesture,
+                    [
+                        new SvgResizeHandleDefinition(
+                            SvgResizeHandle.Start,
+                            new SvgVisualPoint(10, 20))
+                    ])));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>
+            builder.BuildVisualSelectionMessage(
+                Token,
+                7,
+                new PreviewVisualSelection(
+                    SvgVisualElementKind.Rect,
+                    geometry,
+                    0,
+                    0,
+                    Gesture,
+                    [
+                        new SvgResizeHandleDefinition(
+                            SvgResizeHandle.Left,
+                            new SvgVisualPoint(10, 30)),
+                        new SvgResizeHandleDefinition(
+                            SvgResizeHandle.Left,
+                            new SvgVisualPoint(10, 30))
+                    ])));
+    }
+
+    [TestMethod]
+    public void TrustedPageCancelsResizeAndKeepsPngLimitedToTheImage()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"10\" height=\"10\"/></svg>";
+        string html = new PreviewHtmlBuilder().Build(
+            source,
+            300,
+            150,
+            Token);
+
+        StringAssert.Contains(html, "stopResizeGesture(event)");
+        StringAssert.Contains(html, "pointercancel");
+        StringAssert.Contains(html, "lostpointercapture");
+        StringAssert.Contains(html, "pointerleave");
+        StringAssert.Contains(html, "window.addEventListener('blur'");
+        StringAssert.Contains(html, "event.code === 'Escape'");
+        StringAssert.Contains(html, "context.drawImage(image");
+        Assert.IsFalse(html.Contains(
+            "context.drawImage(resizeHandleLayer",
+            StringComparison.Ordinal));
+
+        int panPriority = html.IndexOf(
+            "spaceHeld || event.ctrlKey || panModeEnabled",
+            StringComparison.Ordinal);
+        int resizeChoice = html.IndexOf(
+            "return 'resize';",
+            StringComparison.Ordinal);
+        int altDrag = html.IndexOf(
+            "return 'drag';",
+            StringComparison.Ordinal);
+        Assert.IsTrue(panPriority >= 0 && panPriority < resizeChoice);
+        Assert.IsTrue(altDrag >= 0 && altDrag < resizeChoice);
     }
 
     [TestMethod]
@@ -275,7 +423,10 @@ public sealed class PreviewVisualInteractionTests
             "class=\"selection-overlay\"");
         StringAssert.Contains(
             html,
-            "Object.keys(message).length === 11");
+            "Object.keys(message).length === 13");
+        StringAssert.Contains(html, "visualResizePointer");
+        StringAssert.Contains(html, "selectionId");
+        StringAssert.Contains(html, "resize-handle-layer");
         StringAssert.Contains(
             html,
             "message.sourceRevision === sourceRevision");
@@ -298,6 +449,19 @@ public sealed class PreviewVisualInteractionTests
          "button":0,"buttons":1,"ctrlKey":false,"shiftKey":false,
          "altKey":false,"metaKey":false,"spaceHeld":false,
          "pointerType":"mouse","isPrimary":true}
+        """;
+
+    private static string ResizePointerJson() =>
+        $$"""
+        {"type":"visualResizePointer","token":"{{Token}}","sourceRevision":7,
+         "selectionId":"{{Gesture}}","phase":"down",
+         "gestureId":"0011AABBCCDDEEFF9988776655443322",
+         "handle":"bottom-right","x":25,"y":30,
+         "viewportWidth":500,"viewportHeight":300,
+         "imageLeft":10,"imageTop":15,"imageWidth":400,"imageHeight":200,
+         "button":0,"buttons":1,"ctrlKey":false,"shiftKey":false,
+         "altKey":false,"metaKey":false,"spaceHeld":false,
+         "pointerType":"mouse","isTrusted":true,"isPrimary":true}
         """;
 
     private static object? ToValue(JsonElement element) =>

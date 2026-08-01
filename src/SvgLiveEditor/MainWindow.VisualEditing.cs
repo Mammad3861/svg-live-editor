@@ -17,6 +17,9 @@ public partial class MainWindow
         _previewSvgCoordinateMapper = new();
     private readonly SvgVisualHitTestService _visualHitTestService = new();
     private readonly SvgVisualMoveService _visualMoveService = new();
+    private readonly SvgVisualResizeService _visualResizeService = new();
+    private readonly SvgVisualResizeHandleService
+        _visualResizeHandleService = new();
     private readonly PreviewVisualInteractionMessageParser
         _previewVisualInteractionMessageParser = new();
     private readonly VisualEditingReadinessPolicy
@@ -33,7 +36,12 @@ public partial class MainWindow
     private long? _activePreviewSourceRevision;
     private long? _visiblePreviewSourceRevision;
     private SvgElementIdentity? _visualSelectionIdentity;
+    private string? _visualSelectionBridgeId;
     private VisualEditGesture? _visualEditGesture;
+    private VisualResizeGesture? _visualResizeGesture;
+    private readonly HashSet<string> _consumedVisualResizeGestureIds =
+        new(StringComparer.Ordinal);
+    private readonly Queue<string> _visualResizeGestureIdOrder = new();
     private PendingPreviewTextMeasurement?
         _pendingPreviewTextMeasurement;
 
@@ -53,6 +61,18 @@ public partial class MainWindow
                 out PreviewVisualPointerMessage pointer))
         {
             HandlePreviewVisualPointer(pointer);
+            return true;
+        }
+
+        if (_visualSelectionBridgeId is string selectionId
+            && _previewVisualInteractionMessageParser.TryParseResizePointer(
+                messageJson,
+                bridgeToken,
+                sourceRevision,
+                selectionId,
+                out PreviewVisualResizePointerMessage resizePointer))
+        {
+            HandlePreviewVisualResizePointer(resizePointer);
             return true;
         }
 
@@ -137,6 +157,242 @@ public partial class MainWindow
         }
     }
 
+    private void HandlePreviewVisualResizePointer(
+        PreviewVisualResizePointerMessage pointer)
+    {
+        if (pointer.Phase == PreviewVisualPointerPhase.Cancel)
+        {
+            if (_visualResizeGesture is VisualResizeGesture active
+                && active.GestureId.Equals(
+                    pointer.GestureId,
+                    StringComparison.Ordinal))
+            {
+                CancelVisualEditGesture();
+            }
+            return;
+        }
+
+        if (pointer.Phase == PreviewVisualPointerPhase.Down)
+        {
+            BeginVisualResizeGesture(pointer);
+            return;
+        }
+
+        if (_visualResizeGesture is not VisualResizeGesture gesture
+            || !gesture.GestureId.Equals(
+                pointer.GestureId,
+                StringComparison.Ordinal)
+            || !gesture.SelectionId.Equals(
+                pointer.SelectionId,
+                StringComparison.Ordinal)
+            || gesture.SourceRevision != pointer.SourceRevision
+            || gesture.Handle != pointer.Handle)
+        {
+            return;
+        }
+
+        if (pointer.Phase == PreviewVisualPointerPhase.Move)
+        {
+            UpdateVisualResizeGesture(pointer, gesture);
+        }
+        else if (pointer.Phase == PreviewVisualPointerPhase.Up)
+        {
+            CompleteVisualResizeGesture(pointer, gesture);
+        }
+    }
+
+    private void BeginVisualResizeGesture(
+        PreviewVisualResizePointerMessage pointer)
+    {
+        CancelVisualEditGesture();
+        if (!CanUseVisualEditing(pointer.SourceRevision)
+            || pointer.Button != 0
+            || (pointer.Buttons & 1) == 0
+            || Mouse.LeftButton != MouseButtonState.Pressed
+            || HasResizeBlockingModifier(pointer)
+            || _consumedVisualResizeGestureIds.Contains(pointer.GestureId)
+            || _visualSelectionIdentity
+                is not SvgElementIdentity identity
+            || _visualSelectionBridgeId is not string selectionId
+            || !selectionId.Equals(
+                pointer.SelectionId,
+                StringComparison.Ordinal)
+            || _visiblePreviewVisualDocument
+                is not SvgVisualDocument visualDocument
+            || visualDocument.FindElement(identity)
+                is not SvgVisualElement element
+            || element.Geometry is not SvgVisualShapeGeometry geometry
+            || !_visualResizeHandleService.IsAllowed(
+                element,
+                pointer.Handle)
+            || !_previewSvgCoordinateMapper.TryMap(
+                visualDocument.Viewport,
+                pointer.Image,
+                pointer.ViewportPoint,
+                out SvgMappedPreviewPoint mapped)
+            || !IsResizeHandleHit(
+                element,
+                geometry,
+                pointer.Handle,
+                mapped))
+        {
+            return;
+        }
+
+        RememberVisualResizeGestureId(pointer.GestureId);
+        _visualResizeGesture = new VisualResizeGesture(
+            pointer.GestureId,
+            pointer.SelectionId,
+            pointer.SourceRevision,
+            identity,
+            pointer.Handle,
+            geometry);
+        _viewModel.SetOperationStatus(
+            $"{element.SourceElement.Name} resize started");
+    }
+
+    private void UpdateVisualResizeGesture(
+        PreviewVisualResizePointerMessage pointer,
+        VisualResizeGesture gesture)
+    {
+        string? resizeError = null;
+        if (!CanContinueVisualResizeGesture(
+                pointer,
+                gesture,
+                requirePressedButton: true)
+            || _visiblePreviewVisualDocument
+                is not SvgVisualDocument visualDocument
+            || visualDocument.FindElement(gesture.ElementIdentity)
+                is not SvgVisualElement element
+            || !_previewSvgCoordinateMapper.TryMap(
+                visualDocument.Viewport,
+                pointer.Image,
+                pointer.ViewportPoint,
+                out SvgMappedPreviewPoint mapped)
+            || !_visualResizeService.TryCalculate(
+                element,
+                gesture.Handle,
+                mapped.Point,
+                pointer.ShiftHeld,
+                out SvgVisualShapeGeometry resized,
+                out resizeError))
+        {
+            CancelVisualEditGesture(
+                resizeError ?? "Visual resize cancelled");
+            return;
+        }
+
+        _visualResizeGesture = gesture with
+        {
+            PreviewGeometry = resized
+        };
+        ShowVisualSelection(geometryOverride: resized);
+        _viewModel.SetOperationStatus(
+            FormatResizeStatus(element.Kind, resized));
+    }
+
+    private void CompleteVisualResizeGesture(
+        PreviewVisualResizePointerMessage pointer,
+        VisualResizeGesture gesture)
+    {
+        if (!CanContinueVisualResizeGesture(
+                pointer,
+                gesture,
+                requirePressedButton: false))
+        {
+            CancelVisualEditGesture();
+            return;
+        }
+
+        VisualResizeGesture completed = _visualResizeGesture ?? gesture;
+        string? resizeError = null;
+        if (_visiblePreviewVisualDocument
+                is not SvgVisualDocument visualDocument
+            || visualDocument.FindElement(completed.ElementIdentity)
+                is not SvgVisualElement element
+            || !_previewSvgCoordinateMapper.TryMap(
+                visualDocument.Viewport,
+                pointer.Image,
+                pointer.ViewportPoint,
+                out SvgMappedPreviewPoint mapped)
+            || !_visualResizeService.TryCalculate(
+                element,
+                completed.Handle,
+                mapped.Point,
+                pointer.ShiftHeld,
+                out SvgVisualShapeGeometry resized,
+                out resizeError))
+        {
+            CancelVisualEditGesture(
+                resizeError ?? "Visual resize cancelled");
+            return;
+        }
+
+        _visualResizeGesture = null;
+        ApplyVisualResize(
+            completed.ElementIdentity,
+            resized);
+    }
+
+    private void ApplyVisualResize(
+        SvgElementIdentity identity,
+        SvgVisualShapeGeometry resizedGeometry)
+    {
+        if (!CanUseVisualEditing(_sourceRevisionTracker.Current)
+            || _lastValidVisualDocument?.FindElement(identity)
+                is not SvgVisualElement element)
+        {
+            _viewModel.SetOperationStatus(
+                "Visual editing paused until the current SVG is valid.");
+            ShowVisualSelection();
+            return;
+        }
+
+        long expectedRevision = _sourceRevisionTracker.Current;
+        string sourceSnapshot = SourceEditor.Text;
+        SvgAttributeEditResult result = _visualResizeService.CreateEdit(
+            sourceSnapshot,
+            element,
+            resizedGeometry);
+        if (!result.IsSuccess)
+        {
+            _viewModel.SetOperationStatus(
+                result.ErrorMessage
+                ?? "The selected element could not be resized.");
+            ShowVisualSelection();
+            return;
+        }
+        if (result.Edit is null)
+        {
+            ShowVisualSelection();
+            return;
+        }
+        if (!_sourceRevisionTracker.IsCurrent(expectedRevision)
+            || !SourceEditor.Text.Equals(
+                sourceSnapshot,
+                StringComparison.Ordinal))
+        {
+            _viewModel.SetOperationStatus(
+                "The source changed; select the element again.");
+            ShowVisualSelection();
+            return;
+        }
+
+        _visualSelectionIdentity = identity;
+        _documentEditService.Apply(SourceEditor.Document, result.Edit);
+        _previewDebouncer.Cancel();
+        long updatedRevision = _sourceRevisionTracker.Current;
+        string updatedSource = SourceEditor.Text;
+        SvgDocumentIndexResult rebuilt =
+            _documentIndexService.Build(updatedSource);
+        ApplyValidationResult(
+            updatedSource,
+            updatedRevision,
+            rebuilt);
+        _viewModel.SetOperationStatus(
+            $"{element.SourceElement.Name} resized");
+    }
+
     private void BeginVisualEditGesture(
         PreviewVisualPointerMessage pointer)
     {
@@ -169,7 +425,7 @@ public partial class MainWindow
             ClearVisualSelection();
             _viewModel.SetOperationStatus(
                 blocker.UnsupportedReason
-                ?? $"Visual editing is not available for {blocker.SourceElement.Name} elements in v0.6.0.");
+                ?? $"Visual editing is not available for {blocker.SourceElement.Name} elements in v0.7.0.");
             return;
         }
         if (hit.Element is not SvgVisualElement element)
@@ -430,6 +686,34 @@ public partial class MainWindow
             && !HasVisualGestureModifier(pointer);
     }
 
+    private bool CanContinueVisualResizeGesture(
+        PreviewVisualResizePointerMessage pointer,
+        VisualResizeGesture gesture,
+        bool requirePressedButton)
+    {
+        bool physicalButtonMatches = requirePressedButton
+            ? (pointer.Buttons & 1) != 0
+                && Mouse.LeftButton == MouseButtonState.Pressed
+            : (pointer.Buttons & 1) == 0
+                && Mouse.LeftButton == MouseButtonState.Released;
+        return CanUseVisualEditing(pointer.SourceRevision)
+            && pointer.Button == 0
+            && physicalButtonMatches
+            && !HasResizeBlockingModifier(pointer)
+            && pointer.GestureId.Equals(
+                gesture.GestureId,
+                StringComparison.Ordinal)
+            && pointer.SelectionId.Equals(
+                gesture.SelectionId,
+                StringComparison.Ordinal)
+            && pointer.SourceRevision == gesture.SourceRevision
+            && pointer.Handle == gesture.Handle
+            && _visualSelectionIdentity == gesture.ElementIdentity
+            && _visualSelectionBridgeId?.Equals(
+                gesture.SelectionId,
+                StringComparison.Ordinal) == true;
+    }
+
     private static bool HasVisualGestureModifier(
         PreviewVisualPointerMessage pointer)
     {
@@ -440,9 +724,67 @@ public partial class MainWindow
             || pointer.SpaceHeld;
     }
 
+    private static bool HasResizeBlockingModifier(
+        PreviewVisualResizePointerMessage pointer)
+    {
+        return pointer.ControlHeld
+            || pointer.AltHeld
+            || pointer.MetaHeld
+            || pointer.SpaceHeld;
+    }
+
+    private bool IsResizeHandleHit(
+        SvgVisualElement element,
+        SvgVisualShapeGeometry geometry,
+        SvgResizeHandle handle,
+        SvgMappedPreviewPoint mapped)
+    {
+        SvgResizeHandleDefinition definition =
+            _visualResizeHandleService.Create(element, geometry)
+                .Single(item => item.Handle == handle);
+        return Math.Abs(mapped.Point.X - definition.Point.X)
+                <= mapped.HitTolerance
+            && Math.Abs(mapped.Point.Y - definition.Point.Y)
+                <= mapped.HitTolerance;
+    }
+
+    private void RememberVisualResizeGestureId(string gestureId)
+    {
+        const int maximumRememberedGestures = 64;
+        if (!_consumedVisualResizeGestureIds.Add(gestureId))
+        {
+            return;
+        }
+
+        _visualResizeGestureIdOrder.Enqueue(gestureId);
+        while (_visualResizeGestureIdOrder.Count > maximumRememberedGestures)
+        {
+            _consumedVisualResizeGestureIds.Remove(
+                _visualResizeGestureIdOrder.Dequeue());
+        }
+    }
+
+    private static string FormatResizeStatus(
+        SvgVisualElementKind kind,
+        SvgVisualShapeGeometry geometry)
+    {
+        SvgVisualBounds bounds = geometry.Bounds;
+        return kind switch
+        {
+            SvgVisualElementKind.Circle =>
+                $"Circle radius {FormatDelta(bounds.Width / 2)}",
+            SvgVisualElementKind.Ellipse =>
+                $"Ellipse radii {FormatDelta(bounds.Width / 2)} × {FormatDelta(bounds.Height / 2)}",
+            SvgVisualElementKind.Line =>
+                $"Line {FormatDelta(geometry.X1)}, {FormatDelta(geometry.Y1)} to {FormatDelta(geometry.X2)}, {FormatDelta(geometry.Y2)}",
+            _ =>
+                $"{FormatDelta(bounds.Width)} × {FormatDelta(bounds.Height)}"
+        };
+    }
+
     private void SelectVisualElement(SvgVisualElement element)
     {
-        _visualSelectionIdentity = element.SourceElement.Identity;
+        SetVisualSelectionIdentity(element.SourceElement.Identity);
         SvgElementViewModel? previous =
             _viewModel.Inspector.SelectedElement;
         _viewModel.Inspector.SelectNode(
@@ -468,7 +810,9 @@ public partial class MainWindow
     private void ClearVisualSelection()
     {
         _visualSelectionIdentity = null;
+        _visualSelectionBridgeId = null;
         _visualEditGesture = null;
+        _visualResizeGesture = null;
         _viewModel.Inspector.SelectNode(
             null,
             InspectorSelectionOrigin.PreviewNavigation);
@@ -481,7 +825,7 @@ public partial class MainWindow
     {
         SvgElementIdentity? identity =
             _viewModel.Inspector.SelectedElement?.Element.Identity;
-        _visualSelectionIdentity = identity;
+        SetVisualSelectionIdentity(identity);
         if (identity is null)
         {
             PostVisualSelection(selection: null);
@@ -516,26 +860,55 @@ public partial class MainWindow
 
     private void ShowVisualSelection(
         double deltaX = 0,
-        double deltaY = 0)
+        double deltaY = 0,
+        SvgVisualShapeGeometry? geometryOverride = null)
     {
         if (_visualSelectionIdentity
                 is not SvgElementIdentity identity
             || _visiblePreviewVisualDocument?.FindElement(identity)
                 is not SvgVisualElement
                 {
-                    Geometry: SvgVisualShapeGeometry geometry
+                    Geometry: SvgVisualShapeGeometry sourceGeometry
                 } element)
         {
             PostVisualSelection(selection: null);
             return;
         }
 
+        string selectionId = EnsureVisualSelectionBridgeId();
+        SvgVisualShapeGeometry geometry =
+            geometryOverride ?? sourceGeometry;
         PostVisualSelection(new PreviewVisualSelection(
             element.Kind,
             geometry,
             deltaX,
-            deltaY));
+            deltaY,
+            selectionId,
+            _visualResizeHandleService.Create(element, geometry)));
     }
+
+    private void SetVisualSelectionIdentity(SvgElementIdentity? identity)
+    {
+        if (_visualSelectionIdentity == identity)
+        {
+            return;
+        }
+
+        _visualSelectionIdentity = identity;
+        _visualSelectionBridgeId = identity is null
+            ? null
+            : CreateVisualSelectionBridgeId();
+    }
+
+    private string EnsureVisualSelectionBridgeId()
+    {
+        return _visualSelectionBridgeId ??=
+            CreateVisualSelectionBridgeId();
+    }
+
+    private static string CreateVisualSelectionBridgeId() =>
+        Convert.ToHexString(
+            System.Security.Cryptography.RandomNumberGenerator.GetBytes(16));
 
     private void PostVisualSelection(
         PreviewVisualSelection? selection)
@@ -566,12 +939,13 @@ public partial class MainWindow
 
     private void CancelVisualEditGesture(string? status = null)
     {
-        if (_visualEditGesture is null)
+        if (_visualEditGesture is null && _visualResizeGesture is null)
         {
             return;
         }
 
         _visualEditGesture = null;
+        _visualResizeGesture = null;
         ShowVisualSelection();
         if (!string.IsNullOrWhiteSpace(status))
         {
@@ -582,13 +956,18 @@ public partial class MainWindow
     private void OnVisualSourceChanged()
     {
         CancelVisualEditGesture();
+        _visualSelectionBridgeId = null;
         PostVisualSelection(selection: null);
     }
 
     private void OnVisualDocumentLoaded()
     {
         _visualEditGesture = null;
+        _visualResizeGesture = null;
         _visualSelectionIdentity = null;
+        _visualSelectionBridgeId = null;
+        _consumedVisualResizeGestureIds.Clear();
+        _visualResizeGestureIdOrder.Clear();
         PostVisualSelection(selection: null);
     }
 
@@ -618,6 +997,7 @@ public partial class MainWindow
         if (indexResult.Document is not SvgDocumentIndex document)
         {
             _visualSelectionIdentity = null;
+            _visualSelectionBridgeId = null;
             PostVisualSelection(selection: null);
             return;
         }
@@ -714,6 +1094,10 @@ public partial class MainWindow
         _visiblePreviewVisualDocument = null;
         _visiblePreviewSourceRevision = null;
         _visualEditGesture = null;
+        _visualResizeGesture = null;
+        _visualSelectionBridgeId = null;
+        _consumedVisualResizeGestureIds.Clear();
+        _visualResizeGestureIdOrder.Clear();
         _pendingPreviewTextMeasurement = null;
     }
 
@@ -747,4 +1131,12 @@ public partial class MainWindow
         double DeltaX,
         double DeltaY,
         bool HasMoved);
+
+    private sealed record VisualResizeGesture(
+        string GestureId,
+        string SelectionId,
+        long SourceRevision,
+        SvgElementIdentity ElementIdentity,
+        SvgResizeHandle Handle,
+        SvgVisualShapeGeometry PreviewGeometry);
 }

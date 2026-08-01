@@ -35,7 +35,7 @@ public sealed class SvgTemplateVisualSelectionTests
             ["app-icon"] =
             [
                 new("rect", 1, true, true),
-                new("path", 1, true, false, "v0.6.0")
+                new("path", 1, true, false, "v0.7.0")
             ],
             ["social-card"] =
             [
@@ -54,7 +54,7 @@ public sealed class SvgTemplateVisualSelectionTests
                 new("rect", 2, true, true),
                 new("text", 8, true, true),
                 new("circle", 1, true, true),
-                new("path", 1, true, false, "v0.6.0")
+                new("path", 1, true, false, "v0.7.0")
             ]
         };
 
@@ -179,7 +179,7 @@ public sealed class SvgTemplateVisualSelectionTests
         Assert.IsNull(pathCoveredPoint.Blocker);
         StringAssert.Contains(
             pathCoveredPoint.Element?.UnsupportedReason,
-            "v0.6.0");
+            "v0.7.0");
     }
 
     [TestMethod]

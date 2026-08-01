@@ -246,6 +246,45 @@ public sealed class NativePreviewInputSurfaceTests
             StringComparison.Ordinal));
     }
 
+    [TestMethod]
+    public void ResizeLifecycleCancelsAcrossHostStateChanges()
+    {
+        string visual = ReadUi("MainWindow.VisualEditing.cs");
+        string main = ReadUi("MainWindow.xaml.cs");
+
+        StringAssert.Contains(
+            visual,
+            "private void OnVisualSourceChanged()");
+        StringAssert.Contains(
+            visual,
+            "private void OnVisualPreviewNavigationStarted(");
+        StringAssert.Contains(
+            visual,
+            "private void CancelVisualEditGesture(");
+        StringAssert.Contains(visual, "_visualResizeGesture = null;");
+        StringAssert.Contains(
+            visual,
+            "_consumedVisualResizeGestureIds.Contains(pointer.GestureId)");
+        StringAssert.Contains(
+            visual,
+            "Mouse.LeftButton != MouseButtonState.Pressed");
+        StringAssert.Contains(
+            visual,
+            "Mouse.LeftButton == MouseButtonState.Released");
+        StringAssert.Contains(
+            main,
+            "private void OnWindowDeactivated(");
+        StringAssert.Contains(
+            main,
+            "private void OnPreviewWebViewLostKeyboardFocus(");
+        StringAssert.Contains(
+            main,
+            "CancelVisualEditGesture(\"Visual gesture cancelled\")");
+        StringAssert.Contains(
+            main,
+            "OnVisualPreviewNavigationCompleted(isSuccess: false)");
+    }
+
     private static int CountOccurrences(string value, string search)
     {
         int count = 0;

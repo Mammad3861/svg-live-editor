@@ -176,6 +176,139 @@ public sealed class PreviewVisualInteractionMessageParser
         }
     }
 
+    public bool TryParseResizePointer(
+        string json,
+        string expectedToken,
+        long expectedSourceRevision,
+        string expectedSelectionId,
+        out PreviewVisualResizePointerMessage message)
+    {
+        message = default;
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || root.EnumerateObject().Count() != 25
+                || !ReadString(root, "type", out string? type)
+                || type != "visualResizePointer"
+                || !ReadString(root, "token", out string? token)
+                || !string.Equals(token, expectedToken, StringComparison.Ordinal)
+                || !ReadRevision(
+                    root,
+                    "sourceRevision",
+                    expectedSourceRevision,
+                    out long sourceRevision)
+                || !ReadHexId(root, "selectionId", out string? selectionId)
+                || !string.Equals(
+                    selectionId,
+                    expectedSelectionId,
+                    StringComparison.Ordinal)
+                || !ReadString(root, "phase", out string? phaseText)
+                || !TryParsePhase(
+                    phaseText,
+                    out PreviewVisualPointerPhase phase)
+                || !ReadHexId(root, "gestureId", out string? gestureId)
+                || !ReadString(root, "handle", out string? handleText)
+                || !SvgVisualResizeHandleService.TryParseWireName(
+                    handleText,
+                    out SvgResizeHandle handle)
+                || !ReadNumber(
+                    root,
+                    "x",
+                    0,
+                    MaximumViewportDimension,
+                    out double x)
+                || !ReadNumber(
+                    root,
+                    "y",
+                    0,
+                    MaximumViewportDimension,
+                    out double y)
+                || !ReadNumber(
+                    root,
+                    "viewportWidth",
+                    1,
+                    MaximumViewportDimension,
+                    out double viewportWidth)
+                || !ReadNumber(
+                    root,
+                    "viewportHeight",
+                    1,
+                    MaximumViewportDimension,
+                    out double viewportHeight)
+                || x > viewportWidth
+                || y > viewportHeight
+                || !ReadNumber(
+                    root,
+                    "imageLeft",
+                    -MaximumImageOffset,
+                    MaximumImageOffset,
+                    out double imageLeft)
+                || !ReadNumber(
+                    root,
+                    "imageTop",
+                    -MaximumImageOffset,
+                    MaximumImageOffset,
+                    out double imageTop)
+                || !ReadNumber(
+                    root,
+                    "imageWidth",
+                    double.Epsilon,
+                    MaximumImageDimension,
+                    out double imageWidth)
+                || !ReadNumber(
+                    root,
+                    "imageHeight",
+                    double.Epsilon,
+                    MaximumImageDimension,
+                    out double imageHeight)
+                || !ReadInteger(root, "button", 0, 2, out int button)
+                || !ReadInteger(root, "buttons", 0, 31, out int buttons)
+                || !ReadBoolean(root, "ctrlKey", out bool controlHeld)
+                || !ReadBoolean(root, "shiftKey", out bool shiftHeld)
+                || !ReadBoolean(root, "altKey", out bool altHeld)
+                || !ReadBoolean(root, "metaKey", out bool metaHeld)
+                || !ReadBoolean(root, "spaceHeld", out bool spaceHeld)
+                || !ReadString(root, "pointerType", out string? pointerType)
+                || pointerType != "mouse"
+                || !ReadBoolean(root, "isTrusted", out bool isTrusted)
+                || !isTrusted
+                || !ReadBoolean(root, "isPrimary", out bool isPrimary)
+                || !isPrimary)
+            {
+                return false;
+            }
+
+            message = new PreviewVisualResizePointerMessage(
+                phase,
+                gestureId!,
+                selectionId!,
+                handle,
+                sourceRevision,
+                new SvgVisualPoint(x, y),
+                viewportWidth,
+                viewportHeight,
+                new PreviewImageMetrics(
+                    imageLeft,
+                    imageTop,
+                    imageWidth,
+                    imageHeight),
+                button,
+                buttons,
+                controlHeld,
+                shiftHeld,
+                altHeld,
+                metaHeld,
+                spaceHeld);
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
     private static bool IsSupportedNudge(double deltaX, double deltaY)
     {
         bool validX = deltaX is -10 or -1 or 0 or 1 or 10;
