@@ -152,7 +152,7 @@ public sealed class PreviewInteractionMessageParser
             using JsonDocument document = JsonDocument.Parse(json);
             JsonElement root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object
-                || root.EnumerateObject().Count() != 6
+                || root.EnumerateObject().Count() != 8
                 || !TryReadString(root, "type", out string? type)
                 || type != "contextMenu"
                 || !TryReadString(root, "token", out string? token)
@@ -171,6 +171,13 @@ public sealed class PreviewInteractionMessageParser
                     1,
                     MaximumViewportDimension,
                     out double viewportHeight)
+                || !root.TryGetProperty("sourceRevision", out JsonElement revisionProperty)
+                || revisionProperty.ValueKind != JsonValueKind.Number
+                || !revisionProperty.TryGetInt64(out long sourceRevision)
+                || sourceRevision < 0
+                || !TryReadString(root, "selectionId", out string? selectionId)
+                || selectionId!.Length is not 0 and not 32
+                || (selectionId.Length == 32 && !selectionId.All(Uri.IsHexDigit))
                 || x > viewportWidth
                 || y > viewportHeight)
             {
@@ -181,7 +188,9 @@ public sealed class PreviewInteractionMessageParser
                 x,
                 y,
                 viewportWidth,
-                viewportHeight);
+                viewportHeight,
+                sourceRevision,
+                selectionId);
             return true;
         }
         catch (JsonException)

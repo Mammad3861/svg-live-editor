@@ -784,6 +784,7 @@ public partial class MainWindow
 
     private void SelectVisualElement(SvgVisualElement element)
     {
+        CancelOpacitySliderGesture();
         SetVisualSelectionIdentity(element.SourceElement.Identity);
         SvgElementViewModel? previous =
             _viewModel.Inspector.SelectedElement;
@@ -1018,6 +1019,7 @@ public partial class MainWindow
         long sourceRevision)
     {
         CancelVisualEditGesture();
+        CancelOpacitySliderGesture();
         _pendingPreviewTextMeasurement = null;
         _activePreviewVisualDocument = visualDocument;
         _activePreviewSourceRevision = sourceRevision;

@@ -163,7 +163,9 @@ public sealed class PreviewHtmlBuilder
                 x: lastPointerX,
                 y: lastPointerY,
                 viewportWidth: viewport.clientWidth,
-                viewportHeight: viewport.clientHeight
+                viewportHeight: viewport.clientHeight,
+                sourceRevision,
+                selectionId: activeVisualSelection?.selectionId || ''
               });
             }
           };

@@ -4,7 +4,11 @@ public enum PreviewContextMenuCommand
 {
     CopyPreviewAsPng,
     Fit,
-    ResetZoom
+    ResetZoom,
+    BringToFront,
+    BringForward,
+    SendBackward,
+    SendToBack
 }
 
 public readonly record struct PreviewContextMenuItem(
@@ -21,6 +25,10 @@ public static class PreviewContextMenuDefinition
                 PreviewContextMenuCommand.CopyPreviewAsPng,
                 "Copy Preview as PNG"),
             new(PreviewContextMenuCommand.Fit, "Fit"),
-            new(PreviewContextMenuCommand.ResetZoom, "Reset Zoom")
+            new(PreviewContextMenuCommand.ResetZoom, "Reset Zoom"),
+            new(PreviewContextMenuCommand.BringToFront, "Bring to Front"),
+            new(PreviewContextMenuCommand.BringForward, "Bring Forward"),
+            new(PreviewContextMenuCommand.SendBackward, "Send Backward"),
+            new(PreviewContextMenuCommand.SendToBack, "Send to Back")
         });
 }

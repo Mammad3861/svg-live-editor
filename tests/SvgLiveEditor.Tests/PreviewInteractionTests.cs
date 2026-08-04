@@ -50,7 +50,6 @@ public sealed class PreviewInteractionTests
              "anchorX":1,"anchorY":1,"viewportWidth":10,"viewportHeight":10,
              "url":"https://example.test"}
             """;
-
         Assert.IsFalse(_parser.TryParseZoomRequest(unknown, BridgeToken, out _));
         Assert.IsFalse(_parser.TryParseZoomRequest(extra, BridgeToken, out _));
     }
@@ -144,23 +143,39 @@ public sealed class PreviewInteractionTests
         const string valid = """
             {"type":"contextMenu",
              "token":"00112233445566778899AABBCCDDEEFF",
-             "x":250,"y":125,"viewportWidth":500,"viewportHeight":250}
+             "x":250,"y":125,"viewportWidth":500,"viewportHeight":250,
+             "sourceRevision":7,"selectionId":"AABBCCDDEEFF00112233445566778899"}
             """;
         const string stale = """
             {"type":"contextMenu",
              "token":"FFEEDDCCBBAA99887766554433221100",
-             "x":250,"y":125,"viewportWidth":500,"viewportHeight":250}
+             "x":250,"y":125,"viewportWidth":500,"viewportHeight":250,
+             "sourceRevision":7,"selectionId":"AABBCCDDEEFF00112233445566778899"}
             """;
         const string outside = """
             {"type":"contextMenu",
              "token":"00112233445566778899AABBCCDDEEFF",
-             "x":501,"y":125,"viewportWidth":500,"viewportHeight":250}
+             "x":501,"y":125,"viewportWidth":500,"viewportHeight":250,
+             "sourceRevision":7,"selectionId":"AABBCCDDEEFF00112233445566778899"}
             """;
         const string extra = """
             {"type":"contextMenu",
              "token":"00112233445566778899AABBCCDDEEFF",
              "x":250,"y":125,"viewportWidth":500,"viewportHeight":250,
+             "sourceRevision":7,"selectionId":"AABBCCDDEEFF00112233445566778899",
              "url":"https://example.test"}
+            """;
+        const string invalidSelection = """
+            {"type":"contextMenu",
+             "token":"00112233445566778899AABBCCDDEEFF",
+             "x":250,"y":125,"viewportWidth":500,"viewportHeight":250,
+             "sourceRevision":7,"selectionId":"not-an-opaque-id"}
+            """;
+        const string invalidRevision = """
+            {"type":"contextMenu",
+             "token":"00112233445566778899AABBCCDDEEFF",
+             "x":250,"y":125,"viewportWidth":500,"viewportHeight":250,
+             "sourceRevision":-1,"selectionId":""}
             """;
 
         Assert.IsTrue(_parser.TryParseContextMenuRequest(
@@ -169,6 +184,10 @@ public sealed class PreviewInteractionTests
             out PreviewContextMenuRequest request));
         Assert.AreEqual(250, request.X);
         Assert.AreEqual(125, request.Y);
+        Assert.AreEqual(7, request.SourceRevision);
+        Assert.AreEqual(
+            "AABBCCDDEEFF00112233445566778899",
+            request.SelectionId);
         Assert.IsFalse(_parser.TryParseContextMenuRequest(
             stale,
             BridgeToken,
@@ -179,6 +198,14 @@ public sealed class PreviewInteractionTests
             out _));
         Assert.IsFalse(_parser.TryParseContextMenuRequest(
             extra,
+            BridgeToken,
+            out _));
+        Assert.IsFalse(_parser.TryParseContextMenuRequest(
+            invalidSelection,
+            BridgeToken,
+            out _));
+        Assert.IsFalse(_parser.TryParseContextMenuRequest(
+            invalidRevision,
             BridgeToken,
             out _));
     }

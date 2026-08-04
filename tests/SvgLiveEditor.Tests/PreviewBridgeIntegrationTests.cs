@@ -76,7 +76,11 @@ public sealed class PreviewBridgeIntegrationTests
         bool ResizeHandleStayedFixedSize,
         bool ResizeModifiersPreservedArbitration,
         bool ResizeDidNotNavigateDuringPointerMove,
-        bool ResizeKeptWebViewZoomAtOne);
+        bool ResizeKeptWebViewZoomAtOne,
+        bool ArrangeChangedTopmostHitAndUndoRestoredIt,
+        bool OpacityCommittedAndUndoRestoredSource,
+        bool StageTwoHostEditsDidNotNavigate,
+        bool StageTwoPreviewStayedReadyAtDocumentZoomOne);
 
     [TestMethod]
     [TestCategory("DesktopIntegration")]
@@ -154,6 +158,10 @@ public sealed class PreviewBridgeIntegrationTests
         Assert.IsTrue(result.ResizeModifiersPreservedArbitration);
         Assert.IsTrue(result.ResizeDidNotNavigateDuringPointerMove);
         Assert.IsTrue(result.ResizeKeptWebViewZoomAtOne);
+        Assert.IsTrue(result.ArrangeChangedTopmostHitAndUndoRestoredIt);
+        Assert.IsTrue(result.OpacityCommittedAndUndoRestoredSource);
+        Assert.IsTrue(result.StageTwoHostEditsDidNotNavigate);
+        Assert.IsTrue(result.StageTwoPreviewStayedReadyAtDocumentZoomOne);
         Assert.IsTrue(thread.Join(TimeSpan.FromSeconds(5)));
     }
 
@@ -820,7 +828,11 @@ public sealed class PreviewBridgeIntegrationTests
                     BridgeToken,
                     out PreviewContextMenuRequest contextRequest)
                 && contextRequest.X > 0
-                && contextRequest.Y > 0;
+                && contextRequest.Y > 0
+                && contextRequest.SourceRevision == 7
+                && contextRequest.SelectionId.Equals(
+                    "0123456789ABCDEFFEDCBA9876543210",
+                    StringComparison.Ordinal);
 
             string copyDispatch = await core.ExecuteScriptAsync(
                 """
@@ -1150,6 +1162,88 @@ public sealed class PreviewBridgeIntegrationTests
             bool resizeKeptWebViewZoomAtOne =
                 NearlyEqual(webView.ZoomFactor, 1.0);
 
+            const string layerSource = """
+                <svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
+                  <rect id="bottom" x="10" y="10" width="60" height="60" fill="red"/>
+                  <rect id="top" x="10" y="10" width="60" height="60" fill="blue"/>
+                </svg>
+                """;
+            int navigationCountBeforeStageTwo = zoomNavigationCount;
+            SvgDocumentIndexService stageTwoIndexService = new();
+            SvgDocumentIndex layerIndex =
+                stageTwoIndexService.Build(layerSource).Document!;
+            SvgVisualGeometryIndexService geometryIndex = new();
+            SvgVisualHitTestService stageTwoHitTest = new();
+            SvgMappedPreviewPoint overlapPoint = new(
+                new SvgVisualPoint(30, 30),
+                0);
+            string? hitBeforeArrange = stageTwoHitTest.HitTest(
+                geometryIndex.Build(
+                    layerIndex,
+                    new SvgCanvasSize(100, 100),
+                    layerSource),
+                overlapPoint)?.SourceElement.Id;
+            SvgElementNode topElement = layerIndex.Elements.Single(element =>
+                element.Id == "top");
+            SvgLayerOrderEditResult layerEdit = new SvgLayerOrderService().CreateEdit(
+                layerSource,
+                layerIndex,
+                topElement,
+                SvgLayerOrderCommand.SendToBack);
+            ICSharpCode.AvalonEdit.Document.TextDocument layerText =
+                new(layerSource);
+            new AvalonEditDocumentEditService().Apply(
+                layerText,
+                layerEdit.Edit!);
+            SvgDocumentIndex reorderedIndex =
+                stageTwoIndexService.Build(layerText.Text).Document!;
+            string? hitAfterArrange = stageTwoHitTest.HitTest(
+                geometryIndex.Build(
+                    reorderedIndex,
+                    new SvgCanvasSize(100, 100),
+                    layerText.Text),
+                overlapPoint)?.SourceElement.Id;
+            layerText.UndoStack.Undo();
+            SvgDocumentIndex undoIndex =
+                stageTwoIndexService.Build(layerText.Text).Document!;
+            string? hitAfterUndo = stageTwoHitTest.HitTest(
+                geometryIndex.Build(
+                    undoIndex,
+                    new SvgCanvasSize(100, 100),
+                    layerText.Text),
+                overlapPoint)?.SourceElement.Id;
+            bool arrangeChangedTopmostHitAndUndoRestoredIt =
+                hitBeforeArrange == "top"
+                && hitAfterArrange == "bottom"
+                && hitAfterUndo == "top"
+                && layerText.Text.Equals(layerSource, StringComparison.Ordinal);
+
+            SvgElementNode opacityElement = layerIndex.Elements.Single(element =>
+                element.Id == "bottom");
+            SvgAttributeEditResult opacityEdit = new SvgOpacityService().CreateEdit(
+                layerSource,
+                layerIndex,
+                opacityElement,
+                25);
+            ICSharpCode.AvalonEdit.Document.TextDocument opacityText =
+                new(layerSource);
+            new AvalonEditDocumentEditService().Apply(
+                opacityText,
+                opacityEdit.Edit!);
+            bool opacityWasCommitted =
+                opacityText.Text.Contains("opacity=\"0.25\"", StringComparison.Ordinal);
+            opacityText.UndoStack.Undo();
+            bool opacityCommittedAndUndoRestoredSource =
+                opacityWasCommitted
+                && opacityText.Text.Equals(layerSource, StringComparison.Ordinal);
+            bool stageTwoHostEditsDidNotNavigate =
+                zoomNavigationCount == navigationCountBeforeStageTwo;
+            bool stageTwoPreviewStayedReadyAtDocumentZoomOne =
+                JsonSerializer.Deserialize<bool>(
+                    await core.ExecuteScriptAsync(
+                        "document.querySelector('img').complete && document.querySelector('img').naturalWidth > 0"))
+                && NearlyEqual(webView.ZoomFactor, 1.0);
+
             completion.TrySetResult(new BridgeResult(
                 request.Direction == PreviewZoomDirection.In ? "in" : "out",
                 transition.State.DisplayText,
@@ -1187,7 +1281,11 @@ public sealed class PreviewBridgeIntegrationTests
                 resizeHandleStayedFixedSize,
                 resizeModifiersPreservedArbitration,
                 resizeDidNotNavigateDuringPointerMove,
-                resizeKeptWebViewZoomAtOne));
+                resizeKeptWebViewZoomAtOne,
+                arrangeChangedTopmostHitAndUndoRestoredIt,
+                opacityCommittedAndUndoRestoredSource,
+                stageTwoHostEditsDidNotNavigate,
+                stageTwoPreviewStayedReadyAtDocumentZoomOne));
         }
         catch (Exception exception)
         {

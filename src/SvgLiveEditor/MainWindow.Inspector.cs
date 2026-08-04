@@ -24,6 +24,8 @@ public partial class MainWindow
         _installedFontGlyphCoverageService = new();
     private readonly SvgTextDirectionAdvisoryService
         _svgTextDirectionAdvisoryService = new();
+    private readonly SvgLayerOrderService _svgLayerOrderService = new();
+    private readonly SvgOpacityService _svgOpacityService = new();
     private readonly DispatcherTimer _inspectorCaretTimer = new()
     {
         Interval = TimeSpan.FromMilliseconds(160)
@@ -34,6 +36,7 @@ public partial class MainWindow
     private bool _isEditorTextCompositionActive;
     private bool _isExplicitInspectorKeyboardNavigation;
     private long _inspectorSourceRevision = -1;
+    private OpacitySliderGesture? _opacitySliderGesture;
 
     private void InitializeDocumentInspector()
     {
@@ -73,6 +76,7 @@ public partial class MainWindow
         SvgDocumentIndexResult result,
         SvgElementIdentity? preferredSelection)
     {
+        CancelOpacitySliderGesture();
         _isInspectorIndexCurrent = true;
         _inspectorSourceRevision = _sourceRevisionTracker.Current;
         _isSynchronizingInspectorSelection = true;
@@ -83,7 +87,8 @@ public partial class MainWindow
                 _viewModel.Inspector.Load(
                     document,
                     preferredSelection,
-                    InspectorSelectionOrigin.InspectorRestore);
+                    InspectorSelectionOrigin.InspectorRestore,
+                    SourceEditor.Text);
             }
             else
             {
@@ -119,6 +124,7 @@ public partial class MainWindow
 
     private void MarkDocumentInspectorSourceChanged()
     {
+        CancelOpacitySliderGesture();
         _isInspectorIndexCurrent = false;
         _inspectorSourceRevision = -1;
         _inspectorCaretTimer.Stop();
@@ -171,6 +177,7 @@ public partial class MainWindow
             return;
         }
 
+        CancelOpacitySliderGesture();
         InspectorSelectionOrigin origin =
             element.ConsumePendingSelectionOrigin()
             ?? (_isExplicitInspectorKeyboardNavigation
@@ -260,6 +267,340 @@ public partial class MainWindow
     {
         _isExplicitInspectorKeyboardNavigation = false;
     }
+
+    private void OnArrangeMenuSubmenuOpened(
+        object sender,
+        RoutedEventArgs e)
+    {
+        UpdateArrangeMenuItem(BringToFrontMenuItem, SvgLayerOrderCommand.BringToFront);
+        UpdateArrangeMenuItem(BringForwardMenuItem, SvgLayerOrderCommand.BringForward);
+        UpdateArrangeMenuItem(SendBackwardMenuItem, SvgLayerOrderCommand.SendBackward);
+        UpdateArrangeMenuItem(SendToBackMenuItem, SvgLayerOrderCommand.SendToBack);
+    }
+
+    private void OnInspectorArrangeContextMenuOpening(
+        object sender,
+        ContextMenuEventArgs e)
+    {
+        if (InspectorTree.ContextMenu is not ContextMenu contextMenu)
+        {
+            return;
+        }
+
+        foreach (MenuItem item in contextMenu.Items.OfType<MenuItem>())
+        {
+            if (TryReadLayerOrderCommand(item.Tag, out SvgLayerOrderCommand command))
+            {
+                UpdateArrangeMenuItem(item, command);
+            }
+        }
+    }
+
+    private void OnArrangeClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem item
+            && TryReadLayerOrderCommand(item.Tag, out SvgLayerOrderCommand command))
+        {
+            ApplyLayerOrder(command);
+        }
+    }
+
+    private void ApplyLayerOrder(SvgLayerOrderCommand command)
+    {
+        SvgDocumentIndex? document = _viewModel.Inspector.DocumentIndex;
+        SvgElementNode? element =
+            _viewModel.Inspector.SelectedElement?.Element;
+        long expectedRevision = _inspectorSourceRevision;
+        if (document is null
+            || element is null
+            || !_inspectorSourceGuard.CanUseIndex(
+                _isInspectorIndexCurrent,
+                expectedRevision,
+                _sourceRevisionTracker.Current,
+                isEditorTextCompositionActive: false))
+        {
+            _viewModel.SetOperationStatus(
+                "Arrange is unavailable until the current SVG is valid and selected.");
+            return;
+        }
+
+        SvgLayerOrderAvailability availability =
+            GetLayerOrderAvailability(command);
+        if (!availability.CanExecute)
+        {
+            _viewModel.SetOperationStatus(
+                availability.UnavailableReason
+                ?? "The selected element cannot be reordered.");
+            return;
+        }
+
+        CancelOpacitySliderGesture();
+        CancelVisualEditGesture();
+        string sourceSnapshot = SourceEditor.Text;
+        SvgLayerOrderEditResult result = _svgLayerOrderService.CreateEdit(
+            sourceSnapshot,
+            document,
+            element,
+            command);
+        if (!result.IsSuccess || result.Edit is null
+            || result.PreferredSelection is null)
+        {
+            _viewModel.SetOperationStatus(
+                result.ErrorMessage ?? "The selected element is already at that boundary.");
+            return;
+        }
+        if (!_sourceRevisionTracker.IsCurrent(expectedRevision)
+            || !SourceEditor.Text.Equals(sourceSnapshot, StringComparison.Ordinal))
+        {
+            _viewModel.SetOperationStatus(
+                "The source changed; select the element again.");
+            return;
+        }
+
+        _documentEditService.Apply(SourceEditor.Document, result.Edit);
+        SvgDocumentIndexResult rebuilt =
+            _documentIndexService.Build(SourceEditor.Text);
+        ApplyDocumentInspectorResult(rebuilt, result.PreferredSelection);
+        _viewModel.SetOperationStatus(GetLayerOrderStatus(command));
+    }
+
+    private void UpdateArrangeMenuItem(
+        MenuItem item,
+        SvgLayerOrderCommand command)
+    {
+        SvgLayerOrderAvailability availability = GetLayerOrderAvailability(command);
+        item.IsEnabled = availability.CanExecute;
+        item.ToolTip = availability.UnavailableReason;
+    }
+
+    private SvgLayerOrderAvailability GetLayerOrderAvailability(
+        SvgLayerOrderCommand command)
+    {
+        SvgDocumentIndex? document = _viewModel.Inspector.DocumentIndex;
+        SvgElementNode? element =
+            _viewModel.Inspector.SelectedElement?.Element;
+        if (document is null
+            || element is null
+            || !_inspectorSourceGuard.CanUseIndex(
+                _isInspectorIndexCurrent,
+                _inspectorSourceRevision,
+                _sourceRevisionTracker.Current,
+                _isEditorTextCompositionActive))
+        {
+            return new SvgLayerOrderAvailability(
+                false,
+                "Select an eligible element in a valid current SVG.");
+        }
+
+        SvgVisualElement? visualElement =
+            _lastValidVisualDocument?.FindElement(element.Identity);
+        if (visualElement is null || !visualElement.IsSelectable)
+        {
+            return new SvgLayerOrderAvailability(
+                false,
+                visualElement?.UnsupportedReason
+                    ?? "Arrange requires reliably bounded visible artwork.");
+        }
+
+        return _svgLayerOrderService.GetAvailability(document, element, command);
+    }
+
+    private static bool TryReadLayerOrderCommand(
+        object? value,
+        out SvgLayerOrderCommand command)
+    {
+        command = default;
+        return value is string text
+            && Enum.TryParse(text, ignoreCase: false, out command);
+    }
+
+    private static string GetLayerOrderStatus(SvgLayerOrderCommand command) =>
+        command switch
+        {
+            SvgLayerOrderCommand.BringToFront => "Element brought to front",
+            SvgLayerOrderCommand.BringForward => "Element brought forward",
+            SvgLayerOrderCommand.SendBackward => "Element sent backward",
+            SvgLayerOrderCommand.SendToBack => "Element sent to back",
+            _ => "Element reordered"
+        };
+
+    private void OnOpacityTextLostKeyboardFocus(
+        object sender,
+        KeyboardFocusChangedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: SvgOpacityViewModel opacity })
+        {
+            _ = ApplyOpacity(opacity);
+        }
+    }
+
+    private void OnOpacityTextKeyDown(object sender, KeyEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: SvgOpacityViewModel opacity })
+        {
+            return;
+        }
+
+        if (e.Key == Key.Enter)
+        {
+            _ = ApplyOpacity(opacity);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape)
+        {
+            opacity.Revert();
+            e.Handled = true;
+        }
+    }
+
+    private void OnOpacitySliderPreviewMouseLeftButtonDown(
+        object sender,
+        MouseButtonEventArgs e)
+    {
+        if (_viewModel.Inspector.Opacity is not SvgOpacityViewModel
+            {
+                IsEnabled: true
+            } opacity)
+        {
+            return;
+        }
+
+        CancelVisualEditGesture();
+        _opacitySliderGesture = new OpacitySliderGesture(
+            opacity,
+            _inspectorSourceRevision,
+            opacity.Element.Identity);
+    }
+
+    private void OnOpacitySliderPreviewMouseLeftButtonUp(
+        object sender,
+        MouseButtonEventArgs e) =>
+        CompleteOpacitySliderGesture();
+
+    private void OnOpacitySliderLostKeyboardFocus(
+        object sender,
+        KeyboardFocusChangedEventArgs e)
+    {
+        if (_opacitySliderGesture is not null)
+        {
+            CancelOpacitySliderGesture();
+        }
+    }
+
+    private void OnOpacitySliderPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape)
+        {
+            CancelOpacitySliderGesture();
+            _viewModel.Inspector.Opacity?.Revert();
+            e.Handled = true;
+        }
+    }
+
+    private void OnOpacitySliderPreviewKeyUp(object sender, KeyEventArgs e)
+    {
+        if (e.Key is Key.Left or Key.Right or Key.Up or Key.Down
+            or Key.Home or Key.End or Key.PageUp or Key.PageDown
+            && _viewModel.Inspector.Opacity is SvgOpacityViewModel opacity)
+        {
+            _ = ApplyOpacity(opacity);
+        }
+    }
+
+    private void CompleteOpacitySliderGesture()
+    {
+        OpacitySliderGesture? gesture = _opacitySliderGesture;
+        _opacitySliderGesture = null;
+        if (gesture is null
+            || _viewModel.Inspector.Opacity != gesture.Opacity
+            || !_sourceRevisionTracker.IsCurrent(gesture.SourceRevision)
+            || gesture.Opacity.Element.Identity != gesture.ElementIdentity)
+        {
+            gesture?.Opacity.Revert();
+            return;
+        }
+
+        _ = ApplyOpacity(gesture.Opacity);
+    }
+
+    private void CancelOpacitySliderGesture()
+    {
+        OpacitySliderGesture? gesture = _opacitySliderGesture;
+        _opacitySliderGesture = null;
+        gesture?.Opacity.Revert();
+    }
+
+    private bool ApplyOpacity(SvgOpacityViewModel opacity)
+    {
+        if (!ReferenceEquals(_viewModel.Inspector.Opacity, opacity)
+            || !opacity.IsEnabled)
+        {
+            return false;
+        }
+        if (opacity.WasCurrentTextAlreadyAttempted)
+        {
+            return false;
+        }
+        opacity.MarkCommitAttempt();
+        if (!opacity.TryReadPercent(out double percent))
+        {
+            opacity.ErrorMessage =
+                "Enter a percentage from 0 to 100 using invariant digits.";
+            return false;
+        }
+
+        long expectedRevision = _inspectorSourceRevision;
+        SvgDocumentIndex? document = _viewModel.Inspector.DocumentIndex;
+        if (document is null
+            || !_inspectorSourceGuard.CanUseIndex(
+                _isInspectorIndexCurrent,
+                expectedRevision,
+                _sourceRevisionTracker.Current,
+                isEditorTextCompositionActive: false))
+        {
+            opacity.ErrorMessage =
+                "The source changed; select the element again.";
+            return false;
+        }
+
+        string sourceSnapshot = SourceEditor.Text;
+        SvgAttributeEditResult result = _svgOpacityService.CreateEdit(
+            sourceSnapshot,
+            document,
+            opacity.Element,
+            percent);
+        if (!result.IsSuccess)
+        {
+            opacity.ErrorMessage =
+                result.ErrorMessage ?? "Opacity could not be changed.";
+            return false;
+        }
+        if (result.Edit is null)
+        {
+            opacity.MarkApplied(percent);
+            return true;
+        }
+        if (!_sourceRevisionTracker.IsCurrent(expectedRevision)
+            || !SourceEditor.Text.Equals(sourceSnapshot, StringComparison.Ordinal))
+        {
+            opacity.ErrorMessage =
+                "The source changed; select the element again.";
+            return false;
+        }
+
+        SvgElementIdentity preferredSelection = opacity.Element.Identity;
+        _documentEditService.Apply(SourceEditor.Document, result.Edit);
+        SvgDocumentIndexResult rebuilt =
+            _documentIndexService.Build(SourceEditor.Text);
+        ApplyDocumentInspectorResult(rebuilt, preferredSelection);
+        _viewModel.SetOperationStatus($"Opacity set to {percent:0.##}%");
+        return true;
+    }
+
+    private sealed record OpacitySliderGesture(
+        SvgOpacityViewModel Opacity,
+        long SourceRevision,
+        SvgElementIdentity ElementIdentity);
 
     private void NavigateToInspectorElement(
         SvgElementViewModel element,

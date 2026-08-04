@@ -57,13 +57,16 @@ public sealed class DocumentInspectorViewModelTests
             "<svg xmlns=\"http://www.w3.org/2000/svg\"><path id=\"route\" d=\"M0 0L10 10\"/></svg>";
         SvgDocumentIndex index = _indexService.Build(source).Document!;
         DocumentInspectorViewModel inspector = new();
-        inspector.Load(index, preferredSelection: null);
+        inspector.Load(index, preferredSelection: null, source: source);
 
         inspector.SelectNode(index.Elements.Single(element => element.Name == "path"));
 
         CollectionAssert.AreEqual(
-            new[] { "id", "fill", "stroke", "stroke-width", "opacity", "d" },
+            new[] { "id", "fill", "stroke", "stroke-width", "d" },
             inspector.Properties.Select(property => property.Name).ToArray());
+        Assert.IsNotNull(inspector.Opacity);
+        Assert.IsTrue(inspector.Opacity.IsEnabled);
+        Assert.AreEqual(100, inspector.Opacity.Percent);
         SvgPropertyViewModel pathData = inspector.Properties.Single(property => property.Name == "d");
         Assert.IsTrue(pathData.IsReadOnly);
         Assert.AreEqual("M0 0L10 10", pathData.Value);

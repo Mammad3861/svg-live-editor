@@ -91,6 +91,7 @@ public partial class MainWindow : Window
     private Task<bool>? _webViewInitializationTask;
     private PendingPreviewPngRequest? _pendingPreviewPngRequest;
     private PreviewDragRequestOrigin? _pendingPreviewDragOrigin;
+    private PreviewContextMenuRequest? _boundPreviewContextMenuRequest;
 
     public MainWindow()
     {
@@ -847,12 +848,21 @@ public partial class MainWindow : Window
             return;
         }
 
+        _boundPreviewContextMenuRequest = request;
         foreach (MenuItem item in _previewContextMenu.Items)
         {
             if (item.Tag is PreviewContextMenuCommand.CopyPreviewAsPng)
             {
                 item.IsEnabled = _hasVisiblePreview
                     && _pendingPreviewPngRequest is null;
+            }
+            else if (item.Tag is PreviewContextMenuCommand command
+                && TryMapPreviewArrangeCommand(
+                    command,
+                    out SvgLayerOrderCommand layerCommand))
+            {
+                item.IsEnabled = IsBoundPreviewArrangeRequestCurrent(request)
+                    && GetLayerOrderAvailability(layerCommand).CanExecute;
             }
         }
 
@@ -910,12 +920,59 @@ public partial class MainWindow : Window
             case PreviewContextMenuCommand.ResetZoom:
                 OnResetZoomClick(item, e);
                 break;
+            case PreviewContextMenuCommand.BringToFront:
+            case PreviewContextMenuCommand.BringForward:
+            case PreviewContextMenuCommand.SendBackward:
+            case PreviewContextMenuCommand.SendToBack:
+                if (_boundPreviewContextMenuRequest
+                        is PreviewContextMenuRequest request
+                    && IsBoundPreviewArrangeRequestCurrent(request)
+                    && TryMapPreviewArrangeCommand(
+                        command,
+                        out SvgLayerOrderCommand layerCommand))
+                {
+                    ApplyLayerOrder(layerCommand);
+                }
+                break;
         }
     }
 
     private void ClosePreviewContextMenu()
     {
         _previewContextMenu.IsOpen = false;
+        _boundPreviewContextMenuRequest = null;
+    }
+
+    private bool IsBoundPreviewArrangeRequestCurrent(
+        PreviewContextMenuRequest request) =>
+        PreviewArrangeContextPolicy.IsCurrent(
+            request,
+            _visiblePreviewSourceRevision,
+            _sourceRevisionTracker.Current,
+            _visualSelectionBridgeId,
+            _viewModel.Inspector.SelectedElement?.Element.Identity
+                == _visualSelectionIdentity);
+
+    private static bool TryMapPreviewArrangeCommand(
+        PreviewContextMenuCommand command,
+        out SvgLayerOrderCommand layerCommand)
+    {
+        layerCommand = command switch
+        {
+            PreviewContextMenuCommand.BringToFront =>
+                SvgLayerOrderCommand.BringToFront,
+            PreviewContextMenuCommand.BringForward =>
+                SvgLayerOrderCommand.BringForward,
+            PreviewContextMenuCommand.SendBackward =>
+                SvgLayerOrderCommand.SendBackward,
+            PreviewContextMenuCommand.SendToBack =>
+                SvgLayerOrderCommand.SendToBack,
+            _ => default
+        };
+        return command is PreviewContextMenuCommand.BringToFront
+            or PreviewContextMenuCommand.BringForward
+            or PreviewContextMenuCommand.SendBackward
+            or PreviewContextMenuCommand.SendToBack;
     }
 
     private async Task ExpirePreviewPngRequestAsync(
@@ -1643,6 +1700,7 @@ public partial class MainWindow : Window
                 FileDropOverlayEvent.WindowDeactivated));
         ResetDragImageGesture();
         CancelVisualEditGesture();
+        CancelOpacitySliderGesture();
         _previewDirectDragHandshake.Reset();
         CancelPendingDirectArtworkDrag();
         // Re-sending the current state asks the trusted page to terminate any
@@ -1844,9 +1902,15 @@ public partial class MainWindow : Window
         ModifierKeys modifiers = Keyboard.Modifiers;
         bool controlOnly = modifiers == ModifierKeys.Control;
         Key pressedKey = e.Key == Key.System ? e.SystemKey : e.Key;
+        SvgLayerOrderCommand? layerOrderShortcut =
+            SvgLayerOrderShortcutResolver.Resolve(
+                modifiers,
+                pressedKey,
+                IsEditableControlFocused());
         if (pressedKey == Key.Escape)
         {
             CancelVisualEditGesture("Visual gesture cancelled");
+            CancelOpacitySliderGesture();
             _previewDirectDragHandshake.Reset();
         }
 
@@ -1871,6 +1935,11 @@ public partial class MainWindow : Window
             && _previewContextMenu.IsOpen)
         {
             ClosePreviewContextMenu();
+            e.Handled = true;
+        }
+        else if (layerOrderShortcut is SvgLayerOrderCommand layerOrderCommand)
+        {
+            ApplyLayerOrder(layerOrderCommand);
             e.Handled = true;
         }
         else if (ApplicationShortcutResolver.Resolve(modifiers, pressedKey)
@@ -1978,6 +2047,43 @@ public partial class MainWindow : Window
         return !PreviewWebView.IsKeyboardFocusWithin
             && !SourceEditor.IsKeyboardFocusWithin
             && Keyboard.FocusedElement is not TextBoxBase;
+    }
+
+    private bool IsEditableControlFocused()
+    {
+        if (SourceEditor.IsKeyboardFocusWithin)
+        {
+            return true;
+        }
+
+        for (DependencyObject? current =
+                 Keyboard.FocusedElement as DependencyObject;
+             current is not null;
+             current = GetVisualOrLogicalParent(current))
+        {
+            if (current is TextBoxBase
+                or PasswordBox
+                or ComboBox
+                or Slider)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static DependencyObject? GetVisualOrLogicalParent(
+        DependencyObject element)
+    {
+        if (element is Visual
+            or System.Windows.Media.Media3D.Visual3D)
+        {
+            return VisualTreeHelper.GetParent(element)
+                ?? LogicalTreeHelper.GetParent(element);
+        }
+
+        return LogicalTreeHelper.GetParent(element);
     }
 
     private CopyShortcutAction ResolveCopyShortcutAction()

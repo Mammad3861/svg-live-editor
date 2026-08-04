@@ -4,4 +4,6 @@ public readonly record struct PreviewContextMenuRequest(
     double X,
     double Y,
     double ViewportWidth,
-    double ViewportHeight);
+    double ViewportHeight,
+    long SourceRevision,
+    string SelectionId);
