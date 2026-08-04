@@ -16,6 +16,8 @@ public sealed class PreviewHtmlBuilder
           const image = document.querySelector('img');
           const selectionOverlay = document.querySelector(
             '.selection-overlay');
+          const resizeHandleLayer = document.querySelector(
+            '.resize-handle-layer');
           const bridge = window.chrome && window.chrome.webview;
           const bridgeToken = document.body.dataset.bridgeToken;
           const sourceRevision = Number.parseInt(
@@ -29,6 +31,8 @@ public sealed class PreviewHtmlBuilder
           let activePanButton = null;
           let activeDirectDrag = null;
           let activeVisualGesture = null;
+          let activeResizeGesture = null;
+          let activeVisualSelection = null;
           let startX = 0;
           let startY = 0;
           let startScrollLeft = 0;
@@ -53,6 +57,7 @@ public sealed class PreviewHtmlBuilder
               !panModeEnabled &&
               minimumHorizontalDragDistance !== null &&
               minimumVerticalDragDistance !== null);
+            resizeHandleLayer.hidden = panModeEnabled;
             viewport.classList.toggle('select-mode', !panModeEnabled);
           };
 
@@ -178,7 +183,7 @@ public sealed class PreviewHtmlBuilder
               viewportWidth: viewport.clientWidth,
               viewportHeight: viewport.clientHeight,
               button: event.button,
-              startedOnArtwork: event.target === image,
+              startedOnArtwork: isArtworkUnderPointer(event),
               isPrimary: event.isPrimary,
               pointerType: event.pointerType,
               ctrlKey: event.ctrlKey,
@@ -240,6 +245,47 @@ public sealed class PreviewHtmlBuilder
             });
           };
 
+          const postVisualResizePointer = (
+              phase,
+              gesture,
+              event = null) => {
+            if (!bridge || !Number.isSafeInteger(sourceRevision) ||
+                sourceRevision < 0 || activeVisualSelection === null ||
+                gesture.selectionId !== activeVisualSelection.selectionId) {
+              return;
+            }
+
+            const imageRect = image.getBoundingClientRect();
+            const viewportRect = viewport.getBoundingClientRect();
+            bridge.postMessage({
+              type: 'visualResizePointer',
+              token: bridgeToken,
+              sourceRevision,
+              selectionId: gesture.selectionId,
+              phase,
+              gestureId: gesture.gestureId,
+              handle: gesture.handle,
+              x: lastPointerX,
+              y: lastPointerY,
+              viewportWidth: viewport.clientWidth,
+              viewportHeight: viewport.clientHeight,
+              imageLeft: imageRect.left - viewportRect.left,
+              imageTop: imageRect.top - viewportRect.top,
+              imageWidth: imageRect.width,
+              imageHeight: imageRect.height,
+              button: 0,
+              buttons: event ? event.buttons : 0,
+              ctrlKey: event ? event.ctrlKey : false,
+              shiftKey: event ? event.shiftKey : false,
+              altKey: event ? event.altKey : false,
+              metaKey: event ? event.metaKey : false,
+              spaceHeld,
+              pointerType: event ? event.pointerType : 'mouse',
+              isTrusted: event ? event.isTrusted : true,
+              isPrimary: event ? event.isPrimary : true
+            });
+          };
+
           const postVisualNudge = (deltaX, deltaY) => {
             if (bridge && Number.isSafeInteger(sourceRevision) &&
                 sourceRevision >= 0) {
@@ -263,7 +309,31 @@ public sealed class PreviewHtmlBuilder
             globalThis.crypto.getRandomValues(bytes);
             return Array.from(
               bytes,
-              value => value.toString(16).padStart(2, '0')).join('');
+                value => value.toString(16).padStart(2, '0')).join('');
+          };
+
+          const getResizeHandle = target =>
+            target instanceof HTMLElement &&
+            target.classList.contains('resize-handle')
+              ? target
+              : null;
+
+          const isArtworkUnderPointer = event => {
+            if (event.target === image) {
+              return true;
+            }
+            const handle = getResizeHandle(event.target);
+            if (handle === null) {
+              return false;
+            }
+
+            const previousPointerEvents = handle.style.pointerEvents;
+            handle.style.pointerEvents = 'none';
+            const underneath = document.elementFromPoint(
+              event.clientX,
+              event.clientY);
+            handle.style.pointerEvents = previousPointerEvents;
+            return underneath === image;
           };
 
           const choosePointerAction = event => {
@@ -280,11 +350,18 @@ public sealed class PreviewHtmlBuilder
                 event.pointerType !== 'mouse') {
               return 'none';
             }
+            const resizeHandle = getResizeHandle(event.target);
             if (event.altKey && !event.shiftKey && !event.metaKey &&
-                event.target === image) {
+                isArtworkUnderPointer(event)) {
               return 'drag';
             }
-            if (event.shiftKey || event.altKey || event.metaKey) {
+            if (event.altKey || event.metaKey) {
+              return 'none';
+            }
+            if (resizeHandle !== null) {
+              return 'resize';
+            }
+            if (event.shiftKey) {
               return 'none';
             }
             return 'visual';
@@ -326,8 +403,33 @@ public sealed class PreviewHtmlBuilder
             refreshCursor();
           };
 
+          const stopResizeGesture = (event, notify = true) => {
+            if (activeResizeGesture === null ||
+                (event &&
+                 event.pointerId !== activeResizeGesture.pointerId)) {
+              return;
+            }
+
+            const stopped = activeResizeGesture;
+            activeResizeGesture = null;
+            if (viewport.hasPointerCapture(stopped.pointerId)) {
+              viewport.releasePointerCapture(stopped.pointerId);
+            }
+            if (notify) {
+              postVisualResizePointer('cancel', stopped, event);
+            }
+            refreshCursor();
+          };
+
           const renderVisualSelection = message => {
+            if (activeResizeGesture !== null &&
+                (!message.visible ||
+                 message.selectionId !== activeResizeGesture.selectionId)) {
+              stopResizeGesture();
+            }
             selectionOverlay.replaceChildren();
+            resizeHandleLayer.replaceChildren();
+            activeVisualSelection = null;
             if (!message.visible) {
               return;
             }
@@ -342,7 +444,8 @@ public sealed class PreviewHtmlBuilder
               shape.setAttribute('y1', message.y1 + deltaY);
               shape.setAttribute('x2', message.x2 + deltaX);
               shape.setAttribute('y2', message.y2 + deltaY);
-            } else if (message.kind === 'ellipse') {
+            } else if (message.kind === 'ellipse' ||
+                       message.kind === 'circle') {
               shape = document.createElementNS(namespace, 'ellipse');
               shape.setAttribute(
                 'cx',
@@ -373,6 +476,60 @@ public sealed class PreviewHtmlBuilder
             }
             shape.classList.add('selection-shape');
             selectionOverlay.appendChild(shape);
+
+            activeVisualSelection = {
+              selectionId: message.selectionId,
+              handles: message.handles,
+              deltaX,
+              deltaY
+            };
+            for (const handleDefinition of message.handles) {
+              const handle = document.createElement('div');
+              handle.className = 'resize-handle';
+              handle.dataset.handle = handleDefinition.id;
+              handle.title = `Resize ${handleDefinition.id}`;
+              resizeHandleLayer.appendChild(handle);
+            }
+            positionResizeHandles();
+            requestAnimationFrame(positionResizeHandles);
+          };
+
+          const positionResizeHandles = () => {
+            if (activeVisualSelection === null) {
+              return;
+            }
+
+            const matrix = selectionOverlay.getScreenCTM();
+            if (matrix === null) {
+              return;
+            }
+            const stageRect = stage.getBoundingClientRect();
+            const handles = resizeHandleLayer.querySelectorAll(
+              '.resize-handle');
+            handles.forEach((handle, index) => {
+              const definition = activeVisualSelection.handles[index];
+              if (!definition) {
+                return;
+              }
+              const point = new DOMPoint(
+                definition.x + activeVisualSelection.deltaX,
+                definition.y + activeVisualSelection.deltaY)
+                .matrixTransform(matrix);
+              handle.style.left = `${point.x - stageRect.left}px`;
+              handle.style.top = `${point.y - stageRect.top}px`;
+            });
+          };
+
+          const areHandlesAllowedForKind = (kind, handles) => {
+            const allowed = kind === 'rect' || kind === 'ellipse'
+              ? ['top-left', 'top', 'top-right', 'right',
+                 'bottom-right', 'bottom', 'bottom-left', 'left']
+              : kind === 'circle'
+                ? ['top', 'right', 'bottom', 'left']
+                : kind === 'line'
+                  ? ['start', 'end']
+                  : [];
+            return handles.every(handle => allowed.includes(handle.id));
           };
 
           const isSafeFontFamily = value => {
@@ -565,8 +722,10 @@ public sealed class PreviewHtmlBuilder
                   `${message.renderedHeight}px`;
                 stage.style.width = `${message.renderedWidth + 48}px`;
                 stage.style.height = `${message.renderedHeight + 48}px`;
-                requestAnimationFrame(() =>
-                  restoreViewportCenter(message.centerX, message.centerY));
+                requestAnimationFrame(() => {
+                  restoreViewportCenter(message.centerX, message.centerY);
+                  positionResizeHandles();
+                });
                 return;
               }
 
@@ -586,6 +745,7 @@ public sealed class PreviewHtmlBuilder
                   message.minimumVerticalDragDistance;
                 stopPan();
                 stopDirectDrag();
+                stopResizeGesture(null, false);
                 stopVisualGesture(null, false);
                 refreshCursor();
                 return;
@@ -605,11 +765,11 @@ public sealed class PreviewHtmlBuilder
               }
 
               if (message.type === 'visualSelection' &&
-                  Object.keys(message).length === 11 &&
+                  Object.keys(message).length === 13 &&
                   Number.isSafeInteger(message.sourceRevision) &&
                   message.sourceRevision === sourceRevision &&
                   typeof message.visible === 'boolean' &&
-                  ['none', 'rect', 'ellipse', 'line', 'text']
+                  ['none', 'rect', 'circle', 'ellipse', 'line', 'text']
                     .includes(message.kind) &&
                   Number.isFinite(message.x1) &&
                   Math.abs(message.x1) <= 1000000000 &&
@@ -623,8 +783,28 @@ public sealed class PreviewHtmlBuilder
                   Math.abs(message.deltaX) <= 1000000000 &&
                   Number.isFinite(message.deltaY) &&
                   Math.abs(message.deltaY) <= 1000000000 &&
-                  ((message.visible && message.kind !== 'none') ||
+                  typeof message.selectionId === 'string' &&
+                  Array.isArray(message.handles) &&
+                  message.handles.length <= 8 &&
+                  message.handles.every(handle =>
+                    handle && typeof handle === 'object' &&
+                    Object.keys(handle).length === 3 &&
+                    typeof handle.id === 'string' &&
+                    ['top-left', 'top', 'top-right', 'right',
+                     'bottom-right', 'bottom', 'bottom-left', 'left',
+                     'start', 'end'].includes(handle.id) &&
+                    Number.isFinite(handle.x) &&
+                    Math.abs(handle.x) <= 1000000000 &&
+                    Number.isFinite(handle.y) &&
+                    Math.abs(handle.y) <= 1000000000) &&
+                  new Set(message.handles.map(handle => handle.id)).size ===
+                    message.handles.length &&
+                  areHandlesAllowedForKind(message.kind, message.handles) &&
+                  ((message.visible && message.kind !== 'none' &&
+                    /^[0-9a-fA-F]{32}$/.test(message.selectionId)) ||
                    (!message.visible && message.kind === 'none' &&
+                    message.selectionId === '' &&
+                    message.handles.length === 0 &&
                     message.x1 === 0 && message.y1 === 0 &&
                     message.x2 === 0 && message.y2 === 0 &&
                     message.deltaX === 0 && message.deltaY === 0))) {
@@ -764,6 +944,36 @@ public sealed class PreviewHtmlBuilder
           viewport.addEventListener('pointerdown', event => {
             rememberPointer(event);
             const action = choosePointerAction(event);
+            if (action === 'resize') {
+              const handle = getResizeHandle(event.target);
+              const gestureId = createGestureId();
+              if (handle === null || gestureId === null ||
+                  activeVisualSelection === null ||
+                  !activeVisualSelection.handles.some(
+                    item => item.id === handle.dataset.handle)) {
+                return;
+              }
+
+              event.preventDefault();
+              stopPan();
+              stopDirectDrag();
+              stopVisualGesture();
+              stopResizeGesture();
+              activeResizeGesture = {
+                gestureId,
+                pointerId: event.pointerId,
+                selectionId: activeVisualSelection.selectionId,
+                handle: handle.dataset.handle
+              };
+              viewport.setPointerCapture(event.pointerId);
+              postVisualResizePointer(
+                'down',
+                activeResizeGesture,
+                event);
+              refreshCursor();
+              return;
+            }
+
             if (action === 'visual') {
               const gestureId = createGestureId();
               if (gestureId === null) {
@@ -773,6 +983,7 @@ public sealed class PreviewHtmlBuilder
               event.preventDefault();
               stopPan();
               stopDirectDrag();
+              stopResizeGesture();
               stopVisualGesture();
               activeVisualGesture = {
                 gestureId,
@@ -800,6 +1011,7 @@ public sealed class PreviewHtmlBuilder
 
               event.preventDefault();
               stopPan();
+              stopResizeGesture();
               stopVisualGesture();
               activeDirectDrag = {
                 gestureId,
@@ -820,6 +1032,7 @@ public sealed class PreviewHtmlBuilder
 
             event.preventDefault();
             stopDirectDrag();
+            stopResizeGesture();
             stopVisualGesture();
             activePointerId = event.pointerId;
             activePanButton = event.button;
@@ -833,6 +1046,24 @@ public sealed class PreviewHtmlBuilder
 
           viewport.addEventListener('pointermove', event => {
             rememberPointer(event);
+            if (activeResizeGesture !== null &&
+                event.pointerId === activeResizeGesture.pointerId) {
+              if (!event.isTrusted ||
+                  (event.buttons & 1) === 0 ||
+                  spaceHeld || event.ctrlKey || panModeEnabled ||
+                  event.altKey || event.metaKey) {
+                stopResizeGesture(event);
+                return;
+              }
+
+              event.preventDefault();
+              postVisualResizePointer(
+                'move',
+                activeResizeGesture,
+                event);
+              return;
+            }
+
             if (activeVisualGesture !== null &&
                 event.pointerId === activeVisualGesture.pointerId) {
               if (!event.isTrusted ||
@@ -893,6 +1124,15 @@ public sealed class PreviewHtmlBuilder
           viewport.addEventListener('pointerup', event => {
             stopPan(event);
             stopDirectDrag(event);
+            if (activeResizeGesture !== null &&
+                event.pointerId === activeResizeGesture.pointerId) {
+              rememberPointer(event);
+              postVisualResizePointer(
+                'up',
+                activeResizeGesture,
+                event);
+              stopResizeGesture(event, false);
+            }
             if (activeVisualGesture !== null &&
                 event.pointerId === activeVisualGesture.pointerId) {
               rememberPointer(event);
@@ -906,22 +1146,34 @@ public sealed class PreviewHtmlBuilder
           viewport.addEventListener('pointercancel', event => {
             stopPan(event);
             stopDirectDrag(event);
+            stopResizeGesture(event);
             stopVisualGesture(event);
           });
           viewport.addEventListener('lostpointercapture', event => {
             stopPan(event);
             stopDirectDrag(event);
+            stopResizeGesture(event);
             stopVisualGesture(event);
           });
           viewport.addEventListener('pointerleave', event => {
             stopPan(event);
             stopDirectDrag(event);
+            stopResizeGesture(event);
             stopVisualGesture(event);
           });
           viewport.addEventListener('scroll', scheduleViewportState);
           window.addEventListener('pointerup', event => {
             stopPan(event);
             stopDirectDrag(event);
+            if (activeResizeGesture !== null &&
+                event.pointerId === activeResizeGesture.pointerId) {
+              rememberPointer(event);
+              postVisualResizePointer(
+                'up',
+                activeResizeGesture,
+                event);
+              stopResizeGesture(event, false);
+            }
             if (activeVisualGesture !== null &&
                 event.pointerId === activeVisualGesture.pointerId) {
               rememberPointer(event);
@@ -935,6 +1187,7 @@ public sealed class PreviewHtmlBuilder
           window.addEventListener('pointercancel', event => {
             stopPan(event);
             stopDirectDrag(event);
+            stopResizeGesture(event);
             stopVisualGesture(event);
           }, true);
           viewport.addEventListener('dragstart', event => event.preventDefault());
@@ -947,6 +1200,7 @@ public sealed class PreviewHtmlBuilder
           viewport.addEventListener('contextmenu', event => {
             event.preventDefault();
             stopDirectDrag();
+            stopResizeGesture();
             stopVisualGesture();
             rememberPointer(event);
             viewport.focus({ preventScroll: true });
@@ -962,6 +1216,7 @@ public sealed class PreviewHtmlBuilder
             } else if (event.code === 'Space') {
               spaceHeld = true;
               event.preventDefault();
+              stopResizeGesture();
               stopVisualGesture();
               refreshCursor();
             } else if (event.code === 'KeyH' &&
@@ -975,6 +1230,7 @@ public sealed class PreviewHtmlBuilder
                        !event.metaKey && !event.shiftKey &&
                        !event.repeat) {
               event.preventDefault();
+              stopResizeGesture();
               stopVisualGesture();
               postPanCommand('exit');
             } else if (!panModeEnabled &&
@@ -992,6 +1248,7 @@ public sealed class PreviewHtmlBuilder
             } else if (event.code === 'Escape') {
               event.preventDefault();
               stopDirectDrag();
+              stopResizeGesture();
               stopVisualGesture();
               postPanCommand('exit');
             }
@@ -1002,6 +1259,7 @@ public sealed class PreviewHtmlBuilder
               spaceHeld = false;
               stopPan();
               stopDirectDrag();
+              stopResizeGesture();
               refreshCursor();
             }
           });
@@ -1010,6 +1268,7 @@ public sealed class PreviewHtmlBuilder
             spaceHeld = false;
             stopPan();
             stopDirectDrag();
+            stopResizeGesture();
             stopVisualGesture();
             refreshCursor();
           });
@@ -1033,6 +1292,7 @@ public sealed class PreviewHtmlBuilder
           new ResizeObserver(() => {
             refreshCursor();
             scheduleViewportState();
+            positionResizeHandles();
           }).observe(viewport);
           document.body.dataset.hostScriptReady = 'true';
         })();
@@ -1188,6 +1448,7 @@ public sealed class PreviewHtmlBuilder
                 .selection-overlay {
                   pointer-events: none;
                   overflow: visible;
+                  z-index: 1;
                 }
                 .selection-shape {
                   fill: rgba(37, 99, 235, 0.08);
@@ -1195,6 +1456,45 @@ public sealed class PreviewHtmlBuilder
                   stroke-width: 2;
                   stroke-dasharray: 6 4;
                   vector-effect: non-scaling-stroke;
+                }
+                .resize-handle-layer {
+                  position: absolute;
+                  inset: 0;
+                  pointer-events: none;
+                  overflow: visible;
+                  z-index: 2;
+                }
+                .resize-handle {
+                  position: absolute;
+                  width: 12px;
+                  height: 12px;
+                  box-sizing: border-box;
+                  transform: translate(-50%, -50%);
+                  border: 2px solid #2563eb;
+                  border-radius: 2px;
+                  background: #ffffff;
+                  pointer-events: auto;
+                }
+                .resize-handle[data-handle="top-left"],
+                .resize-handle[data-handle="bottom-right"] {
+                  cursor: nwse-resize;
+                }
+                .resize-handle[data-handle="top-right"],
+                .resize-handle[data-handle="bottom-left"] {
+                  cursor: nesw-resize;
+                }
+                .resize-handle[data-handle="top"],
+                .resize-handle[data-handle="bottom"] {
+                  cursor: ns-resize;
+                }
+                .resize-handle[data-handle="right"],
+                .resize-handle[data-handle="left"] {
+                  cursor: ew-resize;
+                }
+                .resize-handle[data-handle="start"],
+                .resize-handle[data-handle="end"] {
+                  border-radius: 50%;
+                  cursor: move;
                 }
               </style>
             </head>
@@ -1212,6 +1512,8 @@ public sealed class PreviewHtmlBuilder
                        aria-hidden="true"
                        viewBox="{{overlayViewBox}}"
                        preserveAspectRatio="{{overlayPreserveAspectRatio}}"></svg>
+                  <div class="resize-handle-layer"
+                       aria-hidden="true"></div>
                 </main>
               </div>
               <script>{{normalizedHostScript}}</script>

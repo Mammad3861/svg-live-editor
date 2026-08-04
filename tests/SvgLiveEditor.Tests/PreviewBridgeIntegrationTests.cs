@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Media;
@@ -66,7 +67,16 @@ public sealed class PreviewBridgeIntegrationTests
         bool TextMeasurementDidNotModifySource,
         bool MeasurementSurfaceWasRemoved,
         bool InvalidTextMeasurementRequestsWereIgnored,
-        bool FontChangeMeasured);
+        bool FontChangeMeasured,
+        bool ResizeMessagesPassedStrictParser,
+        bool ResizeTemporaryOutlineChanged,
+        bool ResizeSourceStayedUnchangedBeforeRelease,
+        bool ResizeCommittedExactlyOnce,
+        bool ResizeRenderedArtworkUpdated,
+        bool ResizeHandleStayedFixedSize,
+        bool ResizeModifiersPreservedArbitration,
+        bool ResizeDidNotNavigateDuringPointerMove,
+        bool ResizeKeptWebViewZoomAtOne);
 
     [TestMethod]
     [TestCategory("DesktopIntegration")]
@@ -135,6 +145,15 @@ public sealed class PreviewBridgeIntegrationTests
         Assert.IsTrue(result.MeasurementSurfaceWasRemoved);
         Assert.IsTrue(result.InvalidTextMeasurementRequestsWereIgnored);
         Assert.IsTrue(result.FontChangeMeasured);
+        Assert.IsTrue(result.ResizeMessagesPassedStrictParser);
+        Assert.IsTrue(result.ResizeTemporaryOutlineChanged);
+        Assert.IsTrue(result.ResizeSourceStayedUnchangedBeforeRelease);
+        Assert.IsTrue(result.ResizeCommittedExactlyOnce);
+        Assert.IsTrue(result.ResizeRenderedArtworkUpdated);
+        Assert.IsTrue(result.ResizeHandleStayedFixedSize);
+        Assert.IsTrue(result.ResizeModifiersPreservedArbitration);
+        Assert.IsTrue(result.ResizeDidNotNavigateDuringPointerMove);
+        Assert.IsTrue(result.ResizeKeptWebViewZoomAtOne);
         Assert.IsTrue(thread.Join(TimeSpan.FromSeconds(5)));
     }
 
@@ -254,7 +273,13 @@ public sealed class PreviewBridgeIntegrationTests
                             110,
                             70),
                         5,
-                        -5)));
+                        -5,
+                        "0123456789ABCDEFFEDCBA9876543210",
+                        [
+                            new SvgResizeHandleDefinition(
+                                SvgResizeHandle.BottomRight,
+                                new SvgVisualPoint(110, 70))
+                        ])));
             await Task.Delay(50);
             string acceptedVisualSelection =
                 await ReadVisualSelectionAsync(core);
@@ -310,6 +335,12 @@ public sealed class PreviewBridgeIntegrationTests
                 TaskCreationOptions.RunContinuationsAsynchronously);
             TaskCompletionSource<string> secondTextMeasurementReceived = new(
                 TaskCreationOptions.RunContinuationsAsynchronously);
+            TaskCompletionSource<string> resizeDownReceived = new(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            TaskCompletionSource<string> resizeMoveReceived = new(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            TaskCompletionSource<string> resizeUpReceived = new(
+                TaskCreationOptions.RunContinuationsAsynchronously);
             int zoomMessageCount = 0;
             int copyCommandCount = 0;
             int textMeasurementMessageCount = 0;
@@ -359,6 +390,28 @@ public sealed class PreviewBridgeIntegrationTests
                         ? firstTextMeasurementReceived
                         : secondTextMeasurementReceived)
                         .TrySetResult(args.WebMessageAsJson);
+                }
+                else if (message.RootElement.TryGetProperty(
+                         "type",
+                         out type)
+                    && type.GetString() == "visualResizePointer"
+                    && message.RootElement.TryGetProperty(
+                        "phase",
+                        out JsonElement phase))
+                {
+                    string json = args.WebMessageAsJson;
+                    if (phase.GetString() == "down")
+                    {
+                        resizeDownReceived.TrySetResult(json);
+                    }
+                    else if (phase.GetString() == "move")
+                    {
+                        resizeMoveReceived.TrySetResult(json);
+                    }
+                    else if (phase.GetString() == "up")
+                    {
+                        resizeUpReceived.TrySetResult(json);
+                    }
                 }
             };
 
@@ -638,7 +691,9 @@ public sealed class PreviewBridgeIntegrationTests
                             exactBounds.Right,
                             exactBounds.Bottom),
                         0,
-                        0)));
+                        0,
+                        "0123456789ABCDEFFEDCBA9876543210",
+                        [])));
             await Task.Delay(50);
             string textOverlay = await ReadVisualSelectionAsync(core);
             bool textOverlayAligned = TryReadOverlayBounds(
@@ -868,6 +923,233 @@ public sealed class PreviewBridgeIntegrationTests
             using JsonDocument metrics = JsonDocument.Parse(metricsJson);
             JsonElement root = metrics.RootElement;
 
+            const string resizeSelectionId =
+                "AABBCCDDEEFF00112233445566778899";
+            string resizeSource =
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 300 150\"><rect id=\"target\" x=\"80\" y=\"50\" width=\"60\" height=\"30\" fill=\"#dc2626\"/></svg>";
+            string resizeSourceSnapshot = resizeSource;
+            SvgDocumentIndexResult resizeIndex =
+                new SvgDocumentIndexService().Build(resizeSource);
+            SvgVisualDocument resizeVisual =
+                new SvgVisualGeometryIndexService().Build(
+                    resizeIndex.Document!,
+                    new SvgCanvasSizeReader().Read(resizeSource));
+            SvgVisualElement resizeElement = resizeVisual.Elements.Single();
+            SvgVisualResizeHandleService resizeHandleService = new();
+            SvgVisualResizeService resizeService = new();
+            core.PostWebMessageAsJson(
+                visualMessageBuilder.BuildVisualSelectionMessage(
+                    BridgeToken,
+                    7,
+                    new PreviewVisualSelection(
+                        resizeElement.Kind,
+                        resizeElement.Geometry!,
+                        0,
+                        0,
+                        resizeSelectionId,
+                        resizeHandleService.Create(resizeElement))));
+            await Task.Delay(75);
+
+            ResizeHandleMetrics handleAtFirstScale =
+                await GetResizeHandleMetricsAsync(
+                    core,
+                    "bottom-right");
+            core.PostWebMessageAsJson(
+                new PreviewPageMessageBuilder().BuildZoomStateMessage(
+                    BridgeToken,
+                    750,
+                    375,
+                    PreviewViewportPosition.Center));
+            await Task.Delay(100);
+            ResizeHandleMetrics handleAtSecondScale =
+                await GetResizeHandleMetricsAsync(
+                    core,
+                    "bottom-right");
+            bool resizeHandleStayedFixedSize =
+                NearlyEqual(handleAtFirstScale.Width, 12)
+                && NearlyEqual(handleAtFirstScale.Height, 12)
+                && NearlyEqual(handleAtSecondScale.Width, 12)
+                && NearlyEqual(handleAtSecondScale.Height, 12);
+
+            core.PostWebMessageAsJson(
+                new PreviewPageMessageBuilder().BuildPanStateMessage(
+                    BridgeToken,
+                    enabled: false,
+                    minimumHorizontalDragDistance: 4,
+                    minimumVerticalDragDistance: 4));
+            await Task.Delay(50);
+            await DispatchMouseAsync(
+                core,
+                "mousePressed",
+                handleAtSecondScale.CenterX,
+                handleAtSecondScale.CenterY,
+                buttons: 1,
+                button: "left",
+                modifiers: 1);
+            await DispatchMouseAsync(
+                core,
+                "mouseReleased",
+                handleAtSecondScale.CenterX,
+                handleAtSecondScale.CenterY,
+                buttons: 0,
+                button: "left",
+                modifiers: 1);
+            await DispatchMouseAsync(
+                core,
+                "mousePressed",
+                handleAtSecondScale.CenterX,
+                handleAtSecondScale.CenterY,
+                buttons: 1,
+                button: "left",
+                modifiers: 2);
+            await DispatchMouseAsync(
+                core,
+                "mouseReleased",
+                handleAtSecondScale.CenterX,
+                handleAtSecondScale.CenterY,
+                buttons: 0,
+                button: "left",
+                modifiers: 2);
+            bool resizeModifiersPreservedArbitration =
+                !resizeDownReceived.Task.IsCompleted;
+
+            int navigationCountBeforeResize = zoomNavigationCount;
+            await DispatchMouseAsync(
+                core,
+                "mousePressed",
+                handleAtSecondScale.CenterX,
+                handleAtSecondScale.CenterY,
+                buttons: 1,
+                button: "left");
+            string resizeDownJson = await resizeDownReceived.Task.WaitAsync(
+                TimeSpan.FromSeconds(5));
+            await DispatchMouseAsync(
+                core,
+                "mouseMoved",
+                handleAtSecondScale.CenterX + 50,
+                handleAtSecondScale.CenterY + 25,
+                buttons: 1,
+                button: "left");
+            string resizeMoveJson = await resizeMoveReceived.Task.WaitAsync(
+                TimeSpan.FromSeconds(5));
+
+            PreviewVisualInteractionMessageParser resizeParser = new();
+            bool parsedDown = resizeParser.TryParseResizePointer(
+                resizeDownJson,
+                BridgeToken,
+                7,
+                resizeSelectionId,
+                out PreviewVisualResizePointerMessage resizeDown);
+            bool parsedMove = resizeParser.TryParseResizePointer(
+                resizeMoveJson,
+                BridgeToken,
+                7,
+                resizeSelectionId,
+                out PreviewVisualResizePointerMessage resizeMove);
+            SvgVisualShapeGeometry temporaryGeometry =
+                resizeElement.Geometry!;
+            bool calculatedTemporary = parsedMove
+                && new PreviewSvgCoordinateMapper().TryMap(
+                    resizeVisual.Viewport,
+                    resizeMove.Image,
+                    resizeMove.ViewportPoint,
+                    out SvgMappedPreviewPoint mappedResize)
+                && resizeService.TryCalculate(
+                    resizeElement,
+                    resizeMove.Handle,
+                    mappedResize.Point,
+                    resizeMove.ShiftHeld,
+                    out temporaryGeometry,
+                    out _);
+            if (!calculatedTemporary)
+            {
+                throw new InvalidOperationException(
+                    "The trusted resize move could not be mapped.");
+            }
+            core.PostWebMessageAsJson(
+                visualMessageBuilder.BuildVisualSelectionMessage(
+                    BridgeToken,
+                    7,
+                    new PreviewVisualSelection(
+                        resizeElement.Kind,
+                        temporaryGeometry,
+                        0,
+                        0,
+                        resizeSelectionId,
+                        resizeHandleService.Create(
+                            resizeElement,
+                            temporaryGeometry))));
+            await Task.Delay(75);
+            bool resizeTemporaryOutlineChanged =
+                !string.Equals(
+                    await ReadVisualSelectionAsync(core),
+                    "rect|80|50|60|30",
+                    StringComparison.Ordinal);
+            bool resizeSourceStayedUnchangedBeforeRelease =
+                resizeSource.Equals(
+                    resizeSourceSnapshot,
+                    StringComparison.Ordinal);
+            bool resizeDidNotNavigateDuringPointerMove =
+                zoomNavigationCount == navigationCountBeforeResize;
+
+            await DispatchMouseAsync(
+                core,
+                "mouseReleased",
+                handleAtSecondScale.CenterX + 50,
+                handleAtSecondScale.CenterY + 25,
+                buttons: 0,
+                button: "left");
+            string resizeUpJson = await resizeUpReceived.Task.WaitAsync(
+                TimeSpan.FromSeconds(5));
+            bool parsedUp = resizeParser.TryParseResizePointer(
+                resizeUpJson,
+                BridgeToken,
+                7,
+                resizeSelectionId,
+                out PreviewVisualResizePointerMessage resizeUp);
+            int resizeEditCount = 0;
+            SvgAttributeEditResult resizeEdit = resizeService.CreateEdit(
+                resizeSource,
+                resizeElement,
+                temporaryGeometry);
+            if (parsedUp && resizeEdit.IsSuccess && resizeEdit.Edit is not null)
+            {
+                resizeSource = resizeEdit.Edit.Apply(resizeSource);
+                resizeEditCount++;
+            }
+            bool resizeCommittedExactlyOnce =
+                resizeEditCount == 1
+                && !resizeSource.Equals(
+                    resizeSourceSnapshot,
+                    StringComparison.Ordinal);
+
+            string resizedImageSource =
+                "data:image/svg+xml;base64,"
+                + Convert.ToBase64String(Encoding.UTF8.GetBytes(resizeSource));
+            string serializedImageSource =
+                JsonSerializer.Serialize(resizedImageSource);
+            await core.ExecuteScriptAsync(
+                $$"""
+                (() => new Promise(resolve => {
+                  const image = document.querySelector('img');
+                  image.addEventListener('load', () => resolve(true),
+                    { once: true });
+                  image.src = {{serializedImageSource}};
+                }))()
+                """);
+            bool resizeRenderedArtworkUpdated =
+                JsonSerializer.Deserialize<bool>(
+                    await core.ExecuteScriptAsync(
+                        $"document.querySelector('img').src === {serializedImageSource}"));
+            bool resizeMessagesPassedStrictParser =
+                parsedDown
+                && parsedMove
+                && parsedUp
+                && resizeDown.Handle == SvgResizeHandle.BottomRight
+                && resizeUp.Handle == SvgResizeHandle.BottomRight;
+            bool resizeKeptWebViewZoomAtOne =
+                NearlyEqual(webView.ZoomFactor, 1.0);
+
             completion.TrySetResult(new BridgeResult(
                 request.Direction == PreviewZoomDirection.In ? "in" : "out",
                 transition.State.DisplayText,
@@ -896,7 +1178,16 @@ public sealed class PreviewBridgeIntegrationTests
                 textMeasurementDidNotModifySource,
                 measurementSurfaceWasRemoved,
                 invalidTextMeasurementRequestsWereIgnored,
-                fontChangeMeasured));
+                fontChangeMeasured,
+                resizeMessagesPassedStrictParser,
+                resizeTemporaryOutlineChanged,
+                resizeSourceStayedUnchangedBeforeRelease,
+                resizeCommittedExactlyOnce,
+                resizeRenderedArtworkUpdated,
+                resizeHandleStayedFixedSize,
+                resizeModifiersPreservedArbitration,
+                resizeDidNotNavigateDuringPointerMove,
+                resizeKeptWebViewZoomAtOne));
         }
         catch (Exception exception)
         {
@@ -1062,6 +1353,38 @@ public sealed class PreviewBridgeIntegrationTests
         return JsonSerializer.Deserialize<string>(json) ?? string.Empty;
     }
 
+    private static async Task<ResizeHandleMetrics> GetResizeHandleMetricsAsync(
+        CoreWebView2 core,
+        string handleId)
+    {
+        string serializedHandle = JsonSerializer.Serialize(handleId);
+        string json = await core.ExecuteScriptAsync(
+            $$"""
+            JSON.stringify((() => {
+              const handle = document.querySelector(
+                `.resize-handle[data-handle=${CSS.escape({{serializedHandle}})}]`);
+              if (!handle) {
+                return null;
+              }
+              const rect = handle.getBoundingClientRect();
+              return {
+                centerX: rect.left + rect.width / 2,
+                centerY: rect.top + rect.height / 2,
+                width: rect.width,
+                height: rect.height
+              };
+            })())
+            """);
+        string? decoded = JsonSerializer.Deserialize<string>(json);
+        return JsonSerializer.Deserialize<ResizeHandleMetrics>(
+            decoded ?? "null",
+            new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            }) ?? throw new InvalidOperationException(
+                $"Resize handle {handleId} was not rendered.");
+    }
+
     private static double ParseScriptNumber(string json)
     {
         return JsonSerializer.Deserialize<double>(json);
@@ -1074,6 +1397,12 @@ public sealed class PreviewBridgeIntegrationTests
         double ClientHeight,
         double MaxLeft,
         double MaxTop);
+
+    private sealed record ResizeHandleMetrics(
+        double CenterX,
+        double CenterY,
+        double Width,
+        double Height);
 
     private static async Task<WheelResult> RunWheelInputChecksAsync(
         CoreWebView2 core,
@@ -1335,6 +1664,32 @@ public sealed class PreviewBridgeIntegrationTests
             deltaX,
             deltaY,
             modifiers,
+            pointerType = "mouse"
+        });
+        await core.CallDevToolsProtocolMethodAsync(
+            "Input.dispatchMouseEvent",
+            parameters);
+        await Task.Delay(50);
+    }
+
+    private static async Task DispatchMouseAsync(
+        CoreWebView2 core,
+        string type,
+        double x,
+        double y,
+        int buttons,
+        string button,
+        int modifiers = 0)
+    {
+        string parameters = JsonSerializer.Serialize(new
+        {
+            type,
+            x,
+            y,
+            button,
+            buttons,
+            modifiers,
+            clickCount = type == "mousePressed" ? 1 : 0,
             pointerType = "mouse"
         });
         await core.CallDevToolsProtocolMethodAsync(

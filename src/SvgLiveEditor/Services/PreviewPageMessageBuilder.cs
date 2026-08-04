@@ -122,13 +122,40 @@ public sealed class PreviewPageMessageBuilder
                 0,
                 0),
             0,
-            0);
+            0,
+            string.Empty,
+            []);
         ValidateVisualCoordinate(value.Geometry.X1, nameof(selection));
         ValidateVisualCoordinate(value.Geometry.Y1, nameof(selection));
         ValidateVisualCoordinate(value.Geometry.X2, nameof(selection));
         ValidateVisualCoordinate(value.Geometry.Y2, nameof(selection));
         ValidateVisualCoordinate(value.DeltaX, nameof(selection));
         ValidateVisualCoordinate(value.DeltaY, nameof(selection));
+        ArgumentNullException.ThrowIfNull(value.ResizeHandles);
+        if (selection is not null)
+        {
+            ValidateHexToken(value.SelectionId, nameof(selection));
+        }
+        else if (value.SelectionId.Length != 0
+            || value.ResizeHandles.Count != 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(selection));
+        }
+        if (value.ResizeHandles.Count > 8
+            || value.ResizeHandles
+                .Select(handle => handle.Handle)
+                .Distinct()
+                .Count() != value.ResizeHandles.Count
+            || value.ResizeHandles.Any(handle =>
+                !IsAllowedResizeHandle(value.Kind, handle.Handle)))
+        {
+            throw new ArgumentOutOfRangeException(nameof(selection));
+        }
+        foreach (SvgResizeHandleDefinition handle in value.ResizeHandles)
+        {
+            ValidateVisualCoordinate(handle.Point.X, nameof(selection));
+            ValidateVisualCoordinate(handle.Point.Y, nameof(selection));
+        }
 
         return JsonSerializer.Serialize(new
         {
@@ -142,8 +169,8 @@ public sealed class PreviewPageMessageBuilder
                 {
                     SvgVisualElementKind.Rect
                         or SvgVisualElementKind.Unsupported => "rect",
-                    SvgVisualElementKind.Circle
-                        or SvgVisualElementKind.Ellipse => "ellipse",
+                    SvgVisualElementKind.Circle => "circle",
+                    SvgVisualElementKind.Ellipse => "ellipse",
                     SvgVisualElementKind.Line => "line",
                     SvgVisualElementKind.Text => "text",
                     _ => throw new ArgumentOutOfRangeException(
@@ -154,7 +181,14 @@ public sealed class PreviewPageMessageBuilder
             x2 = value.Geometry.X2,
             y2 = value.Geometry.Y2,
             deltaX = value.DeltaX,
-            deltaY = value.DeltaY
+            deltaY = value.DeltaY,
+            selectionId = value.SelectionId,
+            handles = value.ResizeHandles.Select(handle => new
+            {
+                id = SvgVisualResizeHandleService.ToWireName(handle.Handle),
+                x = handle.Point.X,
+                y = handle.Point.Y
+            })
         });
     }
 
@@ -288,4 +322,27 @@ public sealed class PreviewPageMessageBuilder
             throw new ArgumentOutOfRangeException(parameterName);
         }
     }
+
+    private static bool IsAllowedResizeHandle(
+        SvgVisualElementKind kind,
+        SvgResizeHandle handle) => kind switch
+    {
+        SvgVisualElementKind.Rect or SvgVisualElementKind.Ellipse =>
+            handle is SvgResizeHandle.TopLeft
+                or SvgResizeHandle.Top
+                or SvgResizeHandle.TopRight
+                or SvgResizeHandle.Right
+                or SvgResizeHandle.BottomRight
+                or SvgResizeHandle.Bottom
+                or SvgResizeHandle.BottomLeft
+                or SvgResizeHandle.Left,
+        SvgVisualElementKind.Circle =>
+            handle is SvgResizeHandle.Top
+                or SvgResizeHandle.Right
+                or SvgResizeHandle.Bottom
+                or SvgResizeHandle.Left,
+        SvgVisualElementKind.Line =>
+            handle is SvgResizeHandle.Start or SvgResizeHandle.End,
+        _ => false
+    };
 }

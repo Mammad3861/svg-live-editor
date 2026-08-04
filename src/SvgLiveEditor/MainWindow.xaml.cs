@@ -1597,8 +1597,8 @@ public partial class MainWindow : Window
         PanModeButton.IsChecked = enabled;
         SelectModeButton.IsChecked = !enabled;
         SelectModeButton.ToolTip = enabled
-            ? "Select and move supported SVG elements (V)"
-            : "Select tool active; drag rect, circle, ellipse, or line (V)";
+            ? "Select, move, and resize supported SVG elements (V)"
+            : "Select tool active; drag artwork or its resize handles (V)";
         PanModeButton.ToolTip = enabled
             ? "Pan mode active; left drag an overflowing preview (Escape exits)"
             : "Pan overflowing preview with left drag (H toggles, Escape exits)";

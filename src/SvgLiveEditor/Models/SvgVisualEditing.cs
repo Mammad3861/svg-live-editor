@@ -10,6 +10,20 @@ public enum SvgVisualElementKind
     Text
 }
 
+public enum SvgResizeHandle
+{
+    TopLeft,
+    Top,
+    TopRight,
+    Right,
+    BottomRight,
+    Bottom,
+    BottomLeft,
+    Left,
+    Start,
+    End
+}
+
 public readonly record struct SvgVisualPoint(double X, double Y);
 
 public readonly record struct SvgVisualBounds(
@@ -67,6 +81,13 @@ public sealed record SvgVisualElement(
 
     public bool IsMovable =>
         Geometry is not null && string.IsNullOrWhiteSpace(UnsupportedReason);
+
+    public bool IsResizable =>
+        IsMovable
+        && Kind is SvgVisualElementKind.Rect
+            or SvgVisualElementKind.Circle
+            or SvgVisualElementKind.Ellipse
+            or SvgVisualElementKind.Line;
 }
 
 public readonly record struct SvgVisualHitTestResult(
@@ -157,6 +178,24 @@ public readonly record struct PreviewVisualPointerMessage(
     bool MetaHeld,
     bool SpaceHeld);
 
+public readonly record struct PreviewVisualResizePointerMessage(
+    PreviewVisualPointerPhase Phase,
+    string GestureId,
+    string SelectionId,
+    SvgResizeHandle Handle,
+    long SourceRevision,
+    SvgVisualPoint ViewportPoint,
+    double ViewportWidth,
+    double ViewportHeight,
+    PreviewImageMetrics Image,
+    int Button,
+    int Buttons,
+    bool ControlHeld,
+    bool ShiftHeld,
+    bool AltHeld,
+    bool MetaHeld,
+    bool SpaceHeld);
+
 public readonly record struct PreviewVisualNudgeRequest(
     long SourceRevision,
     double DeltaX,
@@ -166,7 +205,13 @@ public readonly record struct PreviewVisualSelection(
     SvgVisualElementKind Kind,
     SvgVisualShapeGeometry Geometry,
     double DeltaX,
-    double DeltaY);
+    double DeltaY,
+    string SelectionId,
+    IReadOnlyList<SvgResizeHandleDefinition> ResizeHandles);
+
+public readonly record struct SvgResizeHandleDefinition(
+    SvgResizeHandle Handle,
+    SvgVisualPoint Point);
 
 public readonly record struct VisualEditingReadiness(
     bool IsPanModeEnabled,
