@@ -59,6 +59,29 @@
                   Click="OnCopyEntireSourceClick"
                   AutomationProperties.Name="Copy Entire SVG Source" />
       </MenuItem>
+      <MenuItem Header="_Arrange"
+                SubmenuOpened="OnArrangeMenuSubmenuOpened">
+        <MenuItem x:Name="BringToFrontMenuItem"
+                  Header="Bring to _Front"
+                  InputGestureText="Ctrl+Shift+]"
+                  Tag="BringToFront"
+                  Click="OnArrangeClick" />
+        <MenuItem x:Name="BringForwardMenuItem"
+                  Header="Bring _Forward"
+                  InputGestureText="Ctrl+]"
+                  Tag="BringForward"
+                  Click="OnArrangeClick" />
+        <MenuItem x:Name="SendBackwardMenuItem"
+                  Header="Send _Backward"
+                  InputGestureText="Ctrl+["
+                  Tag="SendBackward"
+                  Click="OnArrangeClick" />
+        <MenuItem x:Name="SendToBackMenuItem"
+                  Header="Send to _Back"
+                  InputGestureText="Ctrl+Shift+["
+                  Tag="SendToBack"
+                  Click="OnArrangeClick" />
+      </MenuItem>
       <MenuItem Header="_View">
         <MenuItem x:Name="WordWrapMenuItem"
                   Header="_Word Wrap"
@@ -234,9 +257,26 @@
                       PreviewKeyDown="OnInspectorTreePreviewKeyDown"
                       PreviewKeyUp="OnInspectorTreePreviewKeyUp"
                       LostKeyboardFocus="OnInspectorTreeLostKeyboardFocus"
+                      ContextMenuOpening="OnInspectorArrangeContextMenuOpening"
                       BorderThickness="0"
                       Padding="4"
                       AutomationProperties.Name="SVG element tree">
+              <TreeView.ContextMenu>
+                <ContextMenu>
+                  <MenuItem Header="Bring to Front"
+                            Tag="BringToFront"
+                            Click="OnArrangeClick" />
+                  <MenuItem Header="Bring Forward"
+                            Tag="BringForward"
+                            Click="OnArrangeClick" />
+                  <MenuItem Header="Send Backward"
+                            Tag="SendBackward"
+                            Click="OnArrangeClick" />
+                  <MenuItem Header="Send to Back"
+                            Tag="SendToBack"
+                            Click="OnArrangeClick" />
+                </ContextMenu>
+              </TreeView.ContextMenu>
               <TreeView.ItemContainerStyle>
                 <Style TargetType="TreeViewItem">
                   <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
@@ -305,6 +345,7 @@
           <Grid Grid.Row="4">
             <Grid.RowDefinitions>
               <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
               <RowDefinition Height="*" />
             </Grid.RowDefinitions>
             <Border Grid.Row="0"
@@ -329,8 +370,68 @@
                          Foreground="#9A3412"
                          AutomationProperties.Name="{Binding Inspector.SelectionAdvisory}" />
             </Border>
+            <Border Grid.Row="1"
+                    Margin="8,8,8,0"
+                    Padding="8"
+                    Background="#F8FAFC"
+                    BorderBrush="#CBD5E1"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Visibility="{Binding Inspector.HasOpacityControl, Converter={StaticResource BooleanToVisibilityConverter}}"
+                    ToolTip="{Binding Inspector.Opacity.UnavailableReason}">
+              <StackPanel>
+                <DockPanel LastChildFill="False">
+                  <TextBlock Text="Opacity"
+                             Margin="0,4,8,0"
+                             FontWeight="SemiBold"
+                             Foreground="#334155"
+                             ToolTip="Controls this element's own global opacity. Ancestor opacity may reduce the effective result." />
+                  <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <TextBox Width="58"
+                             MinHeight="26"
+                             Padding="4,2"
+                             HorizontalAlignment="Right"
+                             TextAlignment="Right"
+                             Text="{Binding Inspector.Opacity.Text, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                             IsEnabled="{Binding Inspector.Opacity.IsEnabled}"
+                             Tag="{Binding Inspector.Opacity}"
+                             LostKeyboardFocus="OnOpacityTextLostKeyboardFocus"
+                             KeyDown="OnOpacityTextKeyDown"
+                             AutomationProperties.Name="Opacity percentage" />
+                    <TextBlock Margin="4,4,0,0" Text="%" />
+                  </StackPanel>
+                </DockPanel>
+                <Slider x:Name="OpacitySlider"
+                        Margin="0,6,0,0"
+                        Minimum="0"
+                        Maximum="100"
+                        TickFrequency="1"
+                        IsSnapToTickEnabled="False"
+                        Value="{Binding Inspector.Opacity.Percent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                        IsEnabled="{Binding Inspector.Opacity.IsEnabled}"
+                        PreviewMouseLeftButtonDown="OnOpacitySliderPreviewMouseLeftButtonDown"
+                        PreviewMouseLeftButtonUp="OnOpacitySliderPreviewMouseLeftButtonUp"
+                        LostKeyboardFocus="OnOpacitySliderLostKeyboardFocus"
+                        PreviewKeyDown="OnOpacitySliderPreviewKeyDown"
+                        PreviewKeyUp="OnOpacitySliderPreviewKeyUp"
+                        ToolTip="Element opacity from 0% to 100%; committed once per completed gesture"
+                        AutomationProperties.Name="Element opacity" />
+                <TextBlock Margin="0,4,0,0"
+                           Text="{Binding Inspector.Opacity.UnavailableReason}"
+                           TextWrapping="Wrap"
+                           Foreground="#B91C1C" />
+                <TextBlock Margin="0,3,0,0"
+                           Text="{Binding Inspector.Opacity.Advisory}"
+                           TextWrapping="Wrap"
+                           Foreground="#92400E" />
+                <TextBlock Margin="0,3,0,0"
+                           Text="{Binding Inspector.Opacity.ErrorMessage}"
+                           TextWrapping="Wrap"
+                           Foreground="#B91C1C" />
+              </StackPanel>
+            </Border>
             <ScrollViewer VerticalScrollBarVisibility="Auto"
-                          Grid.Row="1"
+                          Grid.Row="2"
                           HorizontalScrollBarVisibility="Disabled"
                           Padding="8">
               <ItemsControl ItemsSource="{Binding Inspector.Properties}">
@@ -448,7 +549,7 @@
               </ItemsControl>
             </ScrollViewer>
 
-            <Border Grid.RowSpan="2" Background="White" Padding="18">
+            <Border Grid.RowSpan="3" Background="White" Padding="18">
               <Border.Style>
                 <Style TargetType="Border">
                   <Setter Property="Visibility" Value="Collapsed" />

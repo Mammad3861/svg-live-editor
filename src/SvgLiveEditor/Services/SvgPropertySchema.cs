@@ -21,7 +21,7 @@ public static class SvgPropertySchema
         new("fill"),
         new("stroke"),
         new("stroke-width"),
-        new("opacity")
+        new("opacity", RemoveWhenEmpty: true)
     ];
 
     private static readonly IReadOnlyDictionary<string, SvgPropertyDefinition[]> ElementSpecific =

@@ -85,6 +85,7 @@ public sealed class PreviewHtmlBuilderTests
         StringAssert.Contains(script.Groups[1].Value, "event.pointerType !== 'mouse'");
         StringAssert.Contains(script.Groups[1].Value, "type: 'directDrag'");
         StringAssert.Contains(script.Groups[1].Value, "type: 'contextMenu'");
+        StringAssert.Contains(script.Groups[1].Value, "selectionId: activeVisualSelection?.selectionId || ''");
         StringAssert.Contains(script.Groups[1].Value, "type: 'copyCommand'");
         StringAssert.Contains(script.Groups[1].Value, "viewport.focus({ preventScroll: true })");
         StringAssert.Contains(script.Groups[1].Value, "type: 'viewport'");

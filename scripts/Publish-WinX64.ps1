@@ -285,10 +285,19 @@ if (Test-Path -LiteralPath $checksumPath) {
     Remove-Item -LiteralPath $checksumPath -Force
 }
 
+& $dotnetCommand restore $projectPath `
+  --runtime win-x64 `
+  --ignore-failed-sources
+
+if ($LASTEXITCODE -ne 0) {
+    throw "dotnet restore for win-x64 failed with exit code $LASTEXITCODE"
+}
+
 & $dotnetCommand publish $projectPath `
   --configuration Release `
   --runtime win-x64 `
   --self-contained true `
+  --no-restore `
   --property:PublishProfile=win-x64 `
   --output $resolvedStagingDirectory
 

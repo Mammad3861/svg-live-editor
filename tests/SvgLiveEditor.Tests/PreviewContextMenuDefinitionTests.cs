@@ -13,7 +13,11 @@ public sealed class PreviewContextMenuDefinitionTests
             {
                 PreviewContextMenuCommand.CopyPreviewAsPng,
                 PreviewContextMenuCommand.Fit,
-                PreviewContextMenuCommand.ResetZoom
+                PreviewContextMenuCommand.ResetZoom,
+                PreviewContextMenuCommand.BringToFront,
+                PreviewContextMenuCommand.BringForward,
+                PreviewContextMenuCommand.SendBackward,
+                PreviewContextMenuCommand.SendToBack
             },
             PreviewContextMenuDefinition.Items
                 .Select(item => item.Command)
@@ -23,7 +27,11 @@ public sealed class PreviewContextMenuDefinitionTests
             {
                 "Copy Preview as PNG",
                 "Fit",
-                "Reset Zoom"
+                "Reset Zoom",
+                "Bring to Front",
+                "Bring Forward",
+                "Send Backward",
+                "Send to Back"
             },
             PreviewContextMenuDefinition.Items
                 .Select(item => item.Header)

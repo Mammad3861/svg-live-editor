@@ -17,6 +17,9 @@ public sealed class DocumentInspectorViewModel : ObservableObject
     private string _selectedElementSummary = "No element selected";
     private string _selectionAdvisory = string.Empty;
     private IReadOnlyList<string> _fontFamilySuggestions = [];
+    private readonly SvgOpacityService _opacityService = new();
+    private SvgOpacityViewModel? _opacity;
+    private string? _source;
 
     public ObservableCollection<SvgElementViewModel> Roots { get; } = [];
 
@@ -25,6 +28,20 @@ public sealed class DocumentInspectorViewModel : ObservableObject
     public SvgDocumentIndex? DocumentIndex => _documentIndex;
 
     public SvgElementViewModel? SelectedElement => _selectedElement;
+
+    public SvgOpacityViewModel? Opacity
+    {
+        get => _opacity;
+        private set
+        {
+            if (SetProperty(ref _opacity, value))
+            {
+                OnPropertyChanged(nameof(HasOpacityControl));
+            }
+        }
+    }
+
+    public bool HasOpacityControl => Opacity is not null;
 
     public bool HasIndex
     {
@@ -81,11 +98,13 @@ public sealed class DocumentInspectorViewModel : ObservableObject
         SvgDocumentIndex documentIndex,
         SvgElementIdentity? preferredSelection,
         InspectorSelectionOrigin selectionOrigin =
-            InspectorSelectionOrigin.InspectorRestore)
+            InspectorSelectionOrigin.InspectorRestore,
+        string? source = null)
     {
         ArgumentNullException.ThrowIfNull(documentIndex);
 
         _documentIndex = documentIndex;
+        _source = source;
         Roots.Clear();
         Properties.Clear();
         _elementsByPath.Clear();
@@ -109,10 +128,12 @@ public sealed class DocumentInspectorViewModel : ObservableObject
     public void ShowUnavailable(string message)
     {
         _documentIndex = null;
+        _source = null;
         Roots.Clear();
         Properties.Clear();
         _elementsByPath.Clear();
         _selectedElement = null;
+        Opacity = null;
         HasIndex = false;
         HasSelection = false;
         StateTitle = "Source cannot be indexed";
@@ -163,6 +184,7 @@ public sealed class DocumentInspectorViewModel : ObservableObject
 
         _selectedElement = element;
         Properties.Clear();
+        Opacity = null;
         SelectionAdvisory = string.Empty;
 
         if (element is null)
@@ -193,8 +215,20 @@ public sealed class DocumentInspectorViewModel : ObservableObject
             HasSelection = true;
             SelectedElementSummary = element.Element.DisplayLabel;
 
+            SvgOpacityControlState opacityState = _opacityService.Analyze(
+                _documentIndex!,
+                element.Element,
+                _source);
+            if (opacityState.IsVisible)
+            {
+                Opacity = new SvgOpacityViewModel(element.Element, opacityState);
+            }
+
             foreach (SvgPropertyDefinition definition in
-                     SvgPropertySchema.GetProperties(element.Element.Name))
+                     SvgPropertySchema.GetProperties(element.Element.Name)
+                         .Where(definition => !definition.Name.Equals(
+                             "opacity",
+                             StringComparison.Ordinal)))
             {
                 Properties.Add(new SvgPropertyViewModel(
                     element.Element,
