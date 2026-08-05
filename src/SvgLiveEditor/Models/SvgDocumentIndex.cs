@@ -2,6 +2,9 @@ namespace SvgLiveEditor.Models;
 
 public sealed class SvgDocumentIndex
 {
+    private readonly IReadOnlyDictionary<SvgElementNode, SvgElementNode>
+        _parents;
+
     public SvgDocumentIndex(
         IReadOnlyList<SvgElementNode> roots,
         IReadOnlyList<SvgElementNode> elements)
@@ -11,11 +14,27 @@ public sealed class SvgDocumentIndex
 
         Roots = roots;
         Elements = elements;
+        Dictionary<SvgElementNode, SvgElementNode> parents = [];
+        foreach (SvgElementNode parent in elements)
+        {
+            foreach (SvgElementNode child in parent.Children)
+            {
+                parents.Add(child, parent);
+            }
+        }
+
+        _parents = parents;
     }
 
     public IReadOnlyList<SvgElementNode> Roots { get; }
 
     public IReadOnlyList<SvgElementNode> Elements { get; }
+
+    public SvgElementNode? FindParent(SvgElementNode element)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        return _parents.GetValueOrDefault(element);
+    }
 
     public SvgElementNode? FindElementAtOffset(int offset)
     {

@@ -16,6 +16,7 @@ public enum InspectorUndoShortcutRoute
 
 public readonly record struct InspectorUndoFocusState(
     bool IsSourceEditorFocused,
+    bool IsDocumentTreeFocused,
     bool IsPropertiesFocused,
     bool HasUncommittedValue,
     bool HasLocalRedo,
@@ -27,7 +28,7 @@ public static class InspectorUndoShortcutRouter
         InspectorUndoShortcut shortcut,
         InspectorUndoFocusState focus)
     {
-        if (focus.IsSourceEditorFocused)
+        if (focus.IsSourceEditorFocused || focus.IsDocumentTreeFocused)
         {
             return GetDocumentRoute(shortcut);
         }

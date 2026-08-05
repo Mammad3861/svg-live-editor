@@ -16,14 +16,61 @@ public sealed class FileDropSurfaceTests
     public void WindowLevelPreviewDrop_CoversEveryMajorPane()
     {
         string xaml = ReadMainWindowXaml();
+        int windowDeclarationEnd = xaml.IndexOf('>');
 
-        StringAssert.Contains(xaml, "PreviewDragEnter=\"OnWindowPreviewDragEnter\"");
-        StringAssert.Contains(xaml, "PreviewDragOver=\"OnWindowPreviewDragOver\"");
-        StringAssert.Contains(xaml, "PreviewDrop=\"OnWindowDrop\"");
-        StringAssert.Contains(xaml, "Document Inspector");
-        StringAssert.Contains(xaml, "Properties");
+        Assert.IsTrue(xaml.StartsWith("<Window ", StringComparison.Ordinal));
+        Assert.IsTrue(windowDeclarationEnd > 0);
+        string windowDeclaration = xaml[..(windowDeclarationEnd + 1)];
+        StringAssert.Contains(windowDeclaration, "AllowDrop=\"True\"");
+        StringAssert.Contains(
+            windowDeclaration,
+            "PreviewDragEnter=\"OnWindowPreviewDragEnter\"");
+        StringAssert.Contains(
+            windowDeclaration,
+            "PreviewDragOver=\"OnWindowPreviewDragOver\"");
+        StringAssert.Contains(
+            windowDeclaration,
+            "PreviewDragLeave=\"OnWindowPreviewDragLeave\"");
+        StringAssert.Contains(
+            windowDeclaration,
+            "PreviewDrop=\"OnWindowDrop\"");
+
+        StringAssert.Contains(xaml, "x:Name=\"InspectorWorkspace\"");
+        StringAssert.Contains(xaml, "x:Name=\"InspectorModeTabs\"");
+        StringAssert.Contains(xaml, "x:Name=\"LayersTab\"");
+        StringAssert.Contains(xaml, "x:Name=\"StructureTab\"");
+        StringAssert.Contains(xaml, "x:Name=\"InspectorPropertiesPanel\"");
         StringAssert.Contains(xaml, "x:Name=\"SourceEditor\"");
         StringAssert.Contains(xaml, "x:Name=\"PreviewWebView\"");
+
+        int inspector = xaml.IndexOf(
+            "x:Name=\"InspectorWorkspace\"",
+            StringComparison.Ordinal);
+        int modes = xaml.IndexOf(
+            "x:Name=\"InspectorModeTabs\"",
+            StringComparison.Ordinal);
+        int layers = xaml.IndexOf(
+            "x:Name=\"LayersTab\"",
+            StringComparison.Ordinal);
+        int structure = xaml.IndexOf(
+            "x:Name=\"StructureTab\"",
+            StringComparison.Ordinal);
+        int properties = xaml.IndexOf(
+            "x:Name=\"InspectorPropertiesPanel\"",
+            StringComparison.Ordinal);
+        int source = xaml.IndexOf(
+            "x:Name=\"SourceEditor\"",
+            StringComparison.Ordinal);
+        int preview = xaml.IndexOf(
+            "x:Name=\"PreviewWebView\"",
+            StringComparison.Ordinal);
+
+        Assert.IsTrue(modes > inspector);
+        Assert.IsTrue(layers > modes);
+        Assert.IsTrue(structure > layers);
+        Assert.IsTrue(properties > structure);
+        Assert.IsTrue(source > properties);
+        Assert.IsTrue(preview > source);
     }
 
     [TestMethod]

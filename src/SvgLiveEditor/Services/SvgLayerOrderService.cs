@@ -17,21 +17,6 @@ public sealed class SvgLayerOrderService
             "polyline"
         };
 
-    private static readonly HashSet<string> DefinitionContainerNames =
-        new(StringComparer.Ordinal)
-        {
-            "defs",
-            "clipPath",
-            "filter",
-            "linearGradient",
-            "marker",
-            "mask",
-            "metadata",
-            "pattern",
-            "radialGradient",
-            "symbol"
-        };
-
     private readonly SvgValidationService _validationService = new();
 
     public SvgLayerOrderAvailability GetAvailability(
@@ -67,14 +52,14 @@ public sealed class SvgLayerOrderService
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(element);
 
-        if (!PaintableElementNames.Contains(element.Name))
+        if (!SvgLayerPolicy.IsLayerElement(element.Name))
         {
             return UnavailablePosition(
-                "Only supported paintable elements have a layer position.");
+                "Only visual artwork and groups have a layer position.");
         }
 
-        SvgElementNode? parent = FindParent(document, element);
-        if (parent is null || IsInsideDefinitionContainer(document, parent))
+        SvgElementNode? parent = document.FindParent(element);
+        if (parent is null || SvgLayerPolicy.IsInsideDefinitionContainer(document, parent))
         {
             return UnavailablePosition(
                 "The selected element has no safe paint-order parent.");
@@ -116,7 +101,7 @@ public sealed class SvgLayerOrderService
                 availability.UnavailableReason ?? "The element cannot be reordered.");
         }
 
-        SvgElementNode parent = FindParent(document, element)!;
+        SvgElementNode parent = document.FindParent(element)!;
         SvgElementNode[] eligible = parent.Children
             .Where(IsEligibleSibling)
             .ToArray();
@@ -166,8 +151,97 @@ public sealed class SvgLayerOrderService
         return SvgLayerOrderEditResult.Success(edit, preferredSelection);
     }
 
+    public SvgLayerMoveEditResult CreateMoveEdit(
+        string source,
+        SvgDocumentIndex document,
+        SvgElementNode element,
+        SvgElementNode target,
+        SvgLayerDropPlacement placement)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(element);
+        ArgumentNullException.ThrowIfNull(target);
+
+        if (ReferenceEquals(element, target))
+        {
+            return SvgLayerMoveEditResult.Invalid(
+                "Drop before or after a different sibling layer.");
+        }
+        SvgElementNode? parent = document.FindParent(element);
+        SvgElementNode? targetParent = document.FindParent(target);
+        if (parent is null
+            || targetParent is null
+            || !ReferenceEquals(parent, targetParent))
+        {
+            return SvgLayerMoveEditResult.Invalid(
+                "Layers can be reordered only within the same parent. Moving into or out of a group is deferred to v0.9.");
+        }
+        if (!IsEligibleSibling(element)
+            || !IsEligibleSibling(target)
+            || SvgLayerPolicy.IsInsideDefinitionContainer(document, parent))
+        {
+            return SvgLayerMoveEditResult.Invalid(
+                "The selected source or target is not an eligible paint-order layer.");
+        }
+
+        SvgElementNode[] eligible = parent.Children
+            .Where(IsEligibleSibling)
+            .ToArray();
+        int elementIndex = IndexOfReference(eligible, element);
+        int targetIndex = IndexOfReference(eligible, target);
+        bool wantsAfterTargetInSource =
+            placement == SvgLayerDropPlacement.Before;
+        bool isNoOp = wantsAfterTargetInSource
+            ? elementIndex == targetIndex + 1
+            : elementIndex + 1 == targetIndex;
+        if (isNoOp)
+        {
+            return SvgLayerMoveEditResult.Invalid(
+                "The layer is already at that paint-order position.");
+        }
+        if (!AreCurrentOrderedSpans(source, parent.Children)
+            || !IsCurrentElement(source, element)
+            || !IsCurrentElement(source, target))
+        {
+            return SvgLayerMoveEditResult.Invalid(
+                "The source changed; select the layer again.");
+        }
+
+        SourceTextEdit edit = CreateRelativeMoveEdit(
+            source,
+            element,
+            target,
+            wantsAfterTargetInSource);
+        string candidate = edit.Apply(source);
+        SvgValidationResult validation = _validationService.Validate(candidate);
+        if (!validation.IsValid)
+        {
+            return SvgLayerMoveEditResult.Invalid(
+                $"The reorder would make the SVG invalid: {validation.Message}");
+        }
+
+        int elementChildIndex = IndexOfReference(parent.Children, element);
+        int targetChildIndex = IndexOfReference(parent.Children, target);
+        int preferredChildIndex = wantsAfterTargetInSource
+            ? elementChildIndex < targetChildIndex
+                ? targetChildIndex
+                : targetChildIndex + 1
+            : elementChildIndex < targetChildIndex
+                ? targetChildIndex - 1
+                : targetChildIndex;
+        SvgElementIdentity preferredSelection = new(
+            element.Name,
+            element.Id,
+            $"{parent.StructuralPath}/{preferredChildIndex}");
+        return SvgLayerMoveEditResult.Success(edit, preferredSelection);
+    }
+
     public static bool IsPaintableElement(string elementName) =>
         PaintableElementNames.Contains(elementName);
+
+    public static bool IsOrderableLayer(string elementName) =>
+        SvgLayerPolicy.IsLayerElement(elementName);
 
     private static SvgLayerOrderAvailability Unavailable(string reason) =>
         new(false, reason);
@@ -187,8 +261,7 @@ public sealed class SvgLayerOrderService
     }
 
     private static bool IsEligibleSibling(SvgElementNode element) =>
-        PaintableElementNames.Contains(element.Name)
-        && !DefinitionContainerNames.Contains(element.Name);
+        SvgLayerPolicy.IsLayerElement(element.Name);
 
     private static int GetTargetPosition(
         int position,
@@ -202,30 +275,6 @@ public sealed class SvgLayerOrderService
             SvgLayerOrderCommand.SendToBack => 0,
             _ => position
         };
-
-    private static SvgElementNode? FindParent(
-        SvgDocumentIndex document,
-        SvgElementNode element) =>
-        document.Elements.FirstOrDefault(candidate =>
-            candidate.Children.Any(child => ReferenceEquals(child, element)));
-
-    private static bool IsInsideDefinitionContainer(
-        SvgDocumentIndex document,
-        SvgElementNode element)
-    {
-        SvgElementNode? current = element;
-        while (current is not null)
-        {
-            if (DefinitionContainerNames.Contains(current.Name))
-            {
-                return true;
-            }
-
-            current = FindParent(document, current);
-        }
-
-        return false;
-    }
 
     private static bool AreCurrentOrderedSpans(
         string source,
@@ -270,5 +319,59 @@ public sealed class SvgLayerOrderService
         }
 
         return -1;
+    }
+
+    private static SourceTextEdit CreateRelativeMoveEdit(
+        string source,
+        SvgElementNode element,
+        SvgElementNode target,
+        bool afterTarget)
+    {
+        bool movingForward = element.FullSpan.Start < target.FullSpan.Start;
+        string selectedText = source.Substring(
+            element.FullSpan.Start,
+            element.FullSpan.Length);
+        if (movingForward && afterTarget)
+        {
+            return new SourceTextEdit(
+                element.FullSpan.Start,
+                target.FullSpan.End - element.FullSpan.Start,
+                string.Concat(
+                    source.AsSpan(
+                        element.FullSpan.End,
+                        target.FullSpan.End - element.FullSpan.End),
+                    selectedText));
+        }
+        if (movingForward)
+        {
+            return new SourceTextEdit(
+                element.FullSpan.Start,
+                target.FullSpan.Start - element.FullSpan.Start,
+                string.Concat(
+                    source.AsSpan(
+                        element.FullSpan.End,
+                        target.FullSpan.Start - element.FullSpan.End),
+                    selectedText));
+        }
+        if (afterTarget)
+        {
+            return new SourceTextEdit(
+                target.FullSpan.End,
+                element.FullSpan.End - target.FullSpan.End,
+                string.Concat(
+                    selectedText,
+                    source.AsSpan(
+                        target.FullSpan.End,
+                        element.FullSpan.Start - target.FullSpan.End)));
+        }
+
+        return new SourceTextEdit(
+            target.FullSpan.Start,
+            element.FullSpan.End - target.FullSpan.Start,
+            string.Concat(
+                selectedText,
+                source.AsSpan(
+                    target.FullSpan.Start,
+                    element.FullSpan.Start - target.FullSpan.Start)));
     }
 }

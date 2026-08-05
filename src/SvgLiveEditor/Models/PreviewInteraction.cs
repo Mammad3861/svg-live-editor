@@ -24,3 +24,15 @@ public readonly record struct PreviewViewportPosition(double CenterX, double Cen
 {
     public static PreviewViewportPosition Center { get; } = new(0.5, 0.5);
 }
+
+public enum PreviewImageLoadState
+{
+    Loaded,
+    Error
+}
+
+public readonly record struct PreviewImageLoadMessage(
+    PreviewImageLoadState State,
+    long SourceRevision,
+    int NaturalWidth,
+    int NaturalHeight);

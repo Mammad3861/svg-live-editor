@@ -20,8 +20,12 @@ public sealed record SvgLayerPositionInfo(
     string BoundaryExplanation,
     string? UnavailableReason = null)
 {
+    public int FrontToBackPosition => IsEligible
+        ? Count - Position + 1
+        : 0;
+
     public string DisplayText => IsEligible
-        ? $"Layer {Position} of {Count}"
+        ? $"Layer {FrontToBackPosition} of {Count} · front to back"
         : string.Empty;
 }
 

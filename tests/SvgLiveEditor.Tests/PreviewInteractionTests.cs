@@ -11,6 +11,58 @@ public sealed class PreviewInteractionTests
     private readonly PreviewScrollCalculator _scrollCalculator = new();
 
     [TestMethod]
+    public void ImageStateRequiresExactTokenRevisionSchemaAndRealDimensions()
+    {
+        const string loaded = """
+            {"type":"imageState",
+             "token":"00112233445566778899AABBCCDDEEFF",
+             "sourceRevision":7,"state":"loaded",
+             "naturalWidth":300,"naturalHeight":150}
+            """;
+        const string error = """
+            {"type":"imageState",
+             "token":"00112233445566778899AABBCCDDEEFF",
+             "sourceRevision":7,"state":"error",
+             "naturalWidth":0,"naturalHeight":0}
+            """;
+
+        Assert.IsTrue(_parser.TryParseImageLoadState(
+            loaded,
+            BridgeToken,
+            expectedSourceRevision: 7,
+            out PreviewImageLoadMessage message));
+        Assert.AreEqual(PreviewImageLoadState.Loaded, message.State);
+        Assert.AreEqual(300, message.NaturalWidth);
+        Assert.IsTrue(_parser.TryParseImageLoadState(
+            error,
+            BridgeToken,
+            expectedSourceRevision: 7,
+            out PreviewImageLoadMessage errorMessage));
+        Assert.AreEqual(PreviewImageLoadState.Error, errorMessage.State);
+
+        Assert.IsFalse(_parser.TryParseImageLoadState(
+            loaded.Replace("\"sourceRevision\":7", "\"sourceRevision\":6"),
+            BridgeToken,
+            expectedSourceRevision: 7,
+            out _));
+        Assert.IsFalse(_parser.TryParseImageLoadState(
+            loaded.Replace(BridgeToken, "FFEEDDCCBBAA99887766554433221100"),
+            BridgeToken,
+            expectedSourceRevision: 7,
+            out _));
+        Assert.IsFalse(_parser.TryParseImageLoadState(
+            loaded.Replace("\"naturalWidth\":300", "\"naturalWidth\":0"),
+            BridgeToken,
+            expectedSourceRevision: 7,
+            out _));
+        Assert.IsFalse(_parser.TryParseImageLoadState(
+            loaded.Replace("}", ",\"extra\":true}"),
+            BridgeToken,
+            expectedSourceRevision: 7,
+            out _));
+    }
+
+    [TestMethod]
     public void ZoomMessage_ParsesOnlyTheNarrowTrustedShape()
     {
         const string json = """

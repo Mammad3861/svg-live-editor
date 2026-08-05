@@ -59,6 +59,7 @@ public sealed class InspectorUndoShortcutRouterTests
     {
         InspectorUndoFocusState source = new(
             IsSourceEditorFocused: true,
+            IsDocumentTreeFocused: false,
             IsPropertiesFocused: false,
             HasUncommittedValue: true,
             HasLocalRedo: true,
@@ -74,6 +75,29 @@ public sealed class InspectorUndoShortcutRouterTests
             InspectorUndoShortcutRouter.Resolve(
                 InspectorUndoShortcut.Redo,
                 source));
+    }
+
+    [TestMethod]
+    public void LayersAndStructureFocusRouteDocumentUndoAndRedo()
+    {
+        InspectorUndoFocusState tree = new(
+            IsSourceEditorFocused: false,
+            IsDocumentTreeFocused: true,
+            IsPropertiesFocused: false,
+            HasUncommittedValue: false,
+            HasLocalRedo: false,
+            IsTextCompositionActive: false);
+
+        Assert.AreEqual(
+            InspectorUndoShortcutRoute.DocumentUndo,
+            InspectorUndoShortcutRouter.Resolve(
+                InspectorUndoShortcut.Undo,
+                tree));
+        Assert.AreEqual(
+            InspectorUndoShortcutRoute.DocumentRedo,
+            InspectorUndoShortcutRouter.Resolve(
+                InspectorUndoShortcut.Redo,
+                tree));
     }
 
     [TestMethod]
@@ -140,6 +164,7 @@ public sealed class InspectorUndoShortcutRouterTests
     {
         InspectorUndoFocusState unrelated = new(
             IsSourceEditorFocused: false,
+            IsDocumentTreeFocused: false,
             IsPropertiesFocused: false,
             HasUncommittedValue: false,
             HasLocalRedo: false,
@@ -161,6 +186,8 @@ public sealed class InspectorUndoShortcutRouterTests
         StringAssert.Contains(main, "TryHandleInspectorUndoShortcut(pressedKey)");
         StringAssert.Contains(main, "e.Handled = true;");
         StringAssert.Contains(inspector, "InspectorUndoShortcutRouter.Resolve(");
+        StringAssert.Contains(inspector, "LayersTree.IsKeyboardFocusWithin");
+        StringAssert.Contains(inspector, "InspectorTree.IsKeyboardFocusWithin");
         StringAssert.Contains(inspector, "HasUncommittedValue");
         StringAssert.Contains(inspector, "CanRedo: true");
         StringAssert.Contains(inspector, "OnUndoClick(this, new RoutedEventArgs())");
@@ -172,6 +199,7 @@ public sealed class InspectorUndoShortcutRouterTests
 
     private static InspectorUndoFocusState CleanPropertiesFocus() => new(
         IsSourceEditorFocused: false,
+        IsDocumentTreeFocused: false,
         IsPropertiesFocused: true,
         HasUncommittedValue: false,
         HasLocalRedo: false,

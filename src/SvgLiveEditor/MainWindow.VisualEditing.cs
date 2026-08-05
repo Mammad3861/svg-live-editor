@@ -118,6 +118,9 @@ public partial class MainWindow
                 _visualTextMeasurementService.Apply(lastValid, results);
         }
 
+        _viewModel.Inspector.RefreshLayerPresentation(
+            _visiblePreviewVisualDocument);
+
         ShowVisualSelection();
         return true;
     }
@@ -221,6 +224,7 @@ public partial class MainWindow
                 is not SvgVisualDocument visualDocument
             || visualDocument.FindElement(identity)
                 is not SvgVisualElement element
+            || IsVisualElementLocked(element)
             || element.Geometry is not SvgVisualShapeGeometry geometry
             || !_visualResizeHandleService.IsAllowed(
                 element,
@@ -340,7 +344,8 @@ public partial class MainWindow
     {
         if (!CanUseVisualEditing(_sourceRevisionTracker.Current)
             || _lastValidVisualDocument?.FindElement(identity)
-                is not SvgVisualElement element)
+                is not SvgVisualElement element
+            || IsVisualElementLocked(element))
         {
             _viewModel.SetOperationStatus(
                 "Visual editing paused until the current SVG is valid.");
@@ -436,6 +441,12 @@ public partial class MainWindow
         }
 
         SelectVisualElement(element);
+        if (IsVisualElementLocked(element))
+        {
+            _viewModel.SetOperationStatus(
+                "Unlock this layer or its parent group before moving it.");
+            return;
+        }
         if (!element.IsMovable)
         {
             _viewModel.SetOperationStatus(
@@ -575,7 +586,10 @@ public partial class MainWindow
                 Keyboard.FocusedElement is TextBoxBase)
             || !CanUseVisualEditing(request.SourceRevision)
             || _visualSelectionIdentity
-                is not SvgElementIdentity identity)
+                is not SvgElementIdentity identity
+            || _lastValidVisualDocument?.FindElement(identity)
+                is not SvgVisualElement selectedElement
+            || IsVisualElementLocked(selectedElement))
         {
             return;
         }
@@ -597,7 +611,8 @@ public partial class MainWindow
         if (!CanUseVisualEditing(
                 _sourceRevisionTracker.Current)
             || _lastValidVisualDocument?.FindElement(identity)
-                is not SvgVisualElement element)
+                is not SvgVisualElement element
+            || IsVisualElementLocked(element))
         {
             _viewModel.SetOperationStatus(
                 "Visual editing paused until the current SVG is valid.");
@@ -670,6 +685,11 @@ public partial class MainWindow
                     || _activePreviewNavigationId is not null
                     || _activePreviewRevision is not null));
     }
+
+    private bool IsVisualElementLocked(SvgVisualElement element) =>
+        _viewModel.Inspector.DocumentIndex is not null
+        && _viewModel.Inspector.IsElementEffectivelyLocked(
+            element.SourceElement);
 
     private bool CanContinueVisualGesture(
         PreviewVisualPointerMessage pointer,
@@ -879,13 +899,17 @@ public partial class MainWindow
         string selectionId = EnsureVisualSelectionBridgeId();
         SvgVisualShapeGeometry geometry =
             geometryOverride ?? sourceGeometry;
+        IReadOnlyList<SvgResizeHandleDefinition> handles =
+            IsVisualElementLocked(element)
+                ? []
+                : _visualResizeHandleService.Create(element, geometry);
         PostVisualSelection(new PreviewVisualSelection(
             element.Kind,
             geometry,
             deltaX,
             deltaY,
             selectionId,
-            _visualResizeHandleService.Create(element, geometry)));
+            handles));
     }
 
     private void SetVisualSelectionIdentity(SvgElementIdentity? identity)

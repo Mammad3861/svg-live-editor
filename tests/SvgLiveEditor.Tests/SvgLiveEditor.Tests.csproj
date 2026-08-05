@@ -21,6 +21,7 @@
     <None Include="..\..\scripts\Publish-WinX64.ps1" Link="scripts\Publish-WinX64.ps1" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\docs\roadmap.md" Link="docs\roadmap.md" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\docs\roadmap.fa.md" Link="docs\roadmap.fa.md" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\docs\security-model.md" Link="docs\security-model.md" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\README.md" Link="repository\README.md" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\README.fa.md" Link="repository\README.fa.md" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\src\SvgLiveEditor\MainWindow.xaml" Link="ui\MainWindow.xaml" CopyToOutputDirectory="PreserveNewest" />

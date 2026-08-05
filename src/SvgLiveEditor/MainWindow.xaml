@@ -58,6 +58,35 @@
         </Trigger>
       </Style.Triggers>
     </Style>
+    <Style x:Key="LayerIconButtonStyle" TargetType="{x:Type Button}">
+      <Setter Property="Width" Value="24" />
+      <Setter Property="Height" Value="24" />
+      <Setter Property="MinWidth" Value="24" />
+      <Setter Property="MinHeight" Value="24" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Margin" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Foreground"
+              Value="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}" />
+      <Setter Property="Focusable" Value="True" />
+      <Setter Property="IsTabStop" Value="True" />
+      <Setter Property="ToolTipService.ShowDuration" Value="30000" />
+      <Style.Triggers>
+        <Trigger Property="IsMouseOver" Value="True">
+          <Setter Property="Background"
+                  Value="{DynamicResource {x:Static SystemColors.ControlLightBrushKey}}" />
+        </Trigger>
+        <Trigger Property="IsKeyboardFocused" Value="True">
+          <Setter Property="BorderBrush"
+                  Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+        </Trigger>
+        <Trigger Property="IsEnabled" Value="False">
+          <Setter Property="Opacity" Value="0.45" />
+        </Trigger>
+      </Style.Triggers>
+    </Style>
   </Window.Resources>
 
   <Grid>
@@ -251,12 +280,13 @@
         <ColumnDefinition Width="*" MinWidth="280" />
       </Grid.ColumnDefinitions>
 
-      <Border Grid.Column="0"
+      <Border x:Name="InspectorWorkspace"
+              Grid.Column="0"
               Background="White"
               BorderBrush="#CBD5E1"
               BorderThickness="1"
               CornerRadius="6"
-              AutomationProperties.Name="Document Inspector">
+              AutomationProperties.Name="Layers and Structure inspector workspace">
         <Grid>
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -272,7 +302,7 @@
                   BorderBrush="#CBD5E1"
                   BorderThickness="0,0,0,1">
             <DockPanel>
-              <TextBlock Text="Document Inspector"
+              <TextBlock Text="Layers &amp; Structure"
                          FontSize="15"
                          FontWeight="SemiBold"
                          Foreground="#0F172A" />
@@ -286,6 +316,230 @@
           </Border>
 
           <Grid Grid.Row="1">
+            <TabControl x:Name="InspectorModeTabs"
+                        BorderThickness="0"
+                        Padding="0"
+                        AutomationProperties.Name="Layers and SVG structure">
+              <TabItem x:Name="LayersTab"
+                       Header="Layers"
+                       AutomationProperties.Name="Layers">
+                <Grid>
+                  <TreeView x:Name="LayersTree"
+                            ItemsSource="{Binding Inspector.LayerRoots}"
+                            SelectedItemChanged="OnLayersTreeSelectionChanged"
+                            PreviewMouseLeftButtonDown="OnLayersTreePreviewMouseLeftButtonDown"
+                            PreviewMouseMove="OnLayersTreePreviewMouseMove"
+                            PreviewKeyDown="OnLayersTreePreviewKeyDown"
+                            PreviewKeyUp="OnInspectorTreePreviewKeyUp"
+                            LostKeyboardFocus="OnInspectorTreeLostKeyboardFocus"
+                            ContextMenuOpening="OnInspectorArrangeContextMenuOpening"
+                            AllowDrop="True"
+                            DragOver="OnLayersTreeDragOver"
+                            DragLeave="OnLayersTreeDragLeave"
+                            Drop="OnLayersTreeDrop"
+                            BorderThickness="0"
+                            Padding="4"
+                            AutomationProperties.Name="Layers, frontmost first"
+                            AutomationProperties.HelpText="Items higher in this list paint in front of items below. Drag a layer before or after a sibling to reorder it within the same parent.">
+                    <TreeView.ContextMenu>
+                      <ContextMenu>
+                        <MenuItem Header="Bring to Front"
+                                  Tag="BringToFront"
+                                  Click="OnArrangeClick" />
+                        <MenuItem Header="Bring Forward"
+                                  Tag="BringForward"
+                                  Click="OnArrangeClick" />
+                        <MenuItem Header="Send Backward"
+                                  Tag="SendBackward"
+                                  Click="OnArrangeClick" />
+                        <MenuItem Header="Send to Back"
+                                  Tag="SendToBack"
+                                  Click="OnArrangeClick" />
+                      </ContextMenu>
+                    </TreeView.ContextMenu>
+                    <TreeView.ItemContainerStyle>
+                      <Style TargetType="TreeViewItem">
+                        <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                        <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}" />
+                        <Setter Property="Padding" Value="0" />
+                        <Setter Property="AutomationProperties.Name" Value="{Binding Label}" />
+                        <Setter Property="AutomationProperties.HelpText" Value="{Binding RowHelp}" />
+                      </Style>
+                    </TreeView.ItemContainerStyle>
+                    <TreeView.ItemTemplate>
+                      <HierarchicalDataTemplate ItemsSource="{Binding Children}">
+                        <Grid MinHeight="27"
+                              ToolTip="{Binding RowHelp}">
+                          <Border Height="2"
+                                  VerticalAlignment="Top"
+                                  Background="#2563EB"
+                                  Visibility="{Binding IsDropBefore, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                          <Border Height="2"
+                                  VerticalAlignment="Bottom"
+                                  Background="#2563EB"
+                                  Visibility="{Binding IsDropAfter, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                          <Grid Margin="0,1">
+                            <Grid.ColumnDefinitions>
+                              <ColumnDefinition Width="24" />
+                              <ColumnDefinition Width="24" />
+                              <ColumnDefinition Width="24" />
+                              <ColumnDefinition Width="*" />
+                              <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Button Grid.Column="0"
+                                    Style="{StaticResource LayerIconButtonStyle}"
+                                    IsEnabled="{Binding CanToggleVisibility}"
+                                    Tag="{Binding}"
+                                    Click="OnLayerVisibilityClick"
+                                    ToolTip="{Binding VisibilityHelp}"
+                                    AutomationProperties.Name="{Binding VisibilityAutomationName}"
+                                    AutomationProperties.HelpText="{Binding VisibilityHelp}">
+                              <Viewbox Width="16"
+                                       Height="16"
+                                       Stretch="Uniform"
+                                       IsHitTestVisible="False">
+                                <Grid Width="16" Height="16">
+                                  <Path Data="M1,8 C3.2,4.4 5.5,2.75 8,2.75 C10.5,2.75 12.8,4.4 15,8 C12.8,11.6 10.5,13.25 8,13.25 C5.5,13.25 3.2,11.6 1,8 Z"
+                                        Fill="Transparent"
+                                        Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}"
+                                        StrokeThickness="1.5"
+                                        StrokeLineJoin="Round" />
+                                  <Ellipse Width="4"
+                                           Height="4"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" />
+                                  <Path Data="M2,2 L14,14"
+                                        Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}"
+                                        StrokeThickness="2"
+                                        StrokeStartLineCap="Round"
+                                        StrokeEndLineCap="Round">
+                                    <Path.Style>
+                                      <Style TargetType="Path">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                          <DataTrigger Binding="{Binding IsVisible}" Value="False">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                          </DataTrigger>
+                                        </Style.Triggers>
+                                      </Style>
+                                    </Path.Style>
+                                  </Path>
+                                </Grid>
+                              </Viewbox>
+                            </Button>
+                            <Button Grid.Column="1"
+                                    Style="{StaticResource LayerIconButtonStyle}"
+                                    IsEnabled="{Binding CanToggleLock}"
+                                    Tag="{Binding}"
+                                    Click="OnLayerLockClick"
+                                    ToolTip="{Binding LockHelp}"
+                                    AutomationProperties.Name="{Binding LockAutomationName}"
+                                    AutomationProperties.HelpText="{Binding LockHelp}">
+                              <Viewbox Width="16"
+                                       Height="16"
+                                       Stretch="Uniform"
+                                       IsHitTestVisible="False">
+                                <Grid Width="16" Height="16">
+                                  <Path Data="M3,7.5 H13 V15 H3 Z"
+                                        Fill="Transparent"
+                                        Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}"
+                                        StrokeThickness="1.5"
+                                        StrokeLineJoin="Round" />
+                                  <Path Data="M4.5,7.5 V5.25 C4.5,1.75 11.5,1.75 11.5,5.25 V7.5"
+                                        Fill="Transparent"
+                                        Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}"
+                                        StrokeThickness="1.5"
+                                        StrokeStartLineCap="Round"
+                                        StrokeEndLineCap="Round">
+                                    <Path.Style>
+                                      <Style TargetType="Path">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                          <DataTrigger Binding="{Binding IsEffectivelyLocked}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                          </DataTrigger>
+                                        </Style.Triggers>
+                                      </Style>
+                                    </Path.Style>
+                                  </Path>
+                                  <Path Data="M5,7.5 V5.25 C5,2.25 11.5,2.25 11.5,5.25"
+                                        Fill="Transparent"
+                                        Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}"
+                                        StrokeThickness="1.5"
+                                        StrokeStartLineCap="Round"
+                                        StrokeEndLineCap="Round">
+                                    <Path.Style>
+                                      <Style TargetType="Path">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Style.Triggers>
+                                          <DataTrigger Binding="{Binding IsEffectivelyLocked}" Value="True">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                          </DataTrigger>
+                                        </Style.Triggers>
+                                      </Style>
+                                    </Path.Style>
+                                  </Path>
+                                </Grid>
+                              </Viewbox>
+                            </Button>
+                            <TextBlock Grid.Column="2"
+                                       Text="{Binding TypeIcon}"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       Foreground="#64748B"
+                                       AutomationProperties.Name="{Binding TypeLabel}" />
+                            <TextBlock Grid.Column="3"
+                                       Margin="3,0,4,0"
+                                       Text="{Binding Label}"
+                                       TextTrimming="CharacterEllipsis"
+                                       VerticalAlignment="Center"
+                                       Foreground="#0F172A" />
+                            <Border Grid.Column="4"
+                                    Margin="2,3,3,3"
+                                    Padding="4,0"
+                                    Background="#F1F5F9"
+                                    CornerRadius="3"
+                                    Visibility="{Binding IsInspectionOnly, Converter={StaticResource BooleanToVisibilityConverter}}">
+                              <TextBlock Text="Inspect"
+                                         FontSize="10"
+                                         Foreground="#64748B" />
+                            </Border>
+                          </Grid>
+                        </Grid>
+                      </HierarchicalDataTemplate>
+                    </TreeView.ItemTemplate>
+                  </TreeView>
+
+                  <Border Background="White" Padding="18">
+                    <Border.Style>
+                      <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding Inspector.HasIndex}" Value="False">
+                            <Setter Property="Visibility" Value="Visible" />
+                          </DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </Border.Style>
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                      <TextBlock Text="{Binding Inspector.StateTitle}"
+                                 FontWeight="SemiBold"
+                                 TextAlignment="Center"
+                                 Foreground="#334155" />
+                      <TextBlock Text="{Binding Inspector.StateMessage}"
+                                 Margin="0,6,0,0"
+                                 TextWrapping="Wrap"
+                                 TextAlignment="Center"
+                                 Foreground="#64748B" />
+                    </StackPanel>
+                  </Border>
+                </Grid>
+              </TabItem>
+              <TabItem x:Name="StructureTab"
+                       Header="Structure"
+                       AutomationProperties.Name="SVG XML Structure">
+                <Grid>
             <TreeView x:Name="InspectorTree"
                       ItemsSource="{Binding Inspector.Roots}"
                       SelectedItemChanged="OnInspectorTreeSelectionChanged"
@@ -350,6 +604,9 @@
                            Foreground="#64748B" />
               </StackPanel>
             </Border>
+                </Grid>
+              </TabItem>
+            </TabControl>
           </Grid>
 
           <GridSplitter Grid.Row="2"
@@ -686,7 +943,7 @@
                     VerticalAlignment="Stretch"
                     Background="#CBD5E1"
                     ShowsPreview="True"
-                    AutomationProperties.Name="Resize Document Inspector" />
+                    AutomationProperties.Name="Resize Layers and Structure inspector" />
 
       <Border Grid.Column="2" Background="White" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="6">
         <Grid>

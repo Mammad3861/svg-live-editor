@@ -47,6 +47,7 @@ public partial class MainWindow
         _isAutoSaveEligibleDocument = autoSaveEligible;
         _lastRecoveryFailure = null;
         _lastAutoSaveFailure = null;
+        _viewModel.Inspector.BeginDocumentSession();
     }
 
     private void QueuePersistenceForCurrentEdit()

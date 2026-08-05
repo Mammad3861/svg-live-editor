@@ -32,7 +32,7 @@ public sealed class SvgLayerOrderServiceTests
         Assert.IsTrue(info.IsEligible);
         Assert.AreEqual(2, info.Position);
         Assert.AreEqual(3, info.Count);
-        Assert.AreEqual("Layer 2 of 3", info.DisplayText);
+        Assert.AreEqual("Layer 2 of 3 · front to back", info.DisplayText);
         Assert.AreEqual("g #stack", info.ParentLabel);
         StringAssert.Contains(info.BoundaryExplanation, "cannot cross");
     }
@@ -210,7 +210,7 @@ public sealed class SvgLayerOrderServiceTests
     }
 
     [TestMethod]
-    public void BoundaryAndUnsupportedSelectionsProduceNoEdit()
+    public void BoundaryAndGroupSelectionsUseTheSamePaintOrder()
     {
         const string source =
             "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect id=\"first\"/><g id=\"group\"/><circle id=\"last\"/></svg>";
@@ -224,10 +224,111 @@ public sealed class SvgLayerOrderServiceTests
             document,
             Find(document, "last"),
             SvgLayerOrderCommand.BringToFront).CanExecute);
-        Assert.IsFalse(_service.GetAvailability(
+        Assert.IsTrue(_service.GetAvailability(
             document,
             Find(document, "group"),
             SvgLayerOrderCommand.BringForward).CanExecute);
+    }
+
+    [TestMethod]
+    public void GroupMovesAsOneUnitAndPreservesItsChildren()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect id=\"back\"/><g id=\"unit\"><circle id=\"child-a\"/><text id=\"child-b\">سلام</text></g><path id=\"front\" d=\"M0 0L1 1\"/></svg>";
+        SvgDocumentIndex document = _indexService.Build(source).Document!;
+
+        SvgLayerOrderEditResult result = _service.CreateEdit(
+            source,
+            document,
+            Find(document, "unit"),
+            SvgLayerOrderCommand.BringToFront);
+        string candidate = result.Edit!.Apply(source);
+
+        Assert.IsTrue(result.IsSuccess, result.ErrorMessage);
+        Assert.IsTrue(candidate.IndexOf("id=\"front\"", StringComparison.Ordinal)
+            < candidate.IndexOf("id=\"unit\"", StringComparison.Ordinal));
+        StringAssert.Contains(
+            candidate,
+            "<g id=\"unit\"><circle id=\"child-a\"/><text id=\"child-b\">سلام</text></g>");
+    }
+
+    [TestMethod]
+    public void LayerDropMovesBeforeOrAfterSiblingInTopmostFirstConvention()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect id=\"back\"/><g id=\"middle\"><circle/></g><path id=\"front\" d=\"M0 0L1 1\"/></svg>";
+        SvgDocumentIndex document = _indexService.Build(source).Document!;
+
+        SvgLayerMoveEditResult moveBackToFront = _service.CreateMoveEdit(
+            source,
+            document,
+            Find(document, "back"),
+            Find(document, "front"),
+            SvgLayerDropPlacement.Before);
+        string frontCandidate = moveBackToFront.Edit!.Apply(source);
+
+        Assert.IsTrue(moveBackToFront.IsSuccess, moveBackToFront.ErrorMessage);
+        Assert.IsTrue(frontCandidate.IndexOf("id=\"front\"", StringComparison.Ordinal)
+            < frontCandidate.IndexOf("id=\"back\"", StringComparison.Ordinal));
+
+        SvgLayerMoveEditResult moveFrontBehindMiddle = _service.CreateMoveEdit(
+            source,
+            document,
+            Find(document, "front"),
+            Find(document, "middle"),
+            SvgLayerDropPlacement.After);
+        string backCandidate = moveFrontBehindMiddle.Edit!.Apply(source);
+        Assert.IsTrue(backCandidate.IndexOf("id=\"front\"", StringComparison.Ordinal)
+            < backCandidate.IndexOf("id=\"middle\"", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void LayerDropRejectsCrossParentAndNoOpWithoutCreatingAnEdit()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><g id=\"group\"><rect id=\"inside\"/></g><circle id=\"outside\"/><line id=\"front\"/></svg>";
+        SvgDocumentIndex document = _indexService.Build(source).Document!;
+
+        SvgLayerMoveEditResult crossParent = _service.CreateMoveEdit(
+            source,
+            document,
+            Find(document, "inside"),
+            Find(document, "outside"),
+            SvgLayerDropPlacement.Before);
+        SvgLayerMoveEditResult noOp = _service.CreateMoveEdit(
+            source,
+            document,
+            Find(document, "front"),
+            Find(document, "outside"),
+            SvgLayerDropPlacement.Before);
+
+        Assert.IsFalse(crossParent.IsSuccess);
+        Assert.IsNull(crossParent.Edit);
+        StringAssert.Contains(crossParent.ErrorMessage, "same parent");
+        Assert.IsFalse(noOp.IsSuccess);
+        Assert.IsNull(noOp.Edit);
+    }
+
+    [TestMethod]
+    public void LayerDropReorderIsOneUndoOperation()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect id=\"back\"/><g id=\"front\"><circle/></g></svg>";
+        SvgDocumentIndex document = _indexService.Build(source).Document!;
+        SvgLayerMoveEditResult result = _service.CreateMoveEdit(
+            source,
+            document,
+            Find(document, "back"),
+            Find(document, "front"),
+            SvgLayerDropPlacement.Before);
+        ICSharpCode.AvalonEdit.Document.TextDocument textDocument = new(source);
+
+        new AvalonEditDocumentEditService().Apply(textDocument, result.Edit!);
+        textDocument.UndoStack.Undo();
+        Assert.AreEqual(source, textDocument.Text);
+        textDocument.UndoStack.Redo();
+        Assert.IsTrue(textDocument.Text.IndexOf("id=\"front\"", StringComparison.Ordinal)
+            < textDocument.Text.IndexOf("id=\"back\"", StringComparison.Ordinal));
     }
 
     [TestMethod]

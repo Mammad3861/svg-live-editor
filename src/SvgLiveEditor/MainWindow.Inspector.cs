@@ -26,6 +26,7 @@ public partial class MainWindow
     private readonly SvgTextDirectionAdvisoryService
         _svgTextDirectionAdvisoryService = new();
     private readonly SvgLayerOrderService _svgLayerOrderService = new();
+    private readonly SvgLayerVisibilityService _svgLayerVisibilityService = new();
     private readonly SvgOpacityService _svgOpacityService = new();
     private readonly DispatcherTimer _inspectorCaretTimer = new()
     {
@@ -39,6 +40,14 @@ public partial class MainWindow
     private bool _isExplicitInspectorKeyboardNavigation;
     private long _inspectorSourceRevision = -1;
     private OpacitySliderGesture? _opacitySliderGesture;
+    private SvgLayerViewModel? _layerDragCandidate;
+    private SvgLayerViewModel? _layerDropTarget;
+    private Point _layerDragStart;
+    private long _layerDragSourceRevision = -1;
+    private SvgLayerDropPlacement _layerDropPlacement;
+
+    private const string LayerDragDataFormat =
+        "SvgLiveEditor.Internal.Layer.OpaqueId";
 
     private void InitializeDocumentInspector()
     {
@@ -110,7 +119,11 @@ public partial class MainWindow
                     document,
                     preferredSelection,
                     InspectorSelectionOrigin.InspectorRestore,
-                    SourceEditor.Text);
+                    SourceEditor.Text,
+                    _lastValidVisualSourceRevision
+                        == _sourceRevisionTracker.Current
+                        ? _lastValidVisualDocument
+                        : null);
             }
             else
             {
@@ -214,6 +227,265 @@ public partial class MainWindow
         RefreshSelectedTextWarnings();
     }
 
+    private void OnLayersTreeSelectionChanged(
+        object sender,
+        RoutedPropertyChangedEventArgs<object> e)
+    {
+        if (e.NewValue is not SvgLayerViewModel layer)
+        {
+            return;
+        }
+
+        CancelOpacitySliderGesture();
+        InspectorSelectionOrigin origin =
+            layer.ConsumePendingSelectionOrigin()
+            ?? (_isExplicitInspectorKeyboardNavigation
+                ? InspectorSelectionOrigin.ExplicitTreeNavigation
+                : InspectorSelectionOrigin.InspectorRestore);
+        _isExplicitInspectorKeyboardNavigation = false;
+        _viewModel.Inspector.AcceptLayerSelection(layer);
+        if (origin == InspectorSelectionOrigin.ExplicitTreeNavigation
+            && _viewModel.Inspector.FindViewModel(layer.Element)
+                is SvgElementViewModel structureElement)
+        {
+            NavigateToInspectorElement(structureElement, origin);
+        }
+        SynchronizeVisualSelectionFromInspector(
+            announce: origin
+                == InspectorSelectionOrigin.ExplicitTreeNavigation);
+        RefreshSelectedTextWarnings();
+    }
+
+    private void OnLayersTreePreviewKeyDown(
+        object sender,
+        KeyEventArgs e)
+    {
+        Key key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (key is Key.Enter or Key.Space)
+        {
+            if (LayersTree.SelectedItem is SvgLayerViewModel layer
+                && _viewModel.Inspector.FindViewModel(layer.Element)
+                    is SvgElementViewModel structureElement)
+            {
+                _viewModel.Inspector.AcceptLayerSelection(layer);
+                NavigateToInspectorElement(
+                    structureElement,
+                    InspectorSelectionOrigin.ExplicitTreeNavigation);
+                SynchronizeVisualSelectionFromInspector(announce: true);
+                e.Handled = true;
+            }
+            return;
+        }
+
+        _isExplicitInspectorKeyboardNavigation = key is
+            Key.Up or Key.Down or Key.Left or Key.Right
+            or Key.Home or Key.End or Key.PageUp or Key.PageDown;
+    }
+
+    private void OnLayersTreePreviewMouseLeftButtonDown(
+        object sender,
+        MouseButtonEventArgs e)
+    {
+        ClearLayerDropTarget();
+        _layerDragCandidate = null;
+        if (e.OriginalSource is not DependencyObject originalSource
+            || FindVisualAncestor<ButtonBase>(originalSource) is not null
+            || FindNearestLayer(originalSource)
+                is not SvgLayerViewModel layer)
+        {
+            return;
+        }
+
+        _layerDragCandidate = layer;
+        _layerDragStart = e.GetPosition(LayersTree);
+        _layerDragSourceRevision = _sourceRevisionTracker.Current;
+    }
+
+    private void OnLayersTreePreviewMouseMove(
+        object sender,
+        MouseEventArgs e)
+    {
+        if (_layerDragCandidate is not SvgLayerViewModel layer
+            || e.LeftButton != MouseButtonState.Pressed)
+        {
+            return;
+        }
+
+        Point current = e.GetPosition(LayersTree);
+        if (Math.Abs(current.X - _layerDragStart.X)
+                < SystemParameters.MinimumHorizontalDragDistance
+            && Math.Abs(current.Y - _layerDragStart.Y)
+                < SystemParameters.MinimumVerticalDragDistance)
+        {
+            return;
+        }
+
+        _layerDragCandidate = null;
+        DataObject data = new();
+        data.SetData(LayerDragDataFormat, layer.OpaqueId);
+        try
+        {
+            DragDrop.DoDragDrop(LayersTree, data, DragDropEffects.Move);
+        }
+        finally
+        {
+            ClearLayerDropTarget();
+            _layerDragSourceRevision = -1;
+        }
+    }
+
+    private void OnLayersTreeDragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = DragDropEffects.None;
+        e.Handled = true;
+        string? reason = null;
+        if (!TryGetLayerDragPair(e, out SvgLayerViewModel source, out SvgLayerViewModel target)
+            || !CanDropLayer(source, target, out reason))
+        {
+            ClearLayerDropTarget();
+            if (!string.IsNullOrWhiteSpace(reason))
+            {
+                if (!_viewModel.OperationStatus.Equals(
+                        reason,
+                        StringComparison.Ordinal))
+                {
+                    _viewModel.SetOperationStatus(reason);
+                }
+                e.Effects = DragDropEffects.None;
+            }
+            return;
+        }
+
+        TreeViewItem? container = FindVisualAncestor<TreeViewItem>(
+            (DependencyObject)e.OriginalSource);
+        if (container is null)
+        {
+            ClearLayerDropTarget();
+            return;
+        }
+        Point position = e.GetPosition(container);
+        SvgLayerDropPlacement placement =
+            position.Y < container.ActualHeight / 2
+                ? SvgLayerDropPlacement.Before
+                : SvgLayerDropPlacement.After;
+        SetLayerDropTarget(target, placement);
+        e.Effects = DragDropEffects.Move;
+    }
+
+    private void OnLayersTreeDrop(object sender, DragEventArgs e)
+    {
+        e.Handled = true;
+        string? reason = null;
+        if (!TryGetLayerDragPair(e, out SvgLayerViewModel source, out SvgLayerViewModel target)
+            || !CanDropLayer(source, target, out reason))
+        {
+            ClearLayerDropTarget();
+            _viewModel.SetOperationStatus(
+                reason ?? "The layer drop was rejected.");
+            return;
+        }
+
+        SvgLayerDropPlacement placement = ReferenceEquals(
+            target,
+            _layerDropTarget)
+                ? _layerDropPlacement
+                : SvgLayerDropPlacement.Before;
+        ClearLayerDropTarget();
+        ApplyLayerMove(source, target, placement);
+    }
+
+    private void OnLayersTreeDragLeave(object sender, DragEventArgs e)
+    {
+        if (!LayersTree.IsMouseOver)
+        {
+            ClearLayerDropTarget();
+        }
+    }
+
+    private void OnLayerVisibilityClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: SvgLayerViewModel layer })
+        {
+            ApplyLayerVisibility(layer);
+            e.Handled = true;
+        }
+    }
+
+    private void OnLayerLockClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: SvgLayerViewModel layer })
+        {
+            return;
+        }
+
+        CancelOpacitySliderGesture();
+        CancelVisualEditGesture();
+        if (_viewModel.Inspector.ToggleLayerLock(layer))
+        {
+            ShowVisualSelection();
+            _viewModel.SetOperationStatus(
+                layer.IsLocked
+                    ? $"{layer.Label} unlocked for this session"
+                    : $"{layer.Label} locked for this session");
+        }
+        e.Handled = true;
+    }
+
+    private void ApplyLayerVisibility(SvgLayerViewModel layer)
+    {
+        SvgDocumentIndex? document = _viewModel.Inspector.DocumentIndex;
+        long expectedRevision = _inspectorSourceRevision;
+        if (document is null
+            || !_inspectorSourceGuard.CanUseIndex(
+                _isInspectorIndexCurrent,
+                expectedRevision,
+                _sourceRevisionTracker.Current,
+                isEditorTextCompositionActive: false))
+        {
+            _viewModel.SetOperationStatus(
+                "Visibility is unavailable until the current SVG is valid.");
+            return;
+        }
+
+        string sourceSnapshot = SourceEditor.Text;
+        SvgLayerVisibilityEditResult result =
+            _svgLayerVisibilityService.CreateEdit(
+                sourceSnapshot,
+                document,
+                layer.Element,
+                _viewModel.Inspector.IsHiddenAttributeOwned(layer));
+        if (!result.IsSuccess || result.Edit is null)
+        {
+            _viewModel.SetOperationStatus(
+                result.ErrorMessage
+                ?? "Visibility is already at the requested state.");
+            return;
+        }
+        if (!_sourceRevisionTracker.IsCurrent(expectedRevision)
+            || !SourceEditor.Text.Equals(sourceSnapshot, StringComparison.Ordinal))
+        {
+            _viewModel.SetOperationStatus(
+                "The source changed; select the layer again.");
+            return;
+        }
+
+        CancelOpacitySliderGesture();
+        CancelVisualEditGesture();
+        string opaqueId = layer.OpaqueId;
+        SvgElementIdentity selection = layer.Element.Identity;
+        _documentEditService.Apply(SourceEditor.Document, result.Edit);
+        _viewModel.Inspector.SetHiddenAttributeOwned(
+            opaqueId,
+            result.OwnsHiddenAttributeAfterEdit);
+        SvgDocumentIndexResult rebuilt =
+            _documentIndexService.Build(SourceEditor.Text);
+        ApplyDocumentInspectorResult(rebuilt, selection);
+        _viewModel.SetOperationStatus(
+            result.OwnsHiddenAttributeAfterEdit
+                ? $"{layer.Label} hidden"
+                : $"{layer.Label} shown");
+    }
+
     private void OnInspectorTreePreviewMouseLeftButtonDown(
         object sender,
         MouseButtonEventArgs e)
@@ -252,6 +524,169 @@ public partial class MainWindow
         }
 
         return null;
+    }
+
+    private static SvgLayerViewModel? FindNearestLayer(
+        DependencyObject originalSource)
+    {
+        TreeViewItem? item = FindVisualAncestor<TreeViewItem>(originalSource);
+        return item?.DataContext as SvgLayerViewModel;
+    }
+
+    private static T? FindVisualAncestor<T>(DependencyObject originalSource)
+        where T : DependencyObject
+    {
+        for (DependencyObject? current = originalSource;
+             current is not null;
+             current = VisualTreeHelper.GetParent(current))
+        {
+            if (current is T match)
+            {
+                return match;
+            }
+        }
+
+        return null;
+    }
+
+    private bool TryGetLayerDragPair(
+        DragEventArgs e,
+        out SvgLayerViewModel source,
+        out SvgLayerViewModel target)
+    {
+        source = null!;
+        target = null!;
+        if (!e.Data.GetDataPresent(LayerDragDataFormat)
+            || e.Data.GetData(LayerDragDataFormat) is not string opaqueId
+            || e.OriginalSource is not DependencyObject originalSource
+            || _viewModel.Inspector.FindLayerViewModel(opaqueId)
+                is not SvgLayerViewModel sourceLayer
+            || FindNearestLayer(originalSource)
+                is not SvgLayerViewModel targetLayer)
+        {
+            return false;
+        }
+
+        source = sourceLayer;
+        target = targetLayer;
+        return true;
+    }
+
+    private bool CanDropLayer(
+        SvgLayerViewModel source,
+        SvgLayerViewModel target,
+        out string? reason)
+    {
+        reason = null;
+        SvgDocumentIndex? document = _viewModel.Inspector.DocumentIndex;
+        if (document is null
+            || !_sourceRevisionTracker.IsCurrent(_layerDragSourceRevision)
+            || !_inspectorSourceGuard.CanUseIndex(
+                _isInspectorIndexCurrent,
+                _layerDragSourceRevision,
+                _sourceRevisionTracker.Current,
+                isEditorTextCompositionActive: false))
+        {
+            reason = "The source changed; start the layer drag again.";
+            return false;
+        }
+        if (ReferenceEquals(source, target))
+        {
+            reason = "Drop before or after a different sibling layer.";
+            return false;
+        }
+        if (_viewModel.Inspector.IsElementEffectivelyLocked(source.Element)
+            || _viewModel.Inspector.IsElementEffectivelyLocked(target.Element))
+        {
+            reason = "Unlock the layer and its parent group before reordering.";
+            return false;
+        }
+        if (!ReferenceEquals(
+                document.FindParent(source.Element),
+                document.FindParent(target.Element)))
+        {
+            reason =
+                "Layers can be reordered only within the same parent. Moving into or out of a group is deferred to v0.9.";
+            return false;
+        }
+
+        return true;
+    }
+
+    private void SetLayerDropTarget(
+        SvgLayerViewModel target,
+        SvgLayerDropPlacement placement)
+    {
+        if (ReferenceEquals(_layerDropTarget, target)
+            && _layerDropPlacement == placement)
+        {
+            return;
+        }
+
+        ClearLayerDropTarget();
+        _layerDropTarget = target;
+        _layerDropPlacement = placement;
+        target.IsDropBefore = placement == SvgLayerDropPlacement.Before;
+        target.IsDropAfter = placement == SvgLayerDropPlacement.After;
+    }
+
+    private void ClearLayerDropTarget()
+    {
+        if (_layerDropTarget is not null)
+        {
+            _layerDropTarget.IsDropBefore = false;
+            _layerDropTarget.IsDropAfter = false;
+        }
+
+        _layerDropTarget = null;
+    }
+
+    private void ApplyLayerMove(
+        SvgLayerViewModel source,
+        SvgLayerViewModel target,
+        SvgLayerDropPlacement placement)
+    {
+        SvgDocumentIndex? document = _viewModel.Inspector.DocumentIndex;
+        long expectedRevision = _layerDragSourceRevision;
+        string sourceSnapshot = SourceEditor.Text;
+        if (document is null
+            || !_sourceRevisionTracker.IsCurrent(expectedRevision))
+        {
+            _viewModel.SetOperationStatus(
+                "The source changed; start the layer drag again.");
+            return;
+        }
+
+        SvgLayerMoveEditResult result = _svgLayerOrderService.CreateMoveEdit(
+            sourceSnapshot,
+            document,
+            source.Element,
+            target.Element,
+            placement);
+        if (!result.IsSuccess
+            || result.Edit is null
+            || result.PreferredSelection is null)
+        {
+            _viewModel.SetOperationStatus(
+                result.ErrorMessage ?? "The layer could not be reordered.");
+            return;
+        }
+        if (!_sourceRevisionTracker.IsCurrent(expectedRevision)
+            || !SourceEditor.Text.Equals(sourceSnapshot, StringComparison.Ordinal))
+        {
+            _viewModel.SetOperationStatus(
+                "The source changed; start the layer drag again.");
+            return;
+        }
+
+        CancelOpacitySliderGesture();
+        CancelVisualEditGesture();
+        _documentEditService.Apply(SourceEditor.Document, result.Edit);
+        SvgDocumentIndexResult rebuilt =
+            _documentIndexService.Build(SourceEditor.Text);
+        ApplyDocumentInspectorResult(rebuilt, result.PreferredSelection);
+        _viewModel.SetOperationStatus(
+            $"{source.Label} reordered within {source.Parent?.Label ?? "the SVG root"}");
     }
 
     private void OnInspectorTreePreviewKeyDown(
@@ -304,7 +739,7 @@ public partial class MainWindow
         object sender,
         ContextMenuEventArgs e)
     {
-        if (InspectorTree.ContextMenu is not ContextMenu contextMenu)
+        if (sender is not TreeView { ContextMenu: ContextMenu contextMenu })
         {
             return;
         }
@@ -413,15 +848,11 @@ public partial class MainWindow
                 false,
                 "Select an eligible element in a valid current SVG.");
         }
-
-        SvgVisualElement? visualElement =
-            _lastValidVisualDocument?.FindElement(element.Identity);
-        if (visualElement is null || !visualElement.IsSelectable)
+        if (_viewModel.Inspector.IsElementEffectivelyLocked(element))
         {
             return new SvgLayerOrderAvailability(
                 false,
-                visualElement?.UnsupportedReason
-                    ?? "Arrange requires reliably bounded visible artwork.");
+                "Unlock the layer and its parent group before arranging it.");
         }
 
         return _svgLayerOrderService.GetAvailability(document, element, command);
@@ -584,6 +1015,12 @@ public partial class MainWindow
                 "The source changed; select the element again.";
             return false;
         }
+        if (_viewModel.Inspector.IsElementEffectivelyLocked(opacity.Element))
+        {
+            opacity.ErrorMessage =
+                "Unlock this layer or its parent group to edit opacity.";
+            return false;
+        }
 
         string sourceSnapshot = SourceEditor.Text;
         SvgAttributeEditResult result = _svgOpacityService.CreateEdit(
@@ -708,6 +1145,8 @@ public partial class MainWindow
                 shortcut,
                 new InspectorUndoFocusState(
                     SourceEditor.IsKeyboardFocusWithin,
+                    LayersTree.IsKeyboardFocusWithin
+                        || InspectorTree.IsKeyboardFocusWithin,
                     InspectorPropertiesPanel.IsKeyboardFocusWithin,
                     hasUncommittedValue,
                     hasLocalRedo,
@@ -831,6 +1270,12 @@ public partial class MainWindow
         {
             property.ErrorMessage =
                 "The source changed; select the element again.";
+            return false;
+        }
+        if (_viewModel.Inspector.IsElementEffectivelyLocked(property.Element))
+        {
+            property.ErrorMessage =
+                "Unlock this layer or its parent group to edit properties.";
             return false;
         }
 

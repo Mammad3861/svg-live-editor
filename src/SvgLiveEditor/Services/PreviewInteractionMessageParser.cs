@@ -6,6 +6,78 @@ namespace SvgLiveEditor.Services;
 public sealed class PreviewInteractionMessageParser
 {
     private const double MaximumViewportDimension = 100_000;
+    private const int MaximumImageDimension = 10_000_000;
+
+    public bool TryParseImageLoadState(
+        string json,
+        string expectedToken,
+        long expectedSourceRevision,
+        out PreviewImageLoadMessage message)
+    {
+        message = default;
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || root.EnumerateObject().Count() != 6
+                || !TryReadString(root, "type", out string? type)
+                || type != "imageState"
+                || !TryReadString(root, "token", out string? token)
+                || !string.Equals(token, expectedToken, StringComparison.Ordinal)
+                || !root.TryGetProperty(
+                    "sourceRevision",
+                    out JsonElement sourceRevisionProperty)
+                || sourceRevisionProperty.ValueKind != JsonValueKind.Number
+                || !sourceRevisionProperty.TryGetInt64(out long sourceRevision)
+                || sourceRevision != expectedSourceRevision
+                || !TryReadString(root, "state", out string? stateText)
+                || !TryReadInteger(
+                    root,
+                    "naturalWidth",
+                    0,
+                    MaximumImageDimension,
+                    out int naturalWidth)
+                || !TryReadInteger(
+                    root,
+                    "naturalHeight",
+                    0,
+                    MaximumImageDimension,
+                    out int naturalHeight))
+            {
+                return false;
+            }
+
+            PreviewImageLoadState state;
+            if (stateText == "loaded"
+                && naturalWidth > 0
+                && naturalHeight > 0)
+            {
+                state = PreviewImageLoadState.Loaded;
+            }
+            else if (stateText == "error"
+                && naturalWidth == 0
+                && naturalHeight == 0)
+            {
+                state = PreviewImageLoadState.Error;
+            }
+            else
+            {
+                return false;
+            }
+
+            message = new PreviewImageLoadMessage(
+                state,
+                sourceRevision,
+                naturalWidth,
+                naturalHeight);
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
 
     public bool TryParseZoomRequest(
         string json,

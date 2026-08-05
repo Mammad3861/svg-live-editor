@@ -46,6 +46,7 @@ public sealed class PreviewBridgeIntegrationTests
         double ImageHeight,
         double WebViewZoomFactor,
         string BackgroundSize,
+        bool InitialImageLoadMessageValidated,
         int ZoomMessageCount,
         WheelResult Wheel,
         bool SourceRefreshPreservedViewport,
@@ -107,6 +108,7 @@ public sealed class PreviewBridgeIntegrationTests
         Assert.AreEqual(
             "24px 24px, 24px 24px, 24px 24px, 24px 24px",
             result.BackgroundSize);
+        Assert.IsTrue(result.InitialImageLoadMessageValidated);
         Assert.AreEqual(1, result.ZoomMessageCount);
         Assert.IsTrue(result.Wheel.HorizontalPositiveScrolled);
         Assert.IsTrue(result.Wheel.HorizontalNegativeScrolled);
@@ -203,6 +205,30 @@ public sealed class PreviewBridgeIntegrationTests
             core.Settings.IsPinchZoomEnabled = false;
             webView.ZoomFactor = 1.0;
 
+            TaskCompletionSource<(string Source, string Json)>
+                initialImageStateReceived = new(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+            core.WebMessageReceived += (_, args) =>
+            {
+                try
+                {
+                    using JsonDocument message =
+                        JsonDocument.Parse(args.WebMessageAsJson);
+                    if (message.RootElement.TryGetProperty(
+                            "type",
+                            out JsonElement type)
+                        && type.GetString() == "imageState")
+                    {
+                        initialImageStateReceived.TrySetResult(
+                            (args.Source, args.WebMessageAsJson));
+                    }
+                }
+                catch (JsonException)
+                {
+                    // The production parser remains the authority for acceptance.
+                }
+            };
+
             PreviewHtmlBuilder htmlBuilder = new();
             SvgVisualViewport visualViewport = new(
                 0,
@@ -223,6 +249,22 @@ public sealed class PreviewBridgeIntegrationTests
                     preservedViewport,
                     sourceRevision: 7,
                     visualViewport: visualViewport));
+            (string imageStateSource, string imageStateJson) =
+                await initialImageStateReceived.Task.WaitAsync(
+                    TimeSpan.FromSeconds(10));
+            bool initialImageLoadMessageValidated =
+                new PreviewNavigationPolicy().IsTrustedWebMessageSource(
+                    imageStateSource)
+                && new PreviewInteractionMessageParser()
+                    .TryParseImageLoadState(
+                        imageStateJson,
+                        BridgeToken,
+                        expectedSourceRevision: 7,
+                        out PreviewImageLoadMessage initialImageState)
+                && initialImageState.State == PreviewImageLoadState.Loaded
+                && initialImageState.NaturalWidth == 300
+                && initialImageState.NaturalHeight == 150
+                && NearlyEqual(webView.ZoomFactor, 1.0);
             string hostScriptReady = await core.ExecuteScriptAsync(
                 "document.body.dataset.hostScriptReady || 'false'");
             if (!hostScriptReady.Equals("\"true\"", StringComparison.Ordinal))
@@ -1259,6 +1301,7 @@ public sealed class PreviewBridgeIntegrationTests
                 root.GetProperty("height").GetDouble(),
                 webView.ZoomFactor,
                 root.GetProperty("backgroundSize").GetString() ?? string.Empty,
+                initialImageLoadMessageValidated,
                 zoomMessageCount,
                 wheel,
                 sourceRefreshPreservedViewport,
