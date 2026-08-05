@@ -105,6 +105,7 @@ public partial class MainWindow : Window
         SourceEditor.Options.EnableTextDragDrop = false;
         SourceEditor.Options.HighlightCurrentLine = true;
         SourceEditor.TextArea.IndentationStrategy = new DefaultIndentationStrategy();
+        InitializeSourceEditorContextMenu();
         SourceEditor.Document.TextChanged += OnEditorDocumentTextChanged;
         SourceEditor.TextArea.Caret.PositionChanged += OnCaretPositionChanged;
         PreviewWebView.CoreWebView2InitializationCompleted += OnCoreWebView2InitializationCompleted;
@@ -1902,6 +1903,13 @@ public partial class MainWindow : Window
         ModifierKeys modifiers = Keyboard.Modifiers;
         bool controlOnly = modifiers == ModifierKeys.Control;
         Key pressedKey = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (controlOnly
+            && pressedKey is Key.Z or Key.Y
+            && TryHandleInspectorUndoShortcut(pressedKey))
+        {
+            e.Handled = true;
+            return;
+        }
         SvgLayerOrderCommand? layerOrderShortcut =
             SvgLayerOrderShortcutResolver.Resolve(
                 modifiers,
@@ -2023,16 +2031,6 @@ public partial class MainWindow : Window
         else if (controlOnly && e.Key == Key.H)
         {
             ShowFindPanel(showReplace: true);
-            e.Handled = true;
-        }
-        else if (controlOnly && e.Key == Key.Z && SourceEditor.IsKeyboardFocusWithin)
-        {
-            OnUndoClick(sender, new RoutedEventArgs());
-            e.Handled = true;
-        }
-        else if (controlOnly && e.Key == Key.Y && SourceEditor.IsKeyboardFocusWithin)
-        {
-            OnRedoClick(sender, new RoutedEventArgs());
             e.Handled = true;
         }
         else if (e.Key == Key.Escape && FindReplacePanel.Visibility == Visibility.Visible)

@@ -18,8 +18,10 @@ public sealed class DocumentInspectorViewModel : ObservableObject
     private string _selectionAdvisory = string.Empty;
     private IReadOnlyList<string> _fontFamilySuggestions = [];
     private readonly SvgOpacityService _opacityService = new();
+    private readonly SvgLayerOrderService _layerOrderService = new();
     private SvgOpacityViewModel? _opacity;
     private string? _source;
+    private SvgLayerPositionInfo? _layerPosition;
 
     public ObservableCollection<SvgElementViewModel> Roots { get; } = [];
 
@@ -42,6 +44,20 @@ public sealed class DocumentInspectorViewModel : ObservableObject
     }
 
     public bool HasOpacityControl => Opacity is not null;
+
+    public SvgLayerPositionInfo? LayerPosition
+    {
+        get => _layerPosition;
+        private set
+        {
+            if (SetProperty(ref _layerPosition, value))
+            {
+                OnPropertyChanged(nameof(HasLayerPosition));
+            }
+        }
+    }
+
+    public bool HasLayerPosition => LayerPosition?.IsEligible == true;
 
     public bool HasIndex
     {
@@ -134,6 +150,7 @@ public sealed class DocumentInspectorViewModel : ObservableObject
         _elementsByPath.Clear();
         _selectedElement = null;
         Opacity = null;
+        LayerPosition = null;
         HasIndex = false;
         HasSelection = false;
         StateTitle = "Source cannot be indexed";
@@ -185,6 +202,7 @@ public sealed class DocumentInspectorViewModel : ObservableObject
         _selectedElement = element;
         Properties.Clear();
         Opacity = null;
+        LayerPosition = null;
         SelectionAdvisory = string.Empty;
 
         if (element is null)
@@ -214,6 +232,14 @@ public sealed class DocumentInspectorViewModel : ObservableObject
             }
             HasSelection = true;
             SelectedElementSummary = element.Element.DisplayLabel;
+            SvgLayerPositionInfo layerPosition =
+                _layerOrderService.GetPositionInfo(
+                    _documentIndex!,
+                    element.Element);
+            if (layerPosition.IsEligible)
+            {
+                LayerPosition = layerPosition;
+            }
 
             SvgOpacityControlState opacityState = _opacityService.Analyze(
                 _documentIndex!,

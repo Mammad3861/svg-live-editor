@@ -5,4 +5,5 @@ public sealed record SvgPropertyDefinition(
     bool IsReadOnly = false,
     bool RemoveWhenEmpty = false,
     IReadOnlyList<string>? AllowedValues = null,
-    bool UsesFontFamilySuggestions = false);
+    bool UsesFontFamilySuggestions = false,
+    string HelpText = "");

@@ -73,6 +73,26 @@ public sealed class DocumentInspectorViewModelTests
     }
 
     [TestMethod]
+    public void SelectionShowsReadOnlyLayerPositionAndParentContext()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><g id=\"cards\"><rect id=\"one\"/><circle id=\"two\"/><text id=\"three\">T</text></g></svg>";
+        SvgDocumentIndex index = _indexService.Build(source).Document!;
+        DocumentInspectorViewModel inspector = new();
+        inspector.Load(index, preferredSelection: null, source: source);
+
+        inspector.SelectNode(index.Elements.Single(element =>
+            element.Id == "two"));
+
+        Assert.IsTrue(inspector.HasLayerPosition);
+        Assert.AreEqual("Layer 2 of 3", inspector.LayerPosition!.DisplayText);
+        Assert.AreEqual("g #cards", inspector.LayerPosition.ParentLabel);
+        StringAssert.Contains(
+            inspector.LayerPosition.BoundaryExplanation,
+            "cannot cross group");
+    }
+
+    [TestMethod]
     public void TextAndTspanExposeConstrainedBidiPresentationProperties()
     {
         const string source =

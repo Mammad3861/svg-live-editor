@@ -22,6 +22,42 @@
         QueryContinueDrag="OnWindowQueryContinueDrag">
   <Window.Resources>
     <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+    <Style x:Key="InspectorHelpButtonStyle" TargetType="{x:Type Button}">
+      <Setter Property="Width" Value="18" />
+      <Setter Property="Height" Value="18" />
+      <Setter Property="MinWidth" Value="18" />
+      <Setter Property="MinHeight" Value="18" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Margin" Value="4,0,0,0" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="Content" Value="i" />
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="FontWeight" Value="Bold" />
+      <Setter Property="Foreground" Value="#1D4ED8" />
+      <Setter Property="Background" Value="#EFF6FF" />
+      <Setter Property="BorderBrush" Value="#93C5FD" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Cursor" Value="Help" />
+      <Setter Property="Focusable" Value="True" />
+      <Setter Property="IsTabStop" Value="True" />
+      <Setter Property="ToolTipService.ShowDuration" Value="30000" />
+      <EventSetter Event="GotKeyboardFocus"
+                   Handler="OnInspectorHelpGotKeyboardFocus" />
+      <EventSetter Event="LostKeyboardFocus"
+                   Handler="OnInspectorHelpLostKeyboardFocus" />
+    </Style>
+    <Style x:Key="InspectorOptionalMessageStyle"
+           TargetType="{x:Type TextBlock}">
+      <Setter Property="Margin" Value="0,3,0,0" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+      <Style.Triggers>
+        <Trigger Property="Text" Value="">
+          <Setter Property="Visibility" Value="Collapsed" />
+        </Trigger>
+      </Style.Triggers>
+    </Style>
   </Window.Resources>
 
   <Grid>
@@ -342,8 +378,9 @@
             </DockPanel>
           </Border>
 
-          <Grid Grid.Row="4">
+          <Grid x:Name="InspectorPropertiesPanel" Grid.Row="4">
             <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
               <RowDefinition Height="Auto" />
               <RowDefinition Height="Auto" />
               <RowDefinition Height="*" />
@@ -372,7 +409,48 @@
             </Border>
             <Border Grid.Row="1"
                     Margin="8,8,8,0"
-                    Padding="8"
+                    Padding="8,5"
+                    Background="#EFF6FF"
+                    BorderBrush="#BFDBFE"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Visibility="{Binding Inspector.HasLayerPosition, Converter={StaticResource BooleanToVisibilityConverter}}"
+                    ToolTip="{Binding Inspector.LayerPosition.BoundaryExplanation}"
+                    AutomationProperties.Name="Current SVG layer position"
+                    AutomationProperties.HelpText="{Binding Inspector.LayerPosition.BoundaryExplanation}">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto" />
+                  <ColumnDefinition Width="8" />
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0"
+                           Text="{Binding Inspector.LayerPosition.DisplayText}"
+                           FontWeight="SemiBold"
+                           Foreground="#1E3A8A"
+                           VerticalAlignment="Center" />
+                <TextBlock Grid.Column="2"
+                           Foreground="#475569"
+                           TextTrimming="CharacterEllipsis"
+                           VerticalAlignment="Center"
+                           ToolTip="{Binding Inspector.LayerPosition.ParentLabel}">
+                  <Run Text="Parent: " />
+                  <Run Text="{Binding Inspector.LayerPosition.ParentLabel}" />
+                </TextBlock>
+                <Button Grid.Column="3"
+                        Style="{StaticResource InspectorHelpButtonStyle}"
+                        AutomationProperties.Name="Layer ordering information"
+                        AutomationProperties.HelpText="{Binding Inspector.LayerPosition.BoundaryExplanation}">
+                  <Button.ToolTip>
+                    <ToolTip Content="{Binding Inspector.LayerPosition.BoundaryExplanation}" />
+                  </Button.ToolTip>
+                </Button>
+              </Grid>
+            </Border>
+            <Border Grid.Row="2"
+                    Margin="8,8,8,0"
+                    Padding="8,6"
                     Background="#F8FAFC"
                     BorderBrush="#CBD5E1"
                     BorderThickness="1"
@@ -381,14 +459,25 @@
                     ToolTip="{Binding Inspector.Opacity.UnavailableReason}">
               <StackPanel>
                 <DockPanel LastChildFill="False">
-                  <TextBlock Text="Opacity"
-                             Margin="0,4,8,0"
-                             FontWeight="SemiBold"
-                             Foreground="#334155"
-                             ToolTip="Controls this element's own global opacity. Ancestor opacity may reduce the effective result." />
+                  <StackPanel Orientation="Horizontal"
+                              VerticalAlignment="Center">
+                    <TextBlock Text="Opacity"
+                               FontWeight="SemiBold"
+                               Foreground="#334155"
+                               VerticalAlignment="Center"
+                               ToolTip="Controls this element's own global opacity. Ancestor opacity may reduce the effective result."
+                               AutomationProperties.HelpText="Controls this element's own global opacity from 0% to 100%." />
+                    <Button Style="{StaticResource InspectorHelpButtonStyle}"
+                            AutomationProperties.Name="Opacity help"
+                            AutomationProperties.HelpText="Controls the whole element's opacity from 0% to 100%. Ancestor opacity may reduce the effective result.">
+                      <Button.ToolTip>
+                        <ToolTip Content="Controls the whole element's opacity from 0% to 100%. Ancestor opacity may reduce the effective result." />
+                      </Button.ToolTip>
+                    </Button>
+                  </StackPanel>
                   <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                    <TextBox Width="58"
-                             MinHeight="26"
+                    <TextBox Width="52"
+                             MinHeight="24"
                              Padding="4,2"
                              HorizontalAlignment="Right"
                              TextAlignment="Right"
@@ -397,41 +486,42 @@
                              Tag="{Binding Inspector.Opacity}"
                              LostKeyboardFocus="OnOpacityTextLostKeyboardFocus"
                              KeyDown="OnOpacityTextKeyDown"
-                             AutomationProperties.Name="Opacity percentage" />
+                             AutomationProperties.Name="Opacity percentage"
+                             AutomationProperties.HelpText="The selected element's own global opacity from 0% to 100%." />
                     <TextBlock Margin="4,4,0,0" Text="%" />
                   </StackPanel>
                 </DockPanel>
                 <Slider x:Name="OpacitySlider"
-                        Margin="0,6,0,0"
+                        Margin="0,4,0,0"
+                        MinHeight="20"
                         Minimum="0"
                         Maximum="100"
                         TickFrequency="1"
                         IsSnapToTickEnabled="False"
                         Value="{Binding Inspector.Opacity.Percent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                         IsEnabled="{Binding Inspector.Opacity.IsEnabled}"
+                        Tag="{Binding Inspector.Opacity}"
                         PreviewMouseLeftButtonDown="OnOpacitySliderPreviewMouseLeftButtonDown"
                         PreviewMouseLeftButtonUp="OnOpacitySliderPreviewMouseLeftButtonUp"
                         LostKeyboardFocus="OnOpacitySliderLostKeyboardFocus"
                         PreviewKeyDown="OnOpacitySliderPreviewKeyDown"
                         PreviewKeyUp="OnOpacitySliderPreviewKeyUp"
                         ToolTip="Element opacity from 0% to 100%; committed once per completed gesture"
-                        AutomationProperties.Name="Element opacity" />
-                <TextBlock Margin="0,4,0,0"
-                           Text="{Binding Inspector.Opacity.UnavailableReason}"
-                           TextWrapping="Wrap"
+                        AutomationProperties.Name="Element opacity"
+                        AutomationProperties.HelpText="The selected element's own global opacity; slider changes commit once per gesture." />
+                <TextBlock Text="{Binding Inspector.Opacity.UnavailableReason}"
+                           Style="{StaticResource InspectorOptionalMessageStyle}"
                            Foreground="#B91C1C" />
-                <TextBlock Margin="0,3,0,0"
-                           Text="{Binding Inspector.Opacity.Advisory}"
-                           TextWrapping="Wrap"
+                <TextBlock Text="{Binding Inspector.Opacity.Advisory}"
+                           Style="{StaticResource InspectorOptionalMessageStyle}"
                            Foreground="#92400E" />
-                <TextBlock Margin="0,3,0,0"
-                           Text="{Binding Inspector.Opacity.ErrorMessage}"
-                           TextWrapping="Wrap"
+                <TextBlock Text="{Binding Inspector.Opacity.ErrorMessage}"
+                           Style="{StaticResource InspectorOptionalMessageStyle}"
                            Foreground="#B91C1C" />
               </StackPanel>
             </Border>
             <ScrollViewer VerticalScrollBarVisibility="Auto"
-                          Grid.Row="2"
+                          Grid.Row="3"
                           HorizontalScrollBarVisibility="Disabled"
                           Padding="8">
               <ItemsControl ItemsSource="{Binding Inspector.Properties}">
@@ -440,7 +530,7 @@
                     <Border Padding="3,6" BorderBrush="#E2E8F0" BorderThickness="0,0,0,1">
                       <Grid>
                         <Grid.ColumnDefinitions>
-                          <ColumnDefinition Width="92" />
+                          <ColumnDefinition Width="100" />
                           <ColumnDefinition Width="*" MinWidth="0" />
                         </Grid.ColumnDefinitions>
                         <Grid.RowDefinitions>
@@ -448,12 +538,28 @@
                           <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
-                        <TextBlock Grid.Row="0"
-                                   Grid.Column="0"
-                                   Margin="0,5,8,0"
-                                   Text="{Binding Name}"
-                                   Foreground="#334155"
-                                   ToolTip="{Binding PresenceText}" />
+                        <Grid Grid.Row="0" Grid.Column="0" Margin="0,0,6,0">
+                          <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                          </Grid.ColumnDefinitions>
+                          <TextBlock Grid.Column="0"
+                                     Margin="0,5,0,0"
+                                     Text="{Binding Name}"
+                                     Foreground="#334155"
+                                     TextTrimming="CharacterEllipsis"
+                                     ToolTip="{Binding HelpText}"
+                                     AutomationProperties.Name="{Binding Name}"
+                                     AutomationProperties.HelpText="{Binding HelpText}" />
+                          <Button Grid.Column="1"
+                                  Style="{StaticResource InspectorHelpButtonStyle}"
+                                  AutomationProperties.Name="{Binding Name, StringFormat={}{0} property help}"
+                                  AutomationProperties.HelpText="{Binding HelpText}">
+                            <Button.ToolTip>
+                              <ToolTip Content="{Binding HelpText}" />
+                            </Button.ToolTip>
+                          </Button>
+                        </Grid>
                         <Grid Grid.Row="0" Grid.Column="1">
                           <TextBox MinHeight="28"
                                    MinWidth="0"
@@ -463,10 +569,11 @@
                                    Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                    IsReadOnly="{Binding IsReadOnly}"
                                    Tag="{Binding}"
-                                   ToolTip="{Binding PresenceText}"
+                                   ToolTip="{Binding HelpText}"
                                    LostKeyboardFocus="OnInspectorPropertyLostKeyboardFocus"
                                    KeyDown="OnInspectorPropertyKeyDown"
-                                   AutomationProperties.Name="{Binding Name}">
+                                   AutomationProperties.Name="{Binding Name}"
+                                   AutomationProperties.HelpText="{Binding HelpText}">
                             <TextBox.Style>
                               <Style TargetType="TextBox">
                                 <Setter Property="Visibility" Value="Visible" />
@@ -490,10 +597,11 @@
                                     ItemsSource="{Binding AllowedValues}"
                                     SelectedItem="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                     Tag="{Binding}"
-                                    ToolTip="Choose a supported value. The blank choice removes this optional attribute."
+                                    ToolTip="{Binding HelpText}"
                                     LostKeyboardFocus="OnInspectorPropertyLostKeyboardFocus"
                                     KeyDown="OnInspectorPropertyKeyDown"
-                                    AutomationProperties.Name="{Binding Name}">
+                                    AutomationProperties.Name="{Binding Name}"
+                                    AutomationProperties.HelpText="{Binding HelpText}">
                             <ComboBox.Style>
                               <Style TargetType="ComboBox">
                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -523,7 +631,8 @@
                                     SelectionChanged="OnInspectorSuggestedPropertySelectionChanged"
                                     LostKeyboardFocus="OnInspectorPropertyLostKeyboardFocus"
                                     KeyDown="OnInspectorPropertyKeyDown"
-                                    AutomationProperties.Name="{Binding Name}">
+                                    AutomationProperties.Name="{Binding Name}"
+                                    AutomationProperties.HelpText="{Binding HelpText}">
                             <ComboBox.Style>
                               <Style TargetType="ComboBox">
                                 <Setter Property="Visibility" Value="Collapsed" />
@@ -549,7 +658,7 @@
               </ItemsControl>
             </ScrollViewer>
 
-            <Border Grid.RowSpan="3" Background="White" Padding="18">
+            <Border Grid.RowSpan="4" Background="White" Padding="18">
               <Border.Style>
                 <Style TargetType="Border">
                   <Setter Property="Visibility" Value="Collapsed" />

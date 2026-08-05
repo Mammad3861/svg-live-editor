@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -34,6 +35,7 @@ public partial class MainWindow
     private bool _isSynchronizingInspectorSelection;
     private bool _isInspectorIndexCurrent;
     private bool _isEditorTextCompositionActive;
+    private bool _isInspectorTextCompositionActive;
     private bool _isExplicitInspectorKeyboardNavigation;
     private long _inspectorSourceRevision = -1;
     private OpacitySliderGesture? _opacitySliderGesture;
@@ -49,6 +51,16 @@ public partial class MainWindow
             OnEditorTextCompositionUpdated);
         SourceEditor.PreviewTextInput += OnEditorTextCompositionCompleted;
         SourceEditor.LostKeyboardFocus += OnEditorLostKeyboardFocus;
+        TextCompositionManager.AddPreviewTextInputStartHandler(
+            InspectorPropertiesPanel,
+            OnInspectorTextCompositionStarted);
+        TextCompositionManager.AddPreviewTextInputUpdateHandler(
+            InspectorPropertiesPanel,
+            OnInspectorTextCompositionUpdated);
+        InspectorPropertiesPanel.PreviewTextInput +=
+            OnInspectorTextCompositionCompleted;
+        InspectorPropertiesPanel.LostKeyboardFocus +=
+            OnInspectorPropertiesLostKeyboardFocus;
     }
 
     private void DisposeDocumentInspector()
@@ -63,6 +75,16 @@ public partial class MainWindow
             OnEditorTextCompositionUpdated);
         SourceEditor.PreviewTextInput -= OnEditorTextCompositionCompleted;
         SourceEditor.LostKeyboardFocus -= OnEditorLostKeyboardFocus;
+        TextCompositionManager.RemovePreviewTextInputStartHandler(
+            InspectorPropertiesPanel,
+            OnInspectorTextCompositionStarted);
+        TextCompositionManager.RemovePreviewTextInputUpdateHandler(
+            InspectorPropertiesPanel,
+            OnInspectorTextCompositionUpdated);
+        InspectorPropertiesPanel.PreviewTextInput -=
+            OnInspectorTextCompositionCompleted;
+        InspectorPropertiesPanel.LostKeyboardFocus -=
+            OnInspectorPropertiesLostKeyboardFocus;
     }
 
     private void ApplyDocumentInspectorResult(SvgDocumentIndexResult result)
@@ -661,6 +683,90 @@ public partial class MainWindow
         }
     }
 
+    private bool TryHandleInspectorUndoShortcut(Key pressedKey)
+    {
+        InspectorUndoShortcut shortcut = pressedKey switch
+        {
+            Key.Z => InspectorUndoShortcut.Undo,
+            Key.Y => InspectorUndoShortcut.Redo,
+            _ => throw new ArgumentOutOfRangeException(nameof(pressedKey))
+        };
+        object? editContext = FindInspectorEditContext(
+            Keyboard.FocusedElement as DependencyObject);
+        bool hasUncommittedValue = editContext switch
+        {
+            SvgPropertyViewModel property => property.HasUncommittedValue,
+            SvgOpacityViewModel opacity => opacity.HasUncommittedValue,
+            _ => false
+        };
+        bool hasLocalRedo = Keyboard.FocusedElement is TextBoxBase
+        {
+            CanRedo: true
+        };
+        InspectorUndoShortcutRoute route =
+            InspectorUndoShortcutRouter.Resolve(
+                shortcut,
+                new InspectorUndoFocusState(
+                    SourceEditor.IsKeyboardFocusWithin,
+                    InspectorPropertiesPanel.IsKeyboardFocusWithin,
+                    hasUncommittedValue,
+                    hasLocalRedo,
+                    _isInspectorTextCompositionActive));
+
+        if (route == InspectorUndoShortcutRoute.DocumentUndo)
+        {
+            OnUndoClick(this, new RoutedEventArgs());
+            return true;
+        }
+        if (route == InspectorUndoShortcutRoute.DocumentRedo)
+        {
+            OnRedoClick(this, new RoutedEventArgs());
+            return true;
+        }
+
+        return false;
+    }
+
+    private static object? FindInspectorEditContext(DependencyObject? element)
+    {
+        for (DependencyObject? current = element;
+             current is not null;
+             current = GetVisualOrLogicalParent(current))
+        {
+            if (current is FrameworkElement
+                {
+                    Tag: SvgPropertyViewModel or SvgOpacityViewModel
+                } tagged)
+            {
+                return tagged.Tag;
+            }
+        }
+
+        return null;
+    }
+
+    private void OnInspectorHelpGotKeyboardFocus(
+        object sender,
+        KeyboardFocusChangedEventArgs e)
+    {
+        if (sender is FrameworkElement { ToolTip: ToolTip toolTip } element)
+        {
+            toolTip.PlacementTarget = element;
+            toolTip.Placement = PlacementMode.Right;
+            toolTip.IsOpen = true;
+        }
+    }
+
+    private void OnInspectorHelpLostKeyboardFocus(
+        object sender,
+        KeyboardFocusChangedEventArgs e)
+    {
+        if (sender is FrameworkElement { ToolTip: ToolTip toolTip })
+        {
+            toolTip.IsOpen = false;
+        }
+    }
+
     private void OnInspectorSuggestedPropertySelectionChanged(
         object sender,
         SelectionChangedEventArgs e)
@@ -863,6 +969,44 @@ public partial class MainWindow
                 if (!SourceEditor.IsKeyboardFocusWithin)
                 {
                     _isEditorTextCompositionActive = false;
+                }
+            }));
+    }
+
+    private void OnInspectorTextCompositionStarted(
+        object sender,
+        TextCompositionEventArgs e)
+    {
+        _isInspectorTextCompositionActive = true;
+    }
+
+    private void OnInspectorTextCompositionUpdated(
+        object sender,
+        TextCompositionEventArgs e)
+    {
+        _isInspectorTextCompositionActive = true;
+    }
+
+    private void OnInspectorTextCompositionCompleted(
+        object sender,
+        TextCompositionEventArgs e)
+    {
+        Dispatcher.BeginInvoke(
+            DispatcherPriority.Input,
+            new Action(() => _isInspectorTextCompositionActive = false));
+    }
+
+    private void OnInspectorPropertiesLostKeyboardFocus(
+        object sender,
+        KeyboardFocusChangedEventArgs e)
+    {
+        Dispatcher.BeginInvoke(
+            DispatcherPriority.Input,
+            new Action(() =>
+            {
+                if (!InspectorPropertiesPanel.IsKeyboardFocusWithin)
+                {
+                    _isInspectorTextCompositionActive = false;
                 }
             }));
     }

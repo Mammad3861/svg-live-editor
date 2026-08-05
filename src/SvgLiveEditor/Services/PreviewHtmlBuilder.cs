@@ -8,6 +8,10 @@ namespace SvgLiveEditor.Services;
 
 public sealed class PreviewHtmlBuilder
 {
+    public const string SelectionAccentColor = "#2563eb";
+    public const string SelectionAccentStrongColor = "#1d4ed8";
+    public const int ResizeHandleSizeCssPixels = 10;
+
     private const string HostScript = """
         (() => {
           'use strict';
@@ -41,6 +45,7 @@ public sealed class PreviewHtmlBuilder
           let lastPointerY = viewport.clientHeight / 2;
           let viewportPostScheduled = false;
           let initialViewportApplied = false;
+          let artworkHovered = false;
 
           const canPan = () =>
             viewport.scrollWidth > viewport.clientWidth ||
@@ -59,6 +64,25 @@ public sealed class PreviewHtmlBuilder
               minimumVerticalDragDistance !== null);
             resizeHandleLayer.hidden = panModeEnabled;
             viewport.classList.toggle('select-mode', !panModeEnabled);
+            viewport.classList.toggle(
+              'artwork-hovered',
+              artworkHovered && activeVisualSelection !== null);
+            const selectionState = activeResizeGesture !== null
+              ? 'resizing'
+              : activeVisualGesture !== null
+                ? 'moving'
+                : 'selected';
+            selectionOverlay.dataset.state = activeVisualSelection === null
+              ? 'none'
+              : selectionState;
+            resizeHandleLayer.dataset.state = activeVisualSelection === null
+              ? 'none'
+              : selectionState;
+            resizeHandleLayer.querySelectorAll('.resize-handle')
+              .forEach(handle => handle.classList.toggle(
+                'active',
+                activeResizeGesture !== null &&
+                handle.dataset.handle === activeResizeGesture.handle));
           };
 
           const stopPan = event => {
@@ -433,6 +457,7 @@ public sealed class PreviewHtmlBuilder
             resizeHandleLayer.replaceChildren();
             activeVisualSelection = null;
             if (!message.visible) {
+              refreshCursor();
               return;
             }
 
@@ -494,6 +519,7 @@ public sealed class PreviewHtmlBuilder
             }
             positionResizeHandles();
             requestAnimationFrame(positionResizeHandles);
+            refreshCursor();
           };
 
           const positionResizeHandles = () => {
@@ -942,6 +968,15 @@ public sealed class PreviewHtmlBuilder
             'wheel',
             handleWheel,
             { capture: true, passive: false });
+
+          image.addEventListener('pointerenter', () => {
+            artworkHovered = true;
+            refreshCursor();
+          });
+          image.addEventListener('pointerleave', () => {
+            artworkHovered = false;
+            refreshCursor();
+          });
 
           viewport.addEventListener('pointerdown', event => {
             rememberPointer(event);
@@ -1453,11 +1488,27 @@ public sealed class PreviewHtmlBuilder
                   z-index: 1;
                 }
                 .selection-shape {
-                  fill: rgba(37, 99, 235, 0.08);
-                  stroke: #2563eb;
-                  stroke-width: 2;
-                  stroke-dasharray: 6 4;
+                  fill: transparent;
+                  stroke: {{SelectionAccentColor}};
+                  stroke-width: 1.5;
                   vector-effect: non-scaling-stroke;
+                  transition: fill 90ms ease, stroke 90ms ease, stroke-width 90ms ease;
+                }
+                .preview-viewport.artwork-hovered
+                    .selection-overlay[data-state="selected"]
+                    .selection-shape {
+                  fill: rgba(37, 99, 235, 0.055);
+                  stroke: {{SelectionAccentStrongColor}};
+                }
+                .selection-overlay[data-state="moving"] .selection-shape {
+                  fill: rgba(37, 99, 235, 0.09);
+                  stroke: {{SelectionAccentStrongColor}};
+                  stroke-width: 2;
+                }
+                .selection-overlay[data-state="resizing"] .selection-shape {
+                  fill: rgba(37, 99, 235, 0.045);
+                  stroke: {{SelectionAccentStrongColor}};
+                  stroke-width: 2;
                 }
                 .resize-handle-layer {
                   position: absolute;
@@ -1468,14 +1519,24 @@ public sealed class PreviewHtmlBuilder
                 }
                 .resize-handle {
                   position: absolute;
-                  width: 12px;
-                  height: 12px;
+                  width: {{ResizeHandleSizeCssPixels}}px;
+                  height: {{ResizeHandleSizeCssPixels}}px;
                   box-sizing: border-box;
                   transform: translate(-50%, -50%);
-                  border: 2px solid #2563eb;
-                  border-radius: 2px;
+                  border: 2px solid {{SelectionAccentColor}};
+                  border-radius: 50%;
                   background: #ffffff;
+                  box-shadow:
+                    0 1px 3px rgba(15, 23, 42, 0.35),
+                    0 0 0 1px rgba(255, 255, 255, 0.85);
                   pointer-events: auto;
+                  transition: background 90ms ease, transform 90ms ease;
+                }
+                .resize-handle:hover,
+                .resize-handle.active {
+                  background: #dbeafe;
+                  border-color: {{SelectionAccentStrongColor}};
+                  transform: translate(-50%, -50%) scale(1.15);
                 }
                 .resize-handle[data-handle="top-left"],
                 .resize-handle[data-handle="bottom-right"] {
@@ -1495,7 +1556,6 @@ public sealed class PreviewHtmlBuilder
                 }
                 .resize-handle[data-handle="start"],
                 .resize-handle[data-handle="end"] {
-                  border-radius: 50%;
                   cursor: move;
                 }
               </style>

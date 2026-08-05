@@ -321,6 +321,52 @@ public sealed class PreviewHtmlBuilderTests
     }
 
     [TestMethod]
+    public void Build_UsesModernFixedPixelSelectionStatesAndWhiteHandles()
+    {
+        const string svg =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"10\" height=\"10\"/></svg>";
+        string html = _builder.Build(svg, 300, 150, BridgeToken);
+        string script = ExtractHostScript(html);
+
+        StringAssert.Contains(html, PreviewHtmlBuilder.SelectionAccentColor);
+        StringAssert.Contains(html, PreviewHtmlBuilder.SelectionAccentStrongColor);
+        StringAssert.Contains(
+            html,
+            $"width: {PreviewHtmlBuilder.ResizeHandleSizeCssPixels}px");
+        StringAssert.Contains(html, "stroke-width: 1.5");
+        StringAssert.Contains(html, "background: #ffffff");
+        StringAssert.Contains(html, "box-shadow:");
+        StringAssert.Contains(html, "width: 10px");
+        StringAssert.Contains(html, "height: 10px");
+        StringAssert.Contains(html, "data-state=\"moving\"");
+        StringAssert.Contains(html, "data-state=\"resizing\"");
+        StringAssert.Contains(script, "'artwork-hovered'");
+        StringAssert.Contains(script, "? 'resizing'");
+        StringAssert.Contains(script, "? 'moving'");
+        StringAssert.Contains(script, "handle.classList.toggle(");
+    }
+
+    [TestMethod]
+    public void Build_PngPipelineNeverDrawsSelectionOrHandleLayers()
+    {
+        const string svg = "<svg xmlns=\"http://www.w3.org/2000/svg\"/>";
+        string script = ExtractHostScript(
+            _builder.Build(svg, 300, 150, BridgeToken));
+        int renderStart = script.IndexOf(
+            "const renderPng =",
+            StringComparison.Ordinal);
+        int renderEnd = script.IndexOf(
+            "const restoreViewportCenter =",
+            renderStart,
+            StringComparison.Ordinal);
+        string renderPng = script[renderStart..renderEnd];
+
+        StringAssert.Contains(renderPng, "context.drawImage(image, 0, 0");
+        Assert.IsFalse(renderPng.Contains("selectionOverlay", StringComparison.Ordinal));
+        Assert.IsFalse(renderPng.Contains("resizeHandleLayer", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     public void Build_CapturesAndRestoresOnlyNormalizedViewportCenters()
     {
         const string svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" />";
