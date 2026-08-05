@@ -44,6 +44,7 @@ public sealed class SvgOpacityViewModel : ObservableObject
                 _text = Format(bounded);
                 _lastCommitAttempt = null;
                 OnPropertyChanged(nameof(Text));
+                OnPropertyChanged(nameof(HasUncommittedValue));
             }
         }
     }
@@ -56,6 +57,7 @@ public sealed class SvgOpacityViewModel : ObservableObject
             if (SetProperty(ref _text, value ?? string.Empty))
             {
                 _lastCommitAttempt = null;
+                OnPropertyChanged(nameof(HasUncommittedValue));
             }
         }
     }
@@ -65,6 +67,10 @@ public sealed class SvgOpacityViewModel : ObservableObject
         get => _errorMessage;
         set => SetProperty(ref _errorMessage, value ?? string.Empty);
     }
+
+    public bool HasUncommittedValue => !_text.Equals(
+        Format(_originalPercent),
+        StringComparison.Ordinal);
 
     public bool WasCurrentTextAlreadyAttempted =>
         _lastCommitAttempt?.Equals(Text, StringComparison.Ordinal) == true;
@@ -97,6 +103,7 @@ public sealed class SvgOpacityViewModel : ObservableObject
         ErrorMessage = string.Empty;
         OnPropertyChanged(nameof(Percent));
         OnPropertyChanged(nameof(Text));
+        OnPropertyChanged(nameof(HasUncommittedValue));
     }
 
     public void Revert()
@@ -107,6 +114,7 @@ public sealed class SvgOpacityViewModel : ObservableObject
         ErrorMessage = string.Empty;
         OnPropertyChanged(nameof(Percent));
         OnPropertyChanged(nameof(Text));
+        OnPropertyChanged(nameof(HasUncommittedValue));
     }
 
     private static string Format(double percent) =>

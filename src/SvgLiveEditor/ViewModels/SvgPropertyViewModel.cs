@@ -36,6 +36,8 @@ public sealed class SvgPropertyViewModel : ObservableObject
 
     public string Name => Definition.Name;
 
+    public string HelpText => Definition.HelpText;
+
     public bool IsReadOnly => Definition.IsReadOnly;
 
     public bool IsPresent => Attribute is not null;
@@ -59,11 +61,16 @@ public sealed class SvgPropertyViewModel : ObservableObject
             if (SetProperty(ref _value, value ?? string.Empty))
             {
                 _lastCommitAttemptValue = null;
+                OnPropertyChanged(nameof(HasUncommittedValue));
             }
         }
     }
 
     public string OriginalValue => _originalValue;
+
+    public bool HasUncommittedValue => !_value.Equals(
+        _originalValue,
+        StringComparison.Ordinal);
 
     public string SerializedValue => _serializedValue;
 
@@ -87,6 +94,7 @@ public sealed class SvgPropertyViewModel : ObservableObject
         _lastCommitAttemptValue = _value;
         ErrorMessage = string.Empty;
         OnPropertyChanged(nameof(OriginalValue));
+        OnPropertyChanged(nameof(HasUncommittedValue));
     }
 
     public void Revert()

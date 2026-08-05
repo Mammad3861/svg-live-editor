@@ -425,7 +425,7 @@ public partial class MainWindow
             ClearVisualSelection();
             _viewModel.SetOperationStatus(
                 blocker.UnsupportedReason
-                ?? $"Visual editing is not available for {blocker.SourceElement.Name} elements in v0.7.0.");
+                ?? $"Visual editing is not available for {blocker.SourceElement.Name} elements in this version.");
             return;
         }
         if (hit.Element is not SvgVisualElement element)

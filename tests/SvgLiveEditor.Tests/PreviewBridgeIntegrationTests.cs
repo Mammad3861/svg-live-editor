@@ -978,10 +978,18 @@ public sealed class PreviewBridgeIntegrationTests
                     core,
                     "bottom-right");
             bool resizeHandleStayedFixedSize =
-                NearlyEqual(handleAtFirstScale.Width, 12)
-                && NearlyEqual(handleAtFirstScale.Height, 12)
-                && NearlyEqual(handleAtSecondScale.Width, 12)
-                && NearlyEqual(handleAtSecondScale.Height, 12);
+                NearlyEqual(
+                    handleAtFirstScale.Width,
+                    PreviewHtmlBuilder.ResizeHandleSizeCssPixels)
+                && NearlyEqual(
+                    handleAtFirstScale.Height,
+                    PreviewHtmlBuilder.ResizeHandleSizeCssPixels)
+                && NearlyEqual(
+                    handleAtSecondScale.Width,
+                    PreviewHtmlBuilder.ResizeHandleSizeCssPixels)
+                && NearlyEqual(
+                    handleAtSecondScale.Height,
+                    PreviewHtmlBuilder.ResizeHandleSizeCssPixels);
 
             core.PostWebMessageAsJson(
                 new PreviewPageMessageBuilder().BuildPanStateMessage(

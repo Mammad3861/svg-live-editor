@@ -42,15 +42,42 @@ public sealed class SvgLayerOrderService
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(element);
 
+        SvgLayerPositionInfo positionInfo = GetPositionInfo(document, element);
+        if (!positionInfo.IsEligible)
+        {
+            return Unavailable(
+                positionInfo.UnavailableReason
+                ?? "The selected element cannot be reordered.");
+        }
+
+        int currentIndex = positionInfo.Position - 1;
+        int targetPosition = GetTargetPosition(
+            currentIndex,
+            positionInfo.Count,
+            command);
+        return targetPosition == currentIndex
+            ? Unavailable(GetBoundaryReason(command, positionInfo.ParentLabel))
+            : new SvgLayerOrderAvailability(true);
+    }
+
+    public SvgLayerPositionInfo GetPositionInfo(
+        SvgDocumentIndex document,
+        SvgElementNode element)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(element);
+
         if (!PaintableElementNames.Contains(element.Name))
         {
-            return Unavailable("Only supported paintable elements can be reordered.");
+            return UnavailablePosition(
+                "Only supported paintable elements have a layer position.");
         }
 
         SvgElementNode? parent = FindParent(document, element);
         if (parent is null || IsInsideDefinitionContainer(document, parent))
         {
-            return Unavailable("The selected element has no safe paint-order parent.");
+            return UnavailablePosition(
+                "The selected element has no safe paint-order parent.");
         }
 
         IReadOnlyList<SvgElementNode> eligible = parent.Children
@@ -59,13 +86,16 @@ public sealed class SvgLayerOrderService
         int position = IndexOfReference(eligible, element);
         if (position < 0)
         {
-            return Unavailable("The selected element is not an eligible paint-order sibling.");
+            return UnavailablePosition(
+                "The selected element is not an eligible paint-order sibling.");
         }
 
-        int targetPosition = GetTargetPosition(position, eligible.Count, command);
-        return targetPosition == position
-            ? Unavailable("The selected element is already at that boundary.")
-            : new SvgLayerOrderAvailability(true);
+        return new SvgLayerPositionInfo(
+            true,
+            position + 1,
+            eligible.Count,
+            parent.DisplayLabel,
+            "Arrange stays within this parent and cannot cross group or container boundaries.");
     }
 
     public SvgLayerOrderEditResult CreateEdit(
@@ -141,6 +171,20 @@ public sealed class SvgLayerOrderService
 
     private static SvgLayerOrderAvailability Unavailable(string reason) =>
         new(false, reason);
+
+    private static SvgLayerPositionInfo UnavailablePosition(string reason) =>
+        new(false, 0, 0, string.Empty, string.Empty, reason);
+
+    private static string GetBoundaryReason(
+        SvgLayerOrderCommand command,
+        string parentLabel)
+    {
+        string edge = command is SvgLayerOrderCommand.BringForward
+            or SvgLayerOrderCommand.BringToFront
+            ? "frontmost"
+            : "backmost";
+        return $"The selected element is already the {edge} eligible child of {parentLabel}. Arrange cannot cross parent or group boundaries.";
+    }
 
     private static bool IsEligibleSibling(SvgElementNode element) =>
         PaintableElementNames.Contains(element.Name)

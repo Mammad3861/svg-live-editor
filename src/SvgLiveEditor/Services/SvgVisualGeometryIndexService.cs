@@ -119,7 +119,7 @@ public sealed class SvgVisualGeometryIndexService
                 string blockerReason = blockerPositionError
                     ?? (blockerGeometry is null
                         ? $"{element.Name} cannot be selected because reliable conservative bounds could not be established."
-                        : $"Visual editing is not available for {element.Name} elements in v0.7.0.");
+                        : $"Visual editing is not available for {element.Name} elements in this version.");
                 elements.Add(new SvgVisualElement(
                     element,
                     SvgVisualElementKind.Unsupported,

@@ -10,6 +10,58 @@ public sealed class SvgLayerOrderServiceTests
     private readonly SvgLayerOrderService _service = new();
 
     [TestMethod]
+    public void LayerPositionCountsEligibleSiblingsAndNamesTheParent()
+    {
+        const string source = """
+            <svg xmlns="http://www.w3.org/2000/svg">
+              <g id="stack">
+                <rect id="back"/>
+                <metadata>ignored</metadata>
+                <circle id="middle"/>
+                <defs><path id="definition"/></defs>
+                <text id="front">سلام</text>
+              </g>
+            </svg>
+            """;
+        SvgDocumentIndex document = _indexService.Build(source).Document!;
+
+        SvgLayerPositionInfo info = _service.GetPositionInfo(
+            document,
+            Find(document, "middle"));
+
+        Assert.IsTrue(info.IsEligible);
+        Assert.AreEqual(2, info.Position);
+        Assert.AreEqual(3, info.Count);
+        Assert.AreEqual("Layer 2 of 3", info.DisplayText);
+        Assert.AreEqual("g #stack", info.ParentLabel);
+        StringAssert.Contains(info.BoundaryExplanation, "cannot cross");
+    }
+
+    [TestMethod]
+    public void BoundaryMessagesExplainThatArrangeCannotCrossTheGroup()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><g id=\"group\"><rect id=\"back\"/><circle id=\"front\"/></g><line id=\"outside\"/></svg>";
+        SvgDocumentIndex document = _indexService.Build(source).Document!;
+
+        SvgLayerOrderAvailability back = _service.GetAvailability(
+            document,
+            Find(document, "back"),
+            SvgLayerOrderCommand.SendBackward);
+        SvgLayerOrderAvailability front = _service.GetAvailability(
+            document,
+            Find(document, "front"),
+            SvgLayerOrderCommand.BringForward);
+
+        Assert.IsFalse(back.CanExecute);
+        Assert.IsFalse(front.CanExecute);
+        StringAssert.Contains(back.UnavailableReason, "backmost");
+        StringAssert.Contains(front.UnavailableReason, "frontmost");
+        StringAssert.Contains(back.UnavailableReason, "cannot cross parent or group boundaries");
+        StringAssert.Contains(front.UnavailableReason, "g #group");
+    }
+
+    [TestMethod]
     [DataRow(SvgLayerOrderCommand.BringForward, "two", "one,three,two", "0/2")]
     [DataRow(SvgLayerOrderCommand.SendBackward, "two", "two,one,three", "0/0")]
     [DataRow(SvgLayerOrderCommand.BringToFront, "one", "two,three,one", "0/2")]
