@@ -104,6 +104,38 @@ public sealed class RepositoryRoadmapTests
             "[نقشهٔ راه رسمی](docs/roadmap.fa.md)");
     }
 
+    [TestMethod]
+    public void EnglishAndPersianDocsDescribeTheSameLayersBoundaries()
+    {
+        string english = ReadRepositoryDocument("README.md");
+        string persian = ReadRepositoryDocument("README.fa.md");
+        string security = ReadDocument("security-model.md");
+
+        foreach (string phrase in new[]
+                 {
+                     "Version 0.8.0",
+                     "higher rows paint in front",
+                     "session-only",
+                     "deferred to v0.9"
+                 })
+        {
+            StringAssert.Contains(english, phrase);
+        }
+        foreach (string phrase in new[]
+                 {
+                     "نسخهٔ ۰٫۸٫۰",
+                     "ردیف بالاتر Layers در جلوی ردیف پایین‌تر",
+                     "قفل فقط در نشست جاری",
+                     "به v0.9 موکول شده"
+                 })
+        {
+            StringAssert.Contains(persian, phrase);
+        }
+        StringAssert.Contains(security, "Layers and groups boundary");
+        StringAssert.Contains(security, "v0.8 does not infer or perform reparenting");
+        StringAssert.Contains(security, "never serialized");
+    }
+
     private static string ReadDocument(string fileName) => File.ReadAllText(
         Path.Combine(AppContext.BaseDirectory, "docs", fileName));
 

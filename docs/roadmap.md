@@ -6,7 +6,7 @@ This roadmap records product direction. Post-v1 entries are ideas, not promises,
 
 - **v0.1 through v0.7:** application foundations, the security-restricted preview, Inspector, sharing, templates, persistence, visual selection and movement, resizing, same-parent Arrange, and opacity.
 
-### v0.7.1 — Editor UX stabilization
+### v0.7.1 — Editor UX stabilization (shipped)
 
 - Source editor context menu.
 - Current selection-overlay improvement.
@@ -15,15 +15,15 @@ This roadmap records product direction. Post-v1 entries are ideas, not promises,
 - Properties Undo/Redo routing.
 - Editor UX stabilization.
 
-## Pre-v1 core work
-
-### v0.8 — Layers and groups
+### v0.8 — Layers and groups (shipped)
 
 - Real Layers/Groups architecture and UI.
 - Clear SVG hierarchy.
 - Safe group-aware ordering.
 - Visibility and lock controls.
-- Solve the current same-parent layer limitation without unsafe implicit reparenting.
+- Address the same-parent layer limitation without unsafe implicit reparenting by exposing group boundaries; explicit cross-parent reparenting remains deferred.
+
+## Pre-v1 core work
 
 ### v0.9 — Essential visual creation and editing
 
@@ -32,6 +32,7 @@ This roadmap records product direction. Post-v1 entries are ideas, not promises,
 - Multi-selection.
 - Alignment.
 - Snapping.
+- Explicit move into/out of existing groups and grouping/ungrouping, if it can preserve source safely.
 - Close the remaining essential visual-editor gaps.
 
 ### v1.0 — Stable baseline

@@ -153,6 +153,22 @@ public sealed class PreviewHtmlBuilder
             });
           };
 
+          const postImageState = state => {
+            if (!bridge) {
+              return;
+            }
+
+            const loaded = state === 'loaded';
+            bridge.postMessage({
+              type: 'imageState',
+              token: bridgeToken,
+              sourceRevision,
+              state,
+              naturalWidth: loaded ? image.naturalWidth : 0,
+              naturalHeight: loaded ? image.naturalHeight : 0
+            });
+          };
+
           const scheduleViewportState = () => {
             if (!viewportPostScheduled) {
               viewportPostScheduled = true;
@@ -1321,10 +1337,21 @@ public sealed class PreviewHtmlBuilder
 
           const initializeViewport = () =>
             requestAnimationFrame(() => requestAnimationFrame(applyInitialViewport));
+          const reportImageLoaded = () =>
+            requestAnimationFrame(() => requestAnimationFrame(
+              () => postImageState('loaded')));
+          const reportImageError = () => postImageState('error');
           if (image.complete) {
-            initializeViewport();
+            if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+              initializeViewport();
+              reportImageLoaded();
+            } else {
+              reportImageError();
+            }
           } else {
             image.addEventListener('load', initializeViewport, { once: true });
+            image.addEventListener('load', reportImageLoaded, { once: true });
+            image.addEventListener('error', reportImageError, { once: true });
           }
           new ResizeObserver(() => {
             refreshCursor();

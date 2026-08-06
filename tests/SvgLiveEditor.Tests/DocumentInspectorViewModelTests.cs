@@ -85,11 +85,120 @@ public sealed class DocumentInspectorViewModelTests
             element.Id == "two"));
 
         Assert.IsTrue(inspector.HasLayerPosition);
-        Assert.AreEqual("Layer 2 of 3", inspector.LayerPosition!.DisplayText);
+        Assert.AreEqual(
+            "Layer 2 of 3 · front to back",
+            inspector.LayerPosition!.DisplayText);
         Assert.AreEqual("g #cards", inspector.LayerPosition.ParentLabel);
         StringAssert.Contains(
             inspector.LayerPosition.BoundaryExplanation,
             "cannot cross group");
+    }
+
+    [TestMethod]
+    public void LayerAndStructureSelectionsStaySynchronizedAndRevealGroups()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><g id=\"outer\"><g id=\"inner\"><rect id=\"shape\"/></g></g></svg>";
+        SvgDocumentIndex index = _indexService.Build(source).Document!;
+        DocumentInspectorViewModel inspector = new();
+        inspector.Load(index, preferredSelection: null, source: source);
+        SvgElementNode shape = index.Elements.Single(element =>
+            element.Id == "shape");
+
+        inspector.SelectNode(
+            shape,
+            InspectorSelectionOrigin.PreviewNavigation);
+
+        Assert.AreEqual("shape", inspector.SelectedElement!.Element.Id);
+        Assert.AreEqual("shape", inspector.SelectedLayer!.Element.Id);
+        Assert.IsTrue(inspector.SelectedLayer.IsSelected);
+        Assert.IsTrue(inspector.SelectedLayer.Parent!.IsExpanded);
+        Assert.IsTrue(inspector.SelectedLayer.Parent.Parent!.IsExpanded);
+
+        SvgLayerViewModel outer = inspector.LayerRoots.Single();
+        inspector.AcceptLayerSelection(outer);
+        Assert.AreEqual("outer", inspector.SelectedElement!.Element.Id);
+        Assert.AreEqual("outer", inspector.SelectedLayer!.Element.Id);
+    }
+
+    [TestMethod]
+    public void StructureTspanSelectionRevealsItsNearestTextLayer()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><text id=\"label\"><tspan>سلام</tspan></text></svg>";
+        SvgDocumentIndex index = _indexService.Build(source).Document!;
+        DocumentInspectorViewModel inspector = new();
+        inspector.Load(index, preferredSelection: null, source: source);
+
+        inspector.SelectNode(index.Elements.Single(element =>
+            element.Name == "tspan"));
+
+        Assert.AreEqual("tspan", inspector.SelectedElement!.Element.Name);
+        Assert.AreEqual("label", inspector.SelectedLayer!.Element.Id);
+    }
+
+    [TestMethod]
+    public void InvalidSourceClearsBothLayersAndStructure()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect/></svg>";
+        DocumentInspectorViewModel inspector = new();
+        inspector.Load(
+            _indexService.Build(source).Document!,
+            preferredSelection: null,
+            source: source);
+
+        inspector.ShowUnavailable("Current source is invalid.");
+
+        Assert.AreEqual(0, inspector.Roots.Count);
+        Assert.AreEqual(0, inspector.LayerRoots.Count);
+        Assert.IsNull(inspector.SelectedLayer);
+    }
+
+    [TestMethod]
+    public void LockedParentMakesDescendantPropertiesAndOpacityReadOnly()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><g id=\"group\"><rect id=\"shape\" x=\"1\"/></g></svg>";
+        SvgDocumentIndex index = _indexService.Build(source).Document!;
+        DocumentInspectorViewModel inspector = new();
+        inspector.Load(index, preferredSelection: null, source: source);
+        SvgLayerViewModel group = inspector.LayerRoots.Single();
+
+        Assert.IsTrue(inspector.ToggleLayerLock(group));
+        inspector.SelectNode(index.Elements.Single(element =>
+            element.Id == "shape"));
+
+        Assert.IsTrue(inspector.Properties.All(property =>
+            property.IsReadOnly));
+        Assert.IsNotNull(inspector.Opacity);
+        Assert.IsFalse(inspector.Opacity.IsEnabled);
+        StringAssert.Contains(
+            inspector.Opacity.UnavailableReason,
+            "Unlock");
+    }
+
+    [TestMethod]
+    public void LayerIconAutomationNamesDescribeActionAndInheritedLockState()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><g id=\"group\"><rect id=\"shape\"/></g></svg>";
+        SvgDocumentIndex index = _indexService.Build(source).Document!;
+        DocumentInspectorViewModel inspector = new();
+        inspector.Load(index, preferredSelection: null, source: source);
+        SvgLayerViewModel group = inspector.LayerRoots.Single();
+
+        Assert.AreEqual("Hide g #group", group.VisibilityAutomationName);
+        Assert.AreEqual("Lock g #group", group.LockAutomationName);
+        Assert.IsTrue(inspector.ToggleLayerLock(group));
+
+        SvgLayerViewModel lockedGroup = inspector.LayerRoots.Single();
+        SvgLayerViewModel inheritedChild = lockedGroup.Children.Single();
+        Assert.AreEqual("Unlock g #group", lockedGroup.LockAutomationName);
+        Assert.AreEqual(
+            "rect #shape locked by a parent group",
+            inheritedChild.LockAutomationName);
+        Assert.IsFalse(inheritedChild.CanToggleLock);
     }
 
     [TestMethod]

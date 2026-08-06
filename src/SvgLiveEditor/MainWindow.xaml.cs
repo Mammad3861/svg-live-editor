@@ -38,6 +38,7 @@ public partial class MainWindow : Window
     private readonly PreviewInteractionMessageParser _previewInteractionMessageParser = new();
     private readonly PreviewViewportCalculator _previewViewportCalculator = new();
     private readonly PreviewNavigationCoordinator _previewNavigationCoordinator = new();
+    private readonly PreviewRenderReadiness _previewRenderReadiness = new();
     private readonly PreviewPageMessageBuilder _previewPageMessageBuilder = new();
     private readonly PreviewUpdatePolicy _previewUpdatePolicy = new();
     private readonly SvgCanvasSizeReader _svgCanvasSizeReader = new();
@@ -89,6 +90,7 @@ public partial class MainWindow : Window
     private string? _activePreviewBridgeToken;
     private CoreWebView2? _configuredCoreWebView;
     private Task<bool>? _webViewInitializationTask;
+    private CancellationTokenSource? _previewRenderTimeoutCancellation;
     private PendingPreviewPngRequest? _pendingPreviewPngRequest;
     private PreviewDragRequestOrigin? _pendingPreviewDragOrigin;
     private PreviewContextMenuRequest? _boundPreviewContextMenuRequest;
@@ -294,34 +296,23 @@ public partial class MainWindow : Window
         }
 
         _activePreviewNavigationId = null;
-        _activePreviewRevision = null;
-        if (!_previewNavigationCoordinator.TryComplete(revision, out bool wasLatest))
-        {
-            return;
-        }
-
         if (_previewNavigationCoordinator.HasPending)
         {
-            OnVisualPreviewNavigationCompleted(isSuccess: false);
-            StartPendingPreviewNavigation();
+            CompleteActivePreviewRender(
+                revision,
+                isSuccess: false,
+                errorMessage: null);
             return;
         }
 
-        if (e.IsSuccess && wasLatest)
-        {
-            OnVisualPreviewNavigationCompleted(isSuccess: true);
-            ShowPreviewReady();
-            TryUpdatePreviewZoomInPlace();
-            TryUpdatePreviewPanModeInPlace();
-            return;
-        }
-
-        OnVisualPreviewNavigationCompleted(isSuccess: false);
-        CancelPendingPreviewPngRequest();
-        _activePreviewBridgeToken = null;
-        ShowPreviewError(
-            "Preview could not be rendered",
-            $"WebView2 navigation failed with {e.WebErrorStatus}. Click Refresh Preview to retry.");
+        HandlePreviewRenderReadiness(
+            revision,
+            _previewRenderReadiness.RecordNavigation(
+                revision,
+                e.IsSuccess),
+            e.IsSuccess
+                ? null
+                : $"WebView2 navigation failed with {e.WebErrorStatus}. Click Refresh Preview to retry.");
     }
 
     private void OnPreviewProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
@@ -332,6 +323,8 @@ public partial class MainWindow : Window
         _activePreviewNavigationId = null;
         _activePreviewRevision = null;
         _activePreviewBridgeToken = null;
+        CancelPreviewRenderTimeout();
+        _previewRenderReadiness.Reset();
         _previewDirectDragHandshake.Reset();
         OnVisualPreviewReset();
         CancelPendingPreviewPngRequest();
@@ -353,6 +346,24 @@ public partial class MainWindow : Window
         }
 
         string messageJson = e.WebMessageAsJson;
+        if (_activePreviewRevision is long renderRevision
+            && _activePreviewSourceRevision is long sourceRevision
+            && _previewInteractionMessageParser.TryParseImageLoadState(
+                messageJson,
+                bridgeToken,
+                sourceRevision,
+                out PreviewImageLoadMessage imageState))
+        {
+            HandlePreviewRenderReadiness(
+                renderRevision,
+                _previewRenderReadiness.RecordImage(
+                    renderRevision,
+                    imageState),
+                imageState.State == PreviewImageLoadState.Error
+                    ? "The isolated Base64 SVG image failed to load. The current SVG was not marked Ready. Click Refresh Preview to retry."
+                    : null);
+            return;
+        }
         if (_pendingPreviewPngRequest is PendingPreviewPngRequest pending)
         {
             if (_previewPngMessageParser.IsMatchingError(
@@ -1170,33 +1181,137 @@ public partial class MainWindow : Window
             _activePreviewNavigationId = null;
             _activePreviewRevision = request.Revision;
             _activePreviewBridgeToken = bridgeToken;
+            _previewRenderReadiness.Begin(
+                request.Revision,
+                request.SourceRevision);
             OnVisualPreviewNavigationStarted(
                 request.VisualDocument,
                 request.SourceRevision);
             _previewDirectDragHandshake.Reset();
             _isPreviewNavigationRequested = true;
             core.NavigateToString(html);
+            StartPreviewRenderTimeout(request.Revision, bridgeToken);
         }
         catch (Exception exception)
         {
             _isPreviewNavigationRequested = false;
-            _activePreviewNavigationId = null;
-            _activePreviewRevision = null;
-            _activePreviewBridgeToken = null;
-            OnVisualPreviewNavigationCompleted(isSuccess: false);
             _previewDirectDragHandshake.Reset();
-            _previewNavigationCoordinator.TryComplete(request.Revision, out _);
-            if (_previewNavigationCoordinator.HasPending)
-            {
-                StartPendingPreviewNavigation();
-            }
-            else
-            {
-                ShowPreviewError(
-                    "Preview could not be rendered",
-                    $"WebView2 could not start the preview navigation: {exception.Message}");
-            }
+            CompleteActivePreviewRender(
+                request.Revision,
+                isSuccess: false,
+                $"WebView2 could not start the preview navigation: {exception.Message}");
         }
+    }
+
+    private void HandlePreviewRenderReadiness(
+        long renderRevision,
+        PreviewRenderReadinessResult readiness,
+        string? errorMessage)
+    {
+        if (readiness is PreviewRenderReadinessResult.Ignored
+            or PreviewRenderReadinessResult.Waiting)
+        {
+            return;
+        }
+
+        CompleteActivePreviewRender(
+            renderRevision,
+            readiness == PreviewRenderReadinessResult.Ready,
+            errorMessage);
+    }
+
+    private void CompleteActivePreviewRender(
+        long renderRevision,
+        bool isSuccess,
+        string? errorMessage)
+    {
+        CancelPreviewRenderTimeout();
+        _previewRenderReadiness.Reset();
+        _activePreviewNavigationId = null;
+        _activePreviewRevision = null;
+        if (!_previewNavigationCoordinator.TryComplete(
+                renderRevision,
+                out bool wasLatest))
+        {
+            return;
+        }
+
+        if (_previewNavigationCoordinator.HasPending)
+        {
+            OnVisualPreviewNavigationCompleted(isSuccess: false);
+            StartPendingPreviewNavigation();
+            return;
+        }
+
+        if (isSuccess && wasLatest)
+        {
+            OnVisualPreviewNavigationCompleted(isSuccess: true);
+            ShowPreviewReady();
+            TryUpdatePreviewZoomInPlace();
+            TryUpdatePreviewPanModeInPlace();
+            return;
+        }
+
+        OnVisualPreviewNavigationCompleted(isSuccess: false);
+        CancelPendingPreviewPngRequest();
+        _activePreviewBridgeToken = null;
+        ShowPreviewError(
+            "Preview could not be rendered",
+            errorMessage
+                ?? "The trusted preview page did not finish loading the current SVG. Click Refresh Preview to retry.");
+    }
+
+    private void StartPreviewRenderTimeout(
+        long renderRevision,
+        string bridgeToken)
+    {
+        CancelPreviewRenderTimeout();
+        CancellationTokenSource cancellation = new();
+        _previewRenderTimeoutCancellation = cancellation;
+        _ = ExpirePreviewRenderAsync(
+            renderRevision,
+            bridgeToken,
+            cancellation.Token);
+    }
+
+    private async Task ExpirePreviewRenderAsync(
+        long renderRevision,
+        string bridgeToken,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (_isWindowClosing
+            || _activePreviewRevision != renderRevision
+            || !string.Equals(
+                _activePreviewBridgeToken,
+                bridgeToken,
+                StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        PreviewWebView.CoreWebView2?.Stop();
+        HandlePreviewRenderReadiness(
+            renderRevision,
+            _previewRenderReadiness.Timeout(renderRevision),
+            "The trusted preview page did not confirm that the isolated SVG image loaded. Click Refresh Preview to retry.");
+    }
+
+    private void CancelPreviewRenderTimeout()
+    {
+        CancellationTokenSource? cancellation =
+            _previewRenderTimeoutCancellation;
+        _previewRenderTimeoutCancellation = null;
+        cancellation?.Cancel();
+        cancellation?.Dispose();
     }
 
     private double GetFitScale(SvgCanvasSize? canvasSize = null)
@@ -2184,6 +2299,16 @@ public partial class MainWindow : Window
 
     private void UpdateFileDropFeedback(DragEventArgs e)
     {
+        if (e.Data.GetDataPresent(LayerDragDataFormat))
+        {
+            ApplyFileDropOverlay(
+                _fileDropOverlayState.Transition(
+                    FileDropOverlayEvent.Cancelled));
+            e.Effects = DragDropEffects.Move;
+            e.Handled = false;
+            return;
+        }
+
         InboundFileDropEvaluation evaluation =
             _inboundFileDropPolicy.Evaluate(e.Data);
         e.Effects = evaluation.IsAccepted
@@ -2203,6 +2328,12 @@ public partial class MainWindow : Window
         object sender,
         DragEventArgs e)
     {
+        if (e.Data.GetDataPresent(LayerDragDataFormat))
+        {
+            e.Handled = false;
+            return;
+        }
+
         e.Handled = true;
         ApplyFileDropOverlay(
             _fileDropOverlayState.Transition(
@@ -2211,6 +2342,12 @@ public partial class MainWindow : Window
 
     private void OnWindowDrop(object sender, DragEventArgs e)
     {
+        if (e.Data.GetDataPresent(LayerDragDataFormat))
+        {
+            e.Handled = false;
+            return;
+        }
+
         ApplyFileDropOverlay(
             _fileDropOverlayState.Transition(
                 FileDropOverlayEvent.Drop));
@@ -2323,6 +2460,8 @@ public partial class MainWindow : Window
         _dragFileCleanupTimer.Tick -= OnDragFileCleanupTimerTick;
         ResetDragImageGesture();
         _previewDirectDragHandshake.Reset();
+        CancelPreviewRenderTimeout();
+        _previewRenderReadiness.Reset();
         DetachCoreWebViewEvents();
         _previewDebouncer.Dispose();
         DisposeDocumentPersistence();

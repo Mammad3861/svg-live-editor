@@ -12,12 +12,14 @@ public sealed class SvgPropertyViewModel : ObservableObject
     private string _serializedValue;
     private string _errorMessage = string.Empty;
     private string? _lastCommitAttemptValue;
+    private readonly bool _isSessionLocked;
 
     public SvgPropertyViewModel(
         SvgElementNode element,
         SvgPropertyDefinition definition,
         SvgAttributeSpan? attribute,
-        IReadOnlyList<string>? suggestedValues = null)
+        IReadOnlyList<string>? suggestedValues = null,
+        bool isSessionLocked = false)
     {
         Element = element ?? throw new ArgumentNullException(nameof(element));
         Definition = definition ?? throw new ArgumentNullException(nameof(definition));
@@ -26,6 +28,7 @@ public sealed class SvgPropertyViewModel : ObservableObject
         _value = ReadDisplayValue(_serializedValue, definition);
         _originalValue = _value;
         SuggestedValues = suggestedValues ?? [];
+        _isSessionLocked = isSessionLocked;
     }
 
     public SvgElementNode Element { get; }
@@ -38,7 +41,9 @@ public sealed class SvgPropertyViewModel : ObservableObject
 
     public string HelpText => Definition.HelpText;
 
-    public bool IsReadOnly => Definition.IsReadOnly;
+    public bool IsReadOnly => Definition.IsReadOnly || _isSessionLocked;
+
+    public bool IsSessionLocked => _isSessionLocked;
 
     public bool IsPresent => Attribute is not null;
 

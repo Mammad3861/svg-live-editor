@@ -8,8 +8,14 @@ public sealed class DocumentInspectorViewModel : ObservableObject
 {
     private readonly Dictionary<string, SvgElementViewModel> _elementsByPath =
         new(StringComparer.Ordinal);
+    private readonly Dictionary<string, SvgLayerViewModel> _layersByPath =
+        new(StringComparer.Ordinal);
+    private readonly Dictionary<string, bool> _layerExpansionById =
+        new(StringComparer.Ordinal);
+    private readonly SvgLayerWorkspaceService _layerWorkspaceService = new();
     private SvgDocumentIndex? _documentIndex;
     private SvgElementViewModel? _selectedElement;
+    private SvgLayerViewModel? _selectedLayer;
     private bool _hasIndex;
     private bool _hasSelection;
     private string _stateTitle = "Indexing source";
@@ -22,14 +28,19 @@ public sealed class DocumentInspectorViewModel : ObservableObject
     private SvgOpacityViewModel? _opacity;
     private string? _source;
     private SvgLayerPositionInfo? _layerPosition;
+    private SvgVisualDocument? _visualDocument;
 
     public ObservableCollection<SvgElementViewModel> Roots { get; } = [];
+
+    public ObservableCollection<SvgLayerViewModel> LayerRoots { get; } = [];
 
     public ObservableCollection<SvgPropertyViewModel> Properties { get; } = [];
 
     public SvgDocumentIndex? DocumentIndex => _documentIndex;
 
     public SvgElementViewModel? SelectedElement => _selectedElement;
+
+    public SvgLayerViewModel? SelectedLayer => _selectedLayer;
 
     public SvgOpacityViewModel? Opacity
     {
@@ -98,6 +109,12 @@ public sealed class DocumentInspectorViewModel : ObservableObject
     public SvgElementIdentity? CaptureSelectionIdentity() =>
         _selectedElement?.Element.Identity;
 
+    public void BeginDocumentSession()
+    {
+        _layerWorkspaceService.BeginDocumentSession();
+        _layerExpansionById.Clear();
+    }
+
     public void SetFontFamilySuggestions(
         IReadOnlyList<string> fontFamilySuggestions)
     {
@@ -110,25 +127,38 @@ public sealed class DocumentInspectorViewModel : ObservableObject
         SelectionAdvisory = message ?? string.Empty;
     }
 
+    public void RefreshLayerPresentation(SvgVisualDocument visualDocument)
+    {
+        ArgumentNullException.ThrowIfNull(visualDocument);
+        _visualDocument = visualDocument;
+        RefreshLayers();
+    }
+
     public void Load(
         SvgDocumentIndex documentIndex,
         SvgElementIdentity? preferredSelection,
         InspectorSelectionOrigin selectionOrigin =
             InspectorSelectionOrigin.InspectorRestore,
-        string? source = null)
+        string? source = null,
+        SvgVisualDocument? visualDocument = null)
     {
         ArgumentNullException.ThrowIfNull(documentIndex);
 
         _documentIndex = documentIndex;
         _source = source;
+        _visualDocument = visualDocument;
+        CaptureLayerExpansion();
         Roots.Clear();
+        LayerRoots.Clear();
         Properties.Clear();
         _elementsByPath.Clear();
+        _layersByPath.Clear();
 
         foreach (SvgElementNode root in documentIndex.Roots)
         {
             Roots.Add(CreateElementViewModel(root));
         }
+        BuildLayerViewModels();
 
         HasIndex = true;
         StateTitle = "Document indexed";
@@ -146,9 +176,12 @@ public sealed class DocumentInspectorViewModel : ObservableObject
         _documentIndex = null;
         _source = null;
         Roots.Clear();
+        LayerRoots.Clear();
         Properties.Clear();
         _elementsByPath.Clear();
+        _layersByPath.Clear();
         _selectedElement = null;
+        _selectedLayer = null;
         Opacity = null;
         LayerPosition = null;
         HasIndex = false;
@@ -159,12 +192,69 @@ public sealed class DocumentInspectorViewModel : ObservableObject
         SelectionAdvisory = string.Empty;
         OnPropertyChanged(nameof(DocumentIndex));
         OnPropertyChanged(nameof(SelectedElement));
+        OnPropertyChanged(nameof(SelectedLayer));
     }
 
     public SvgElementViewModel? FindViewModel(SvgElementNode node)
     {
         ArgumentNullException.ThrowIfNull(node);
         return _elementsByPath.GetValueOrDefault(node.StructuralPath);
+    }
+
+    public SvgLayerViewModel? FindLayerViewModel(SvgElementNode node)
+    {
+        ArgumentNullException.ThrowIfNull(node);
+        for (SvgElementNode? current = node;
+             current is not null;
+             current = _documentIndex?.FindParent(current))
+        {
+            if (_layersByPath.TryGetValue(
+                    current.StructuralPath,
+                    out SvgLayerViewModel? layer))
+            {
+                return layer;
+            }
+        }
+
+        return null;
+    }
+
+    public SvgLayerViewModel? FindLayerViewModel(string opaqueId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(opaqueId);
+        return _layersByPath.Values.FirstOrDefault(layer =>
+            layer.OpaqueId.Equals(opaqueId, StringComparison.Ordinal));
+    }
+
+    public bool IsElementEffectivelyLocked(SvgElementNode element) =>
+        _documentIndex is not null
+        && _layerWorkspaceService.IsEffectivelyLocked(
+            _documentIndex,
+            element);
+
+    public bool ToggleLayerLock(SvgLayerViewModel layer)
+    {
+        ArgumentNullException.ThrowIfNull(layer);
+        if (!_layerWorkspaceService.ToggleLock(layer.OpaqueId))
+        {
+            return false;
+        }
+
+        RefreshLayers();
+        return true;
+    }
+
+    public bool IsHiddenAttributeOwned(SvgLayerViewModel layer)
+    {
+        ArgumentNullException.ThrowIfNull(layer);
+        return _layerWorkspaceService.IsHiddenAttributeOwned(layer.OpaqueId);
+    }
+
+    public void SetHiddenAttributeOwned(
+        string opaqueId,
+        bool isOwned)
+    {
+        _layerWorkspaceService.SetHiddenAttributeOwned(opaqueId, isOwned);
     }
 
     public void SelectNode(
@@ -183,11 +273,22 @@ public sealed class DocumentInspectorViewModel : ObservableObject
         SelectElementCore(element, selectionOrigin: null);
     }
 
+    public void AcceptLayerSelection(SvgLayerViewModel? layer)
+    {
+        SelectElementCore(
+            layer is null ? null : FindViewModel(layer.Element),
+            selectionOrigin: null);
+    }
+
     private void SelectElementCore(
         SvgElementViewModel? element,
         InspectorSelectionOrigin? selectionOrigin)
     {
-        if (ReferenceEquals(_selectedElement, element))
+        SvgLayerViewModel? layer = element is null
+            ? null
+            : FindLayerViewModel(element.Element);
+        if (ReferenceEquals(_selectedElement, element)
+            && ReferenceEquals(_selectedLayer, layer))
         {
             return;
         }
@@ -198,8 +299,15 @@ public sealed class DocumentInspectorViewModel : ObservableObject
                 isSelected: false,
                 selectionOrigin ?? InspectorSelectionOrigin.InspectorRestore);
         }
+        if (_selectedLayer is not null)
+        {
+            _selectedLayer.SetSelected(
+                isSelected: false,
+                selectionOrigin ?? InspectorSelectionOrigin.InspectorRestore);
+        }
 
         _selectedElement = element;
+        _selectedLayer = layer;
         Properties.Clear();
         Opacity = null;
         LayerPosition = null;
@@ -230,6 +338,26 @@ public sealed class DocumentInspectorViewModel : ObservableObject
                     element.IsSelected = true;
                 }
             }
+            if (layer is not null)
+            {
+                for (SvgLayerViewModel? ancestor = layer.Parent;
+                     ancestor is not null;
+                     ancestor = ancestor.Parent)
+                {
+                    ancestor.IsExpanded = true;
+                }
+                if (!layer.IsSelected)
+                {
+                    if (selectionOrigin is InspectorSelectionOrigin origin)
+                    {
+                        layer.SetSelected(isSelected: true, origin);
+                    }
+                    else
+                    {
+                        layer.IsSelected = true;
+                    }
+                }
+            }
             HasSelection = true;
             SelectedElementSummary = element.Element.DisplayLabel;
             SvgLayerPositionInfo layerPosition =
@@ -245,6 +373,16 @@ public sealed class DocumentInspectorViewModel : ObservableObject
                 _documentIndex!,
                 element.Element,
                 _source);
+            bool isLocked = IsElementEffectivelyLocked(element.Element);
+            if (opacityState.IsVisible && isLocked)
+            {
+                opacityState = opacityState with
+                {
+                    IsEnabled = false,
+                    UnavailableReason =
+                        "Unlock this layer or its parent group to edit opacity."
+                };
+            }
             if (opacityState.IsVisible)
             {
                 Opacity = new SvgOpacityViewModel(element.Element, opacityState);
@@ -262,11 +400,13 @@ public sealed class DocumentInspectorViewModel : ObservableObject
                     element.Element.FindAttribute(definition.Name),
                     definition.UsesFontFamilySuggestions
                         ? _fontFamilySuggestions
-                        : null));
+                        : null,
+                    isSessionLocked: isLocked));
             }
         }
 
         OnPropertyChanged(nameof(SelectedElement));
+        OnPropertyChanged(nameof(SelectedLayer));
     }
 
     private SvgElementViewModel CreateElementViewModel(
@@ -281,5 +421,72 @@ public sealed class DocumentInspectorViewModel : ObservableObject
         }
 
         return viewModel;
+    }
+
+    private void RefreshLayers()
+    {
+        if (_documentIndex is null)
+        {
+            return;
+        }
+
+        SvgElementViewModel? selectedElement = _selectedElement;
+        CaptureLayerExpansion();
+        LayerRoots.Clear();
+        _layersByPath.Clear();
+        BuildLayerViewModels();
+        SelectElementCore(
+            selectedElement,
+            InspectorSelectionOrigin.InspectorRestore);
+    }
+
+    private void BuildLayerViewModels()
+    {
+        SvgLayerWorkspace workspace = _layerWorkspaceService.Build(
+            _documentIndex!,
+            _source ?? string.Empty,
+            _visualDocument);
+        foreach (SvgLayerItem root in workspace.Roots)
+        {
+            LayerRoots.Add(CreateLayerViewModel(root));
+        }
+    }
+
+    private SvgLayerViewModel CreateLayerViewModel(
+        SvgLayerItem item,
+        SvgLayerViewModel? parent = null)
+    {
+        bool isExpanded = _layerExpansionById.GetValueOrDefault(
+            item.OpaqueId,
+            item.Element.Depth < 2);
+        SvgLayerViewModel viewModel = new(item, parent, isExpanded);
+        _layersByPath.Add(item.Element.StructuralPath, viewModel);
+        foreach (SvgLayerItem child in item.Children)
+        {
+            viewModel.Children.Add(CreateLayerViewModel(child, viewModel));
+        }
+
+        return viewModel;
+    }
+
+    private void CaptureLayerExpansion()
+    {
+        foreach (SvgLayerViewModel layer in EnumerateLayers(LayerRoots))
+        {
+            _layerExpansionById[layer.OpaqueId] = layer.IsExpanded;
+        }
+    }
+
+    private static IEnumerable<SvgLayerViewModel> EnumerateLayers(
+        IEnumerable<SvgLayerViewModel> roots)
+    {
+        foreach (SvgLayerViewModel root in roots)
+        {
+            yield return root;
+            foreach (SvgLayerViewModel child in EnumerateLayers(root.Children))
+            {
+                yield return child;
+            }
+        }
     }
 }

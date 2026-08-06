@@ -131,6 +131,30 @@ public sealed class PreviewHtmlBuilderTests
     }
 
     [TestMethod]
+    public void Build_ReportsIsolatedImageLoadBeforeHostCanDeclareReady()
+    {
+        const string svg =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 300 150\"><rect width=\"300\" height=\"150\" fill=\"green\"/></svg>";
+        string script = ExtractHostScript(
+            _builder.Build(
+                svg,
+                300,
+                150,
+                BridgeToken,
+                sourceRevision: 7));
+
+        StringAssert.Contains(script, "type: 'imageState'");
+        StringAssert.Contains(script, "token: bridgeToken");
+        StringAssert.Contains(script, "sourceRevision");
+        StringAssert.Contains(script, "naturalWidth: loaded ? image.naturalWidth : 0");
+        StringAssert.Contains(script, "naturalHeight: loaded ? image.naturalHeight : 0");
+        StringAssert.Contains(script, "image.addEventListener('load', reportImageLoaded");
+        StringAssert.Contains(script, "image.addEventListener('error', reportImageError");
+        StringAssert.Contains(script, "postImageState('loaded')");
+        StringAssert.Contains(script, "postImageState('error')");
+    }
+
+    [TestMethod]
     public void Build_NormalizesAndRoutesWheelAxesWithoutDuplicateShiftMovement()
     {
         const string svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" />";

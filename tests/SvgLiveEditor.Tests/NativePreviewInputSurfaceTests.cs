@@ -87,18 +87,60 @@ public sealed class NativePreviewInputSurfaceTests
     {
         string xaml = ReadUi("MainWindow.xaml");
         int inspector = xaml.IndexOf(
-            "Text=\"Document Inspector\"",
+            "x:Name=\"InspectorWorkspace\"",
             StringComparison.Ordinal);
-        int source = xaml.IndexOf(
+        int inspectorColumn = IndexOfAfter(
+            xaml,
+            "Grid.Column=\"0\"",
+            inspector);
+        int inspectorAccessibility = IndexOfAfter(
+            xaml,
+            "AutomationProperties.Name=\"Layers and Structure inspector workspace\"",
+            inspectorColumn);
+        int layers = IndexOfAfter(
+            xaml,
+            "x:Name=\"LayersTab\"",
+            inspectorAccessibility);
+        int layersAccessibility = IndexOfAfter(
+            xaml,
+            "AutomationProperties.Name=\"Layers\"",
+            layers);
+        int structure = IndexOfAfter(
+            xaml,
+            "x:Name=\"StructureTab\"",
+            layersAccessibility);
+        int structureAccessibility = IndexOfAfter(
+            xaml,
+            "AutomationProperties.Name=\"SVG XML Structure\"",
+            structure);
+        int sourcePane = IndexOfAfter(
+            xaml,
+            "<Border Grid.Column=\"2\"",
+            structureAccessibility);
+        int source = IndexOfAfter(
+            xaml,
             "Text=\"Source\"",
-            StringComparison.Ordinal);
-        int preview = xaml.IndexOf(
+            sourcePane);
+        int previewPane = IndexOfAfter(
+            xaml,
+            "<Border Grid.Column=\"4\"",
+            source);
+        int preview = IndexOfAfter(
+            xaml,
             "Text=\"Live Preview\"",
-            StringComparison.Ordinal);
+            previewPane);
 
         Assert.IsTrue(inspector >= 0);
-        Assert.IsTrue(source > inspector);
-        Assert.IsTrue(preview > source);
+        Assert.IsTrue(inspectorColumn > inspector);
+        Assert.IsTrue(inspectorAccessibility > inspectorColumn);
+        Assert.IsTrue(layers > inspectorAccessibility);
+        Assert.IsTrue(layersAccessibility > layers);
+        Assert.IsTrue(structure > layersAccessibility);
+        Assert.IsTrue(structureAccessibility > structure);
+        Assert.IsTrue(sourcePane > structureAccessibility);
+        Assert.IsTrue(source > sourcePane);
+        Assert.IsTrue(previewPane > source);
+        Assert.IsTrue(preview > previewPane);
         StringAssert.Contains(xaml, "MinWidth=\"900\"");
         StringAssert.Contains(
             xaml,
@@ -298,6 +340,16 @@ public sealed class NativePreviewInputSurfaceTests
             position += search.Length;
         }
         return count;
+    }
+
+    private static int IndexOfAfter(
+        string value,
+        string search,
+        int startIndex)
+    {
+        return startIndex < 0
+            ? -1
+            : value.IndexOf(search, startIndex, StringComparison.Ordinal);
     }
 
     private static string ReadUi(string fileName)
