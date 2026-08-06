@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
@@ -28,6 +29,10 @@ public partial class MainWindow
     private readonly SvgLayerOrderService _svgLayerOrderService = new();
     private readonly SvgLayerVisibilityService _svgLayerVisibilityService = new();
     private readonly SvgOpacityService _svgOpacityService = new();
+    private readonly SvgElementCreationService _svgElementCreationService = new();
+    private readonly SvgElementDuplicateService _svgElementDuplicateService = new();
+    private readonly SvgElementDeleteService _svgElementDeleteService = new();
+    private readonly SvgLayerReparentService _svgLayerReparentService = new();
     private readonly DispatcherTimer _inspectorCaretTimer = new()
     {
         Interval = TimeSpan.FromMilliseconds(160)
@@ -138,6 +143,7 @@ public partial class MainWindow
             _isSynchronizingInspectorSelection = false;
         }
         OnVisualInspectorResultApplied();
+        RefreshAuthoringControls();
     }
 
     private void QueueInspectorCaretSynchronization()
@@ -163,6 +169,7 @@ public partial class MainWindow
         _isInspectorIndexCurrent = false;
         _inspectorSourceRevision = -1;
         _inspectorCaretTimer.Stop();
+        RefreshAuthoringControls();
     }
 
     private void OnInspectorCaretTimerTick(object? sender, EventArgs e)
@@ -201,6 +208,7 @@ public partial class MainWindow
         }
         SynchronizeVisualSelectionFromInspector();
         RefreshSelectedTextWarnings();
+        RefreshAuthoringControls();
     }
 
     private void OnInspectorTreeSelectionChanged(
@@ -225,6 +233,7 @@ public partial class MainWindow
             announce: origin
                 == InspectorSelectionOrigin.ExplicitTreeNavigation);
         RefreshSelectedTextWarnings();
+        RefreshAuthoringControls();
     }
 
     private void OnLayersTreeSelectionChanged(
@@ -254,6 +263,7 @@ public partial class MainWindow
             announce: origin
                 == InspectorSelectionOrigin.ExplicitTreeNavigation);
         RefreshSelectedTextWarnings();
+        RefreshAuthoringControls();
     }
 
     private void OnLayersTreePreviewKeyDown(
@@ -339,8 +349,7 @@ public partial class MainWindow
         e.Effects = DragDropEffects.None;
         e.Handled = true;
         string? reason = null;
-        if (!TryGetLayerDragPair(e, out SvgLayerViewModel source, out SvgLayerViewModel target)
-            || !CanDropLayer(source, target, out reason))
+        if (!TryGetLayerDragPair(e, out SvgLayerViewModel source, out SvgLayerViewModel target))
         {
             ClearLayerDropTarget();
             if (!string.IsNullOrWhiteSpace(reason))
@@ -364,10 +373,23 @@ public partial class MainWindow
             return;
         }
         Point position = e.GetPosition(container);
-        SvgLayerDropPlacement placement =
-            position.Y < container.ActualHeight / 2
-                ? SvgLayerDropPlacement.Before
-                : SvgLayerDropPlacement.After;
+        double height = Math.Max(1, container.ActualHeight);
+        SvgLayerDropPlacement placement = target.IsGroup
+            && position.Y >= height * 0.3
+            && position.Y <= height * 0.7
+                ? SvgLayerDropPlacement.Inside
+                : position.Y < height / 2
+                    ? SvgLayerDropPlacement.Before
+                    : SvgLayerDropPlacement.After;
+        if (!CanDropLayer(source, target, placement, out reason))
+        {
+            ClearLayerDropTarget();
+            if (!string.IsNullOrWhiteSpace(reason))
+            {
+                _viewModel.SetOperationStatus(reason);
+            }
+            return;
+        }
         SetLayerDropTarget(target, placement);
         e.Effects = DragDropEffects.Move;
     }
@@ -376,8 +398,7 @@ public partial class MainWindow
     {
         e.Handled = true;
         string? reason = null;
-        if (!TryGetLayerDragPair(e, out SvgLayerViewModel source, out SvgLayerViewModel target)
-            || !CanDropLayer(source, target, out reason))
+        if (!TryGetLayerDragPair(e, out SvgLayerViewModel source, out SvgLayerViewModel target))
         {
             ClearLayerDropTarget();
             _viewModel.SetOperationStatus(
@@ -390,6 +411,13 @@ public partial class MainWindow
             _layerDropTarget)
                 ? _layerDropPlacement
                 : SvgLayerDropPlacement.Before;
+        if (!CanDropLayer(source, target, placement, out reason))
+        {
+            ClearLayerDropTarget();
+            _viewModel.SetOperationStatus(
+                reason ?? "The layer drop was rejected.");
+            return;
+        }
         ClearLayerDropTarget();
         ApplyLayerMove(source, target, placement);
     }
@@ -427,6 +455,7 @@ public partial class MainWindow
                 layer.IsLocked
                     ? $"{layer.Label} unlocked for this session"
                     : $"{layer.Label} locked for this session");
+            RefreshAuthoringControls();
         }
         e.Handled = true;
     }
@@ -575,6 +604,7 @@ public partial class MainWindow
     private bool CanDropLayer(
         SvgLayerViewModel source,
         SvgLayerViewModel target,
+        SvgLayerDropPlacement placement,
         out string? reason)
     {
         reason = null;
@@ -590,27 +620,16 @@ public partial class MainWindow
             reason = "The source changed; start the layer drag again.";
             return false;
         }
-        if (ReferenceEquals(source, target))
-        {
-            reason = "Drop before or after a different sibling layer.";
-            return false;
-        }
-        if (_viewModel.Inspector.IsElementEffectivelyLocked(source.Element)
-            || _viewModel.Inspector.IsElementEffectivelyLocked(target.Element))
-        {
-            reason = "Unlock the layer and its parent group before reordering.";
-            return false;
-        }
-        if (!ReferenceEquals(
-                document.FindParent(source.Element),
-                document.FindParent(target.Element)))
-        {
-            reason =
-                "Layers can be reordered only within the same parent. Moving into or out of a group is deferred to v0.9.";
-            return false;
-        }
-
-        return true;
+        SvgAuthoringAvailability availability =
+            _svgLayerReparentService.GetDropAvailability(
+                SourceEditor.Text,
+                document,
+                source.Element,
+                target.Element,
+                placement,
+                _viewModel.Inspector.IsElementEffectivelyLocked);
+        reason = availability.UnavailableReason;
+        return availability.CanExecute;
     }
 
     private void SetLayerDropTarget(
@@ -628,6 +647,7 @@ public partial class MainWindow
         _layerDropPlacement = placement;
         target.IsDropBefore = placement == SvgLayerDropPlacement.Before;
         target.IsDropAfter = placement == SvgLayerDropPlacement.After;
+        target.IsDropInside = placement == SvgLayerDropPlacement.Inside;
     }
 
     private void ClearLayerDropTarget()
@@ -636,6 +656,7 @@ public partial class MainWindow
         {
             _layerDropTarget.IsDropBefore = false;
             _layerDropTarget.IsDropAfter = false;
+            _layerDropTarget.IsDropInside = false;
         }
 
         _layerDropTarget = null;
@@ -657,12 +678,13 @@ public partial class MainWindow
             return;
         }
 
-        SvgLayerMoveEditResult result = _svgLayerOrderService.CreateMoveEdit(
+        SvgAuthoringEditResult result = _svgLayerReparentService.CreateDropEdit(
             sourceSnapshot,
             document,
             source.Element,
             target.Element,
-            placement);
+            placement,
+            _viewModel.Inspector.IsElementEffectivelyLocked);
         if (!result.IsSuccess
             || result.Edit is null
             || result.PreferredSelection is null)
@@ -681,12 +703,411 @@ public partial class MainWindow
 
         CancelOpacitySliderGesture();
         CancelVisualEditGesture();
+        string destination = placement == SvgLayerDropPlacement.Inside
+            ? target.Label
+            : target.Parent?.Label ?? "the SVG root";
+        ApplyAuthoringEdit(
+            result,
+            sourceSnapshot,
+            expectedRevision,
+            ReferenceEquals(source.Parent, target.Parent)
+                && placement != SvgLayerDropPlacement.Inside
+                    ? $"{source.Label} reordered within {destination}"
+                    : $"{source.Label} moved into {destination}");
+    }
+
+    private void OnAddElementClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { ContextMenu: ContextMenu menu } button)
+        {
+            return;
+        }
+
+        UpdateAuthoringMenuItems(menu.Items);
+        menu.PlacementTarget = button;
+        menu.Placement = PlacementMode.Bottom;
+        menu.IsOpen = true;
+        e.Handled = true;
+    }
+
+    private void OnAddElementContextMenuOpened(object sender, RoutedEventArgs e)
+    {
+        if (sender is ContextMenu menu)
+        {
+            UpdateAuthoringMenuItems(menu.Items);
+        }
+    }
+
+    private void OnEditMenuSubmenuOpened(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem menu)
+        {
+            UpdateAuthoringMenuItems(menu.Items);
+        }
+    }
+
+    private void OnCreateElementClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem item
+            && TryReadCreateElementKind(item.Tag, out SvgCreateElementKind kind))
+        {
+            CreateVisualElement(kind);
+        }
+    }
+
+    private void OnDuplicateElementClick(object sender, RoutedEventArgs e) =>
+        DuplicateSelectedElement();
+
+    private void OnDeleteElementClick(object sender, RoutedEventArgs e) =>
+        DeleteSelectedElement();
+
+    private void OnMoveElementToRootClick(object sender, RoutedEventArgs e) =>
+        MoveSelectedElementToRoot();
+
+    private void CreateVisualElement(SvgCreateElementKind kind)
+    {
+        if (!TryGetAuthoringContext(
+                out SvgDocumentIndex document,
+                out SvgElementNode? selection,
+                out string source,
+                out long revision,
+                "Create"))
+        {
+            return;
+        }
+
+        SvgAuthoringEditResult result = _svgElementCreationService.CreateEdit(
+            source,
+            document,
+            selection,
+            kind,
+            _lastValidCanvasSize ?? new SvgCanvasSize(300, 150),
+            _viewModel.Inspector.IsElementEffectivelyLocked);
+        ApplyAuthoringEdit(
+            result,
+            source,
+            revision,
+            $"{GetCreateElementLabel(kind)} created");
+    }
+
+    private void DuplicateSelectedElement()
+    {
+        if (!TryGetAuthoringContext(
+                out SvgDocumentIndex document,
+                out SvgElementNode? selection,
+                out string source,
+                out long revision,
+                "Duplicate"))
+        {
+            return;
+        }
+
+        SvgAuthoringEditResult result = _svgElementDuplicateService.CreateEdit(
+            source,
+            document,
+            selection,
+            _viewModel.Inspector.IsElementEffectivelyLocked);
+        ApplyAuthoringEdit(result, source, revision, "Element duplicated");
+    }
+
+    private void DeleteSelectedElement()
+    {
+        if (!TryGetAuthoringContext(
+                out SvgDocumentIndex document,
+                out SvgElementNode? selection,
+                out string source,
+                out long revision,
+                "Delete"))
+        {
+            return;
+        }
+
+        SvgAuthoringEditResult result = _svgElementDeleteService.CreateEdit(
+            source,
+            document,
+            selection,
+            _viewModel.Inspector.IsElementEffectivelyLocked);
+        ApplyAuthoringEdit(result, source, revision, "Element deleted");
+    }
+
+    private void MoveSelectedElementToRoot()
+    {
+        if (!TryGetAuthoringContext(
+                out SvgDocumentIndex document,
+                out SvgElementNode? selection,
+                out string source,
+                out long revision,
+                "Move to SVG Root")
+            || selection is null)
+        {
+            return;
+        }
+
+        SvgAuthoringEditResult result =
+            _svgLayerReparentService.CreateMoveToRootFrontEdit(
+                source,
+                document,
+                selection,
+                _viewModel.Inspector.IsElementEffectivelyLocked);
+        ApplyAuthoringEdit(
+            result,
+            source,
+            revision,
+            "Element moved to the front of the SVG root");
+    }
+
+    private bool ApplyAuthoringEdit(
+        SvgAuthoringEditResult result,
+        string sourceSnapshot,
+        long expectedRevision,
+        string successStatus)
+    {
+        if (!result.IsSuccess
+            || result.Edit is null
+            || result.PreferredSelection is null)
+        {
+            _viewModel.SetOperationStatus(
+                result.ErrorMessage ?? "The visual authoring operation was rejected.");
+            return false;
+        }
+        if (result.RequiresConfirmation)
+        {
+            MessageBoxResult confirmation = MessageBox.Show(
+                this,
+                result.ConfirmationMessage
+                ?? "Delete the selected element and its descendants?",
+                "Delete SVG group",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning,
+                MessageBoxResult.No);
+            if (confirmation != MessageBoxResult.Yes)
+            {
+                _viewModel.SetOperationStatus("Delete cancelled");
+                return false;
+            }
+        }
+        if (!_sourceRevisionTracker.IsCurrent(expectedRevision)
+            || !SourceEditor.Text.Equals(sourceSnapshot, StringComparison.Ordinal))
+        {
+            _viewModel.SetOperationStatus(
+                "The source changed; select the element and try again.");
+            return false;
+        }
+
+        CancelOpacitySliderGesture();
+        CancelVisualEditGesture();
         _documentEditService.Apply(SourceEditor.Document, result.Edit);
-        SvgDocumentIndexResult rebuilt =
-            _documentIndexService.Build(SourceEditor.Text);
-        ApplyDocumentInspectorResult(rebuilt, result.PreferredSelection);
-        _viewModel.SetOperationStatus(
-            $"{source.Label} reordered within {source.Parent?.Label ?? "the SVG root"}");
+        _previewDebouncer.Cancel();
+        string updatedSource = SourceEditor.Text;
+        long updatedRevision = _sourceRevisionTracker.Current;
+        SvgDocumentIndexResult rebuilt = _documentIndexService.Build(updatedSource);
+        ApplyValidationResult(
+            updatedSource,
+            updatedRevision,
+            rebuilt,
+            result.PreferredSelection);
+        _viewModel.SetOperationStatus(successStatus);
+        return true;
+    }
+
+    private bool TryGetAuthoringContext(
+        out SvgDocumentIndex document,
+        out SvgElementNode? selection,
+        out string source,
+        out long revision,
+        string operationName)
+    {
+        document = null!;
+        selection = null;
+        source = SourceEditor.Text;
+        revision = _inspectorSourceRevision;
+        if (_viewModel.Inspector.DocumentIndex is not SvgDocumentIndex current
+            || !_inspectorSourceGuard.CanUseIndex(
+                _isInspectorIndexCurrent,
+                revision,
+                _sourceRevisionTracker.Current,
+                _isEditorTextCompositionActive))
+        {
+            _viewModel.SetOperationStatus(
+                $"{operationName} is unavailable until the current SVG is valid and indexed.");
+            return false;
+        }
+
+        document = current;
+        selection = _viewModel.Inspector.SelectedElement?.Element;
+        return true;
+    }
+
+    private void RefreshAuthoringControls()
+    {
+        SvgAuthoringAvailability availability = GetCreateAvailability();
+        AddElementButton.IsEnabled = availability.CanExecute;
+        string help = availability.CanExecute
+            ? "Add Rectangle, Circle, Ellipse, Line, Text, or Group to the selected safe layer context."
+            : availability.UnavailableReason
+                ?? "Creation is unavailable for the current source.";
+        AddElementButton.ToolTip = help;
+        AutomationProperties.SetHelpText(AddElementButton, help);
+    }
+
+    private SvgAuthoringAvailability GetCreateAvailability()
+    {
+        SvgDocumentIndex? document = _viewModel.Inspector.DocumentIndex;
+        if (document is null
+            || !_inspectorSourceGuard.CanUseIndex(
+                _isInspectorIndexCurrent,
+                _inspectorSourceRevision,
+                _sourceRevisionTracker.Current,
+                _isEditorTextCompositionActive))
+        {
+            return new SvgAuthoringAvailability(
+                false,
+                "Creation is unavailable until the current SVG is valid and indexed.");
+        }
+
+        return _svgElementCreationService.GetAvailability(
+            SourceEditor.Text,
+            document,
+            _viewModel.Inspector.SelectedElement?.Element,
+            _viewModel.Inspector.IsElementEffectivelyLocked);
+    }
+
+    private void UpdateAuthoringMenuItems(ItemCollection items)
+    {
+        SvgDocumentIndex? document = _viewModel.Inspector.DocumentIndex;
+        SvgElementNode? selected = _viewModel.Inspector.SelectedElement?.Element;
+        string source = SourceEditor.Text;
+        SvgAuthoringAvailability unavailable = new(
+            false,
+            "The current SVG must be valid, indexed, and current.");
+        bool isCurrent = document is not null
+            && _inspectorSourceGuard.CanUseIndex(
+                _isInspectorIndexCurrent,
+                _inspectorSourceRevision,
+                _sourceRevisionTracker.Current,
+                _isEditorTextCompositionActive);
+        SvgAuthoringAvailability create = isCurrent
+            ? GetCreateAvailability()
+            : unavailable;
+        SvgAuthoringAvailability duplicate = isCurrent
+            ? _svgElementDuplicateService.GetAvailability(
+                source,
+                document!,
+                selected,
+                _viewModel.Inspector.IsElementEffectivelyLocked)
+            : unavailable;
+        SvgAuthoringAvailability delete = isCurrent
+            ? _svgElementDeleteService.GetAvailability(
+                source,
+                document!,
+                selected,
+                _viewModel.Inspector.IsElementEffectivelyLocked)
+            : unavailable;
+        SvgAuthoringAvailability moveRoot = isCurrent
+            ? _svgLayerReparentService.GetMoveToRootAvailability(
+                source,
+                document!,
+                selected,
+                _viewModel.Inspector.IsElementEffectivelyLocked)
+            : unavailable;
+
+        foreach (MenuItem item in EnumerateMenuItems(items))
+        {
+            SvgAuthoringAvailability? availability = item.Tag switch
+            {
+                string tag when tag.StartsWith("Create:", StringComparison.Ordinal) => create,
+                "Duplicate" => duplicate,
+                "Delete" => delete,
+                "MoveToRoot" => moveRoot,
+                _ => null
+            };
+            if (availability is null)
+            {
+                continue;
+            }
+            item.IsEnabled = availability.CanExecute;
+            item.ToolTip = availability.UnavailableReason;
+            AutomationProperties.SetHelpText(
+                item,
+                availability.CanExecute
+                    ? item.Header?.ToString() ?? "SVG authoring command"
+                    : availability.UnavailableReason ?? "Command unavailable");
+        }
+    }
+
+    private static IEnumerable<MenuItem> EnumerateMenuItems(ItemCollection items)
+    {
+        foreach (object entry in items)
+        {
+            if (entry is not MenuItem item)
+            {
+                continue;
+            }
+            yield return item;
+            foreach (MenuItem child in EnumerateMenuItems(item.Items))
+            {
+                yield return child;
+            }
+        }
+    }
+
+    private static bool TryReadCreateElementKind(
+        object? value,
+        out SvgCreateElementKind kind)
+    {
+        kind = default;
+        return value is string text
+            && text.StartsWith("Create:", StringComparison.Ordinal)
+            && Enum.TryParse(text["Create:".Length..], false, out kind)
+            && Enum.IsDefined(kind);
+    }
+
+    private static string GetCreateElementLabel(SvgCreateElementKind kind) =>
+        kind == SvgCreateElementKind.Group
+            ? "Group"
+            : kind.ToString();
+
+    private bool TryHandleAuthoringShortcut(
+        ModifierKeys modifiers,
+        Key pressedKey)
+    {
+        bool authoringFocus = LayersTree.IsKeyboardFocusWithin
+            || InspectorTree.IsKeyboardFocusWithin
+            || PreviewWebView.IsKeyboardFocusWithin;
+        if (!authoringFocus || IsEditableControlFocused())
+        {
+            return false;
+        }
+        if (modifiers == ModifierKeys.Control && pressedKey == Key.D)
+        {
+            DuplicateSelectedElement();
+            return true;
+        }
+        if (modifiers == ModifierKeys.None && pressedKey == Key.Delete)
+        {
+            DeleteSelectedElement();
+            return true;
+        }
+
+        return false;
+    }
+
+    private void OnInspectorTreePreviewMouseRightButtonDown(
+        object sender,
+        MouseButtonEventArgs e)
+    {
+        if (e.OriginalSource is not DependencyObject originalSource)
+        {
+            return;
+        }
+
+        TreeViewItem? item = FindVisualAncestor<TreeViewItem>(originalSource);
+        if (item is null)
+        {
+            return;
+        }
+        item.IsSelected = true;
+        item.Focus();
     }
 
     private void OnInspectorTreePreviewKeyDown(
@@ -751,6 +1172,7 @@ public partial class MainWindow
                 UpdateArrangeMenuItem(item, command);
             }
         }
+        UpdateAuthoringMenuItems(contextMenu.Items);
     }
 
     private void OnArrangeClick(object sender, RoutedEventArgs e)

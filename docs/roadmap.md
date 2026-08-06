@@ -21,21 +21,28 @@ This roadmap records product direction. Post-v1 entries are ideas, not promises,
 - Clear SVG hierarchy.
 - Safe group-aware ordering.
 - Visibility and lock controls.
-- Address the same-parent layer limitation without unsafe implicit reparenting by exposing group boundaries; explicit cross-parent reparenting remains deferred.
+- Address the same-parent layer limitation without unsafe implicit reparenting by exposing group boundaries.
 
 ## Pre-v1 core work
 
-### v0.9 — Essential visual creation and editing
+### v0.9.0 — Visual Authoring (current standalone release)
 
-- Insert basic SVG elements.
-- Duplicate and delete.
+- Insert bounded basic SVG elements and empty groups.
+- Duplicate exact subtrees with safe deterministic ID/reference remapping.
+- Delete exact subtrees with reference and non-empty-group safeguards.
+- Explicit conservative move into, out of, and between existing groups.
+- Preserve one-operation Undo, source selection, expansion state, Properties, and Preview synchronization.
+
+### v0.10.0 — Visual Composition (planned)
+
 - Multi-selection.
-- Alignment.
-- Snapping.
-- Explicit move into/out of existing groups and grouping/ungrouping, if it can preserve source safely.
-- Close the remaining essential visual-editor gaps.
+- Moving multiple selected elements.
+- Group and Ungroup commands.
+- Alignment and distribution.
+- Basic snapping.
+- Evaluate safe basic path bounding-box resize after the core composition architecture is stable.
 
-### v1.0 — Stable baseline
+### v1.0.0 — Stable Release / stabilization
 
 - Accessibility.
 - Reliability and data-loss review.
@@ -69,8 +76,17 @@ These entries are optional product-direction ideas, not promises or deadlines.
    - Persist the choice per user and eventually react dynamically to Windows theme changes.
    - Consistently theme WPF chrome, menus, dialogs, AvalonEdit, Inspector, Properties, and other app-owned UI.
    - Never modify SVG artwork merely because the application theme changes.
-6. **Advanced vector editing**
+6. **Rulers, Guides & Smart Placement**
+   - Horizontal and vertical rulers with document-coordinate display.
+   - Draggable guides with guide locking and hiding.
+   - Snap indicators and optional smart snapping that can be disabled.
+   - Smart alignment guides, equal-spacing suggestions, and center/edge alignment suggestions.
+   - Placement feedback similar to modern Office, Figma, and design applications.
+   - Visual property and position hints where useful, without hidden source rewrites.
+7. **Advanced vector editing**
    - Path-node editing, advanced gradients, masks/effects editing, and richer transforms.
-7. **Future integrations**
+8. **Advanced exports and distribution**
+   - Additional carefully audited export formats and distribution options after the stable baseline.
+9. **Future integrations**
    - External design-tool workflows and advanced AI-assisted workflows.
 

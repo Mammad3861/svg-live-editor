@@ -163,6 +163,12 @@ public sealed class SvgLayerOrderService
         ArgumentNullException.ThrowIfNull(element);
         ArgumentNullException.ThrowIfNull(target);
 
+        if (placement is not SvgLayerDropPlacement.Before
+            and not SvgLayerDropPlacement.After)
+        {
+            return SvgLayerMoveEditResult.Invalid(
+                "Dropping inside a group requires the guarded reparent operation.");
+        }
         if (ReferenceEquals(element, target))
         {
             return SvgLayerMoveEditResult.Invalid(
@@ -175,7 +181,7 @@ public sealed class SvgLayerOrderService
             || !ReferenceEquals(parent, targetParent))
         {
             return SvgLayerMoveEditResult.Invalid(
-                "Layers can be reordered only within the same parent. Moving into or out of a group is deferred to v0.9.");
+                "Layers can be reordered only within the same parent. Use the explicit guarded reparent operation to move a layer between parents.");
         }
         if (!IsEligibleSibling(element)
             || !IsEligibleSibling(target)

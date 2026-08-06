@@ -310,6 +310,25 @@ public sealed class SvgLayerOrderServiceTests
     }
 
     [TestMethod]
+    public void SameParentOrderServiceRejectsInsidePlacement()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect id=\"one\"/><g id=\"group\"></g></svg>";
+        SvgDocumentIndex document = _indexService.Build(source).Document!;
+
+        SvgLayerMoveEditResult result = _service.CreateMoveEdit(
+            source,
+            document,
+            Find(document, "one"),
+            Find(document, "group"),
+            SvgLayerDropPlacement.Inside);
+
+        Assert.IsFalse(result.IsSuccess);
+        Assert.IsNull(result.Edit);
+        StringAssert.Contains(result.ErrorMessage, "guarded reparent");
+    }
+
+    [TestMethod]
     public void LayerDropReorderIsOneUndoOperation()
     {
         const string source =

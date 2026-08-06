@@ -67,14 +67,15 @@ public sealed class SvgLayersUxSurfaceTests
     }
 
     [TestMethod]
-    public void DragDropUsesOpaqueIdsAndHostSideSameParentPolicy()
+    public void DragDropUsesOpaqueIdsAndHostSideExplicitPlacementPolicy()
     {
         string inspector = ReadUi("MainWindow.Inspector.cs");
 
         StringAssert.Contains(inspector, "SvgLiveEditor.Internal.Layer.OpaqueId");
         StringAssert.Contains(inspector, "_sourceRevisionTracker.IsCurrent");
-        StringAssert.Contains(inspector, "document.FindParent(source.Element)");
-        StringAssert.Contains(inspector, "Moving into or out of a group is deferred to v0.9");
+        StringAssert.Contains(inspector, "SvgLayerDropPlacement.Inside");
+        StringAssert.Contains(inspector, "_svgLayerReparentService.GetDropAvailability");
+        StringAssert.Contains(inspector, "_svgLayerReparentService.CreateDropEdit");
         Assert.IsFalse(inspector.Contains("PostWebMessage", StringComparison.Ordinal));
         string main = ReadUi("MainWindow.xaml.cs");
         StringAssert.Contains(
@@ -112,8 +113,9 @@ public sealed class SvgLayersUxSurfaceTests
 
         StringAssert.Contains(visual, "IsVisualElementLocked(element)");
         StringAssert.Contains(visual, "IsVisualElementLocked(selectedElement)");
-        StringAssert.Contains(inspector, "IsElementEffectivelyLocked(source.Element)");
-        StringAssert.Contains(inspector, "IsElementEffectivelyLocked(target.Element)");
+        StringAssert.Contains(
+            inspector,
+            "_viewModel.Inspector.IsElementEffectivelyLocked);");
         StringAssert.Contains(inspector, "IsElementEffectivelyLocked(opacity.Element)");
         StringAssert.Contains(inspector, "IsElementEffectivelyLocked(property.Element)");
         StringAssert.Contains(inspector, "IsElementEffectivelyLocked(element)");
