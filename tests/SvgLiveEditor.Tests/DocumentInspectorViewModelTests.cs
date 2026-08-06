@@ -122,6 +122,36 @@ public sealed class DocumentInspectorViewModelTests
     }
 
     [TestMethod]
+    public void Load_PreservesUnrelatedLayerAndStructureExpansionAcrossAuthoringEdit()
+    {
+        const string before =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><g id=\"left\"><rect/></g><g id=\"right\"><circle/></g></svg>";
+        const string after =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><g id=\"left\"><rect/><line id=\"new\"/></g><g id=\"right\"><circle/></g></svg>";
+        DocumentInspectorViewModel inspector = new();
+        SvgDocumentIndex beforeIndex = _indexService.Build(before).Document!;
+        inspector.Load(beforeIndex, preferredSelection: null, source: before);
+        SvgLayerViewModel rightLayer = inspector.LayerRoots.Single(layer =>
+            layer.Element.Id == "right");
+        SvgElementViewModel rightStructure = inspector.Roots.Single()
+            .Children.Single(element => element.Element.Id == "right");
+        rightLayer.IsExpanded = false;
+        rightStructure.IsExpanded = false;
+
+        inspector.Load(
+            _indexService.Build(after).Document!,
+            new SvgElementIdentity("line", "new", "0/0/1"),
+            source: after);
+
+        Assert.IsFalse(inspector.LayerRoots.Single(layer =>
+            layer.Element.Id == "right").IsExpanded);
+        Assert.IsFalse(inspector.Roots.Single().Children.Single(element =>
+            element.Element.Id == "right").IsExpanded);
+        Assert.AreEqual("new", inspector.SelectedElement!.Element.Id);
+        Assert.AreEqual("new", inspector.SelectedLayer!.Element.Id);
+    }
+
+    [TestMethod]
     public void StructureTspanSelectionRevealsItsNearestTextLayer()
     {
         const string source =

@@ -9,6 +9,7 @@ public sealed class SvgLayerViewModel : ObservableObject
     private bool _isExpanded;
     private bool _isDropBefore;
     private bool _isDropAfter;
+    private bool _isDropInside;
     private InspectorSelectionOrigin? _pendingSelectionOrigin;
 
     public SvgLayerViewModel(
@@ -128,6 +129,12 @@ public sealed class SvgLayerViewModel : ObservableObject
     {
         get => _isDropAfter;
         set => SetProperty(ref _isDropAfter, value);
+    }
+
+    public bool IsDropInside
+    {
+        get => _isDropInside;
+        set => SetProperty(ref _isDropInside, value);
     }
 
     public void SetSelected(

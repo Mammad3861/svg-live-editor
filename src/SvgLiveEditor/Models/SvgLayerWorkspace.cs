@@ -3,7 +3,8 @@ namespace SvgLiveEditor.Models;
 public enum SvgLayerDropPlacement
 {
     Before,
-    After
+    After,
+    Inside
 }
 
 public sealed record SvgLayerVisibilityState(

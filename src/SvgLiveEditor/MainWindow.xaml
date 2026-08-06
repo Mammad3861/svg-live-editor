@@ -87,6 +87,47 @@
         </Trigger>
       </Style.Triggers>
     </Style>
+    <ContextMenu x:Key="InspectorAuthoringContextMenu"
+                 x:Shared="False">
+      <MenuItem Header="_Add">
+        <MenuItem Header="_Rectangle" Tag="Create:Rectangle" Click="OnCreateElementClick" />
+        <MenuItem Header="_Circle" Tag="Create:Circle" Click="OnCreateElementClick" />
+        <MenuItem Header="_Ellipse" Tag="Create:Ellipse" Click="OnCreateElementClick" />
+        <MenuItem Header="_Line" Tag="Create:Line" Click="OnCreateElementClick" />
+        <MenuItem Header="_Text" Tag="Create:Text" Click="OnCreateElementClick" />
+        <MenuItem Header="_Empty Group" Tag="Create:Group" Click="OnCreateElementClick" />
+      </MenuItem>
+      <Separator />
+      <MenuItem Header="_Duplicate"
+                InputGestureText="Ctrl+D"
+                Tag="Duplicate"
+                Click="OnDuplicateElementClick"
+                AutomationProperties.Name="Duplicate selected SVG element" />
+      <MenuItem Header="_Delete"
+                InputGestureText="Delete"
+                Tag="Delete"
+                Click="OnDeleteElementClick"
+                AutomationProperties.Name="Delete selected SVG element" />
+      <MenuItem Header="Move to SVG _Root (Front)"
+                Tag="MoveToRoot"
+                Click="OnMoveElementToRootClick"
+                AutomationProperties.Name="Move selected element to front of SVG root" />
+      <Separator />
+      <MenuItem Header="Bring to Front" Tag="BringToFront" Click="OnArrangeClick" />
+      <MenuItem Header="Bring Forward" Tag="BringForward" Click="OnArrangeClick" />
+      <MenuItem Header="Send Backward" Tag="SendBackward" Click="OnArrangeClick" />
+      <MenuItem Header="Send to Back" Tag="SendToBack" Click="OnArrangeClick" />
+    </ContextMenu>
+    <ContextMenu x:Key="AddElementContextMenu"
+                 x:Shared="False"
+                 Opened="OnAddElementContextMenuOpened">
+      <MenuItem Header="_Rectangle" Tag="Create:Rectangle" Click="OnCreateElementClick" />
+      <MenuItem Header="_Circle" Tag="Create:Circle" Click="OnCreateElementClick" />
+      <MenuItem Header="_Ellipse" Tag="Create:Ellipse" Click="OnCreateElementClick" />
+      <MenuItem Header="_Line" Tag="Create:Line" Click="OnCreateElementClick" />
+      <MenuItem Header="_Text" Tag="Create:Text" Click="OnCreateElementClick" />
+      <MenuItem Header="_Empty Group" Tag="Create:Group" Click="OnCreateElementClick" />
+    </ContextMenu>
   </Window.Resources>
 
   <Grid>
@@ -112,12 +153,23 @@
         <Separator />
         <MenuItem Header="E_xit" Click="OnExitClick" />
       </MenuItem>
-      <MenuItem Header="_Edit">
+      <MenuItem Header="_Edit" SubmenuOpened="OnEditMenuSubmenuOpened">
         <MenuItem Header="_Undo" InputGestureText="Ctrl+Z" Click="OnUndoClick" />
         <MenuItem Header="_Redo" InputGestureText="Ctrl+Y" Click="OnRedoClick" />
         <Separator />
         <MenuItem Header="_Find" InputGestureText="Ctrl+F" Click="OnFindClick" />
         <MenuItem Header="_Replace" InputGestureText="Ctrl+H" Click="OnReplaceClick" />
+        <Separator />
+        <MenuItem Header="_Duplicate Selected Element"
+                  InputGestureText="Ctrl+D"
+                  Tag="Duplicate"
+                  Click="OnDuplicateElementClick"
+                  AutomationProperties.Name="Duplicate selected SVG element" />
+        <MenuItem Header="_Delete Selected Element"
+                  InputGestureText="Delete"
+                  Tag="Delete"
+                  Click="OnDeleteElementClick"
+                  AutomationProperties.Name="Delete selected SVG element" />
         <Separator />
         <MenuItem Header="Copy _Entire SVG Source"
                   InputGestureText="Ctrl+Alt+C"
@@ -302,16 +354,32 @@
                   BorderBrush="#CBD5E1"
                   BorderThickness="0,0,0,1">
             <DockPanel>
-              <TextBlock Text="Layers &amp; Structure"
-                         FontSize="15"
-                         FontWeight="SemiBold"
-                         Foreground="#0F172A" />
-              <TextBlock Text="{Binding Inspector.StateMessage}"
+              <Button x:Name="AddElementButton"
+                      DockPanel.Dock="Right"
+                      Width="28"
+                      Height="26"
+                      Margin="8,0,0,0"
+                      Padding="0"
+                      Content="+"
+                      FontSize="18"
+                      FontWeight="SemiBold"
+                      IsEnabled="False"
+                      Click="OnAddElementClick"
+                      ContextMenu="{StaticResource AddElementContextMenu}"
+                      ToolTip="Add SVG element"
+                      AutomationProperties.Name="Add SVG element"
+                      AutomationProperties.HelpText="Add Rectangle, Circle, Ellipse, Line, Text, or Group to the selected safe layer context." />
+              <TextBlock DockPanel.Dock="Right"
+                         Text="{Binding Inspector.StateMessage}"
                          Margin="8,0,0,0"
                          HorizontalAlignment="Right"
                          Foreground="#64748B"
                          TextTrimming="CharacterEllipsis"
                          ToolTip="{Binding Inspector.StateMessage}" />
+              <TextBlock Text="Layers &amp; Structure"
+                         FontSize="15"
+                         FontWeight="SemiBold"
+                         Foreground="#0F172A" />
             </DockPanel>
           </Border>
 
@@ -328,6 +396,7 @@
                             ItemsSource="{Binding Inspector.LayerRoots}"
                             SelectedItemChanged="OnLayersTreeSelectionChanged"
                             PreviewMouseLeftButtonDown="OnLayersTreePreviewMouseLeftButtonDown"
+                            PreviewMouseRightButtonDown="OnInspectorTreePreviewMouseRightButtonDown"
                             PreviewMouseMove="OnLayersTreePreviewMouseMove"
                             PreviewKeyDown="OnLayersTreePreviewKeyDown"
                             PreviewKeyUp="OnInspectorTreePreviewKeyUp"
@@ -339,24 +408,9 @@
                             Drop="OnLayersTreeDrop"
                             BorderThickness="0"
                             Padding="4"
+                            ContextMenu="{StaticResource InspectorAuthoringContextMenu}"
                             AutomationProperties.Name="Layers, frontmost first"
-                            AutomationProperties.HelpText="Items higher in this list paint in front of items below. Drag a layer before or after a sibling to reorder it within the same parent.">
-                    <TreeView.ContextMenu>
-                      <ContextMenu>
-                        <MenuItem Header="Bring to Front"
-                                  Tag="BringToFront"
-                                  Click="OnArrangeClick" />
-                        <MenuItem Header="Bring Forward"
-                                  Tag="BringForward"
-                                  Click="OnArrangeClick" />
-                        <MenuItem Header="Send Backward"
-                                  Tag="SendBackward"
-                                  Click="OnArrangeClick" />
-                        <MenuItem Header="Send to Back"
-                                  Tag="SendToBack"
-                                  Click="OnArrangeClick" />
-                      </ContextMenu>
-                    </TreeView.ContextMenu>
+                            AutomationProperties.HelpText="Items higher in this list paint in front. Drop near a row edge to reorder, or in the center of a group to move inside it.">
                     <TreeView.ItemContainerStyle>
                       <Style TargetType="TreeViewItem">
                         <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
@@ -378,6 +432,13 @@
                                   VerticalAlignment="Bottom"
                                   Background="#2563EB"
                                   Visibility="{Binding IsDropAfter, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                          <Border Margin="1"
+                                  Background="#142563EB"
+                                  BorderBrush="#2563EB"
+                                  BorderThickness="2"
+                                  CornerRadius="3"
+                                  IsHitTestVisible="False"
+                                  Visibility="{Binding IsDropInside, Converter={StaticResource BooleanToVisibilityConverter}}" />
                           <Grid Margin="0,1">
                             <Grid.ColumnDefinitions>
                               <ColumnDefinition Width="24" />
@@ -544,34 +605,21 @@
                       ItemsSource="{Binding Inspector.Roots}"
                       SelectedItemChanged="OnInspectorTreeSelectionChanged"
                       PreviewMouseLeftButtonDown="OnInspectorTreePreviewMouseLeftButtonDown"
+                      PreviewMouseRightButtonDown="OnInspectorTreePreviewMouseRightButtonDown"
                       PreviewKeyDown="OnInspectorTreePreviewKeyDown"
                       PreviewKeyUp="OnInspectorTreePreviewKeyUp"
                       LostKeyboardFocus="OnInspectorTreeLostKeyboardFocus"
                       ContextMenuOpening="OnInspectorArrangeContextMenuOpening"
                       BorderThickness="0"
                       Padding="4"
+                      ContextMenu="{StaticResource InspectorAuthoringContextMenu}"
                       AutomationProperties.Name="SVG element tree">
-              <TreeView.ContextMenu>
-                <ContextMenu>
-                  <MenuItem Header="Bring to Front"
-                            Tag="BringToFront"
-                            Click="OnArrangeClick" />
-                  <MenuItem Header="Bring Forward"
-                            Tag="BringForward"
-                            Click="OnArrangeClick" />
-                  <MenuItem Header="Send Backward"
-                            Tag="SendBackward"
-                            Click="OnArrangeClick" />
-                  <MenuItem Header="Send to Back"
-                            Tag="SendToBack"
-                            Click="OnArrangeClick" />
-                </ContextMenu>
-              </TreeView.ContextMenu>
               <TreeView.ItemContainerStyle>
                 <Style TargetType="TreeViewItem">
                   <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
                   <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}" />
                   <Setter Property="Padding" Value="2" />
+                  <Setter Property="AutomationProperties.Name" Value="{Binding Label}" />
                 </Style>
               </TreeView.ItemContainerStyle>
               <TreeView.ItemTemplate>

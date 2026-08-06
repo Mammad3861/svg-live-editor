@@ -12,6 +12,8 @@ public sealed class DocumentInspectorViewModel : ObservableObject
         new(StringComparer.Ordinal);
     private readonly Dictionary<string, bool> _layerExpansionById =
         new(StringComparer.Ordinal);
+    private readonly Dictionary<string, bool> _structureExpansionById =
+        new(StringComparer.Ordinal);
     private readonly SvgLayerWorkspaceService _layerWorkspaceService = new();
     private SvgDocumentIndex? _documentIndex;
     private SvgElementViewModel? _selectedElement;
@@ -113,6 +115,7 @@ public sealed class DocumentInspectorViewModel : ObservableObject
     {
         _layerWorkspaceService.BeginDocumentSession();
         _layerExpansionById.Clear();
+        _structureExpansionById.Clear();
     }
 
     public void SetFontFamilySuggestions(
@@ -144,21 +147,22 @@ public sealed class DocumentInspectorViewModel : ObservableObject
     {
         ArgumentNullException.ThrowIfNull(documentIndex);
 
+        CaptureStructureExpansion();
+        CaptureLayerExpansion();
         _documentIndex = documentIndex;
         _source = source;
         _visualDocument = visualDocument;
-        CaptureLayerExpansion();
         Roots.Clear();
         LayerRoots.Clear();
         Properties.Clear();
         _elementsByPath.Clear();
         _layersByPath.Clear();
 
+        BuildLayerViewModels();
         foreach (SvgElementNode root in documentIndex.Roots)
         {
             Roots.Add(CreateElementViewModel(root));
         }
-        BuildLayerViewModels();
 
         HasIndex = true;
         StateTitle = "Document indexed";
@@ -414,6 +418,13 @@ public sealed class DocumentInspectorViewModel : ObservableObject
         SvgElementViewModel? parent = null)
     {
         SvgElementViewModel viewModel = new(element, parent);
+        string expansionKey = GetStructureExpansionKey(element);
+        if (_structureExpansionById.TryGetValue(
+                expansionKey,
+                out bool isExpanded))
+        {
+            viewModel.IsExpanded = isExpanded;
+        }
         _elementsByPath.Add(element.StructuralPath, viewModel);
         foreach (SvgElementNode child in element.Children)
         {
@@ -477,6 +488,29 @@ public sealed class DocumentInspectorViewModel : ObservableObject
         }
     }
 
+    private void CaptureStructureExpansion()
+    {
+        foreach (SvgElementViewModel element in EnumerateElements(Roots))
+        {
+            _structureExpansionById[GetStructureExpansionKey(element.Element)] =
+                element.IsExpanded;
+        }
+    }
+
+    private string GetStructureExpansionKey(SvgElementNode element)
+    {
+        if (_layersByPath.TryGetValue(
+                element.StructuralPath,
+                out SvgLayerViewModel? layer))
+        {
+            return $"layer:{layer.OpaqueId}";
+        }
+
+        return !string.IsNullOrWhiteSpace(element.Id)
+            ? $"id:{element.Name}:{element.Id}"
+            : $"path:{element.Name}:{element.StructuralPath}";
+    }
+
     private static IEnumerable<SvgLayerViewModel> EnumerateLayers(
         IEnumerable<SvgLayerViewModel> roots)
     {
@@ -484,6 +518,19 @@ public sealed class DocumentInspectorViewModel : ObservableObject
         {
             yield return root;
             foreach (SvgLayerViewModel child in EnumerateLayers(root.Children))
+            {
+                yield return child;
+            }
+        }
+    }
+
+    private static IEnumerable<SvgElementViewModel> EnumerateElements(
+        IEnumerable<SvgElementViewModel> roots)
+    {
+        foreach (SvgElementViewModel root in roots)
+        {
+            yield return root;
+            foreach (SvgElementViewModel child in EnumerateElements(root.Children))
             {
                 yield return child;
             }

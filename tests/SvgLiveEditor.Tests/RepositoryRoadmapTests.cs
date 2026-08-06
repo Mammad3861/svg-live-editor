@@ -11,7 +11,14 @@ public sealed class RepositoryRoadmapTests
 
         Assert.IsFalse(string.IsNullOrWhiteSpace(english));
         Assert.IsFalse(string.IsNullOrWhiteSpace(persian));
-        foreach (string version in new[] { "v0.7.1", "v0.8", "v0.9", "v1.0" })
+        foreach (string version in new[]
+                 {
+                     "v0.7.1",
+                     "v0.8",
+                     "v0.9.0",
+                     "v0.10.0",
+                     "v1.0.0"
+                 })
         {
             StringAssert.Contains(english, version);
             StringAssert.Contains(persian, version);
@@ -31,10 +38,18 @@ public sealed class RepositoryRoadmapTests
             "Properties Undo/Redo routing",
             "Real Layers/Groups architecture and UI",
             "same-parent layer limitation without unsafe implicit reparenting",
-            "Insert basic SVG elements",
+            "v0.9.0 — Visual Authoring (current standalone release)",
+            "Insert bounded basic SVG elements and empty groups",
+            "safe deterministic ID/reference remapping",
+            "Explicit conservative move into, out of, and between existing groups",
+            "v0.10.0 — Visual Composition (planned)",
             "Multi-selection",
-            "Alignment",
-            "Snapping",
+            "Moving multiple selected elements",
+            "Group and Ungroup commands",
+            "Alignment and distribution",
+            "Basic snapping",
+            "safe basic path bounding-box resize",
+            "v1.0.0 — Stable Release / stabilization",
             "Reliability and data-loss review",
             "Persistence and recovery validation",
             "Advanced selection visual redesign",
@@ -44,7 +59,11 @@ public sealed class RepositoryRoadmapTests
             "Appearance and Theme system",
             "System (default), Light, and Dark",
             "Never modify SVG artwork",
+            "Rulers, Guides & Smart Placement",
+            "Horizontal and vertical rulers",
+            "optional smart snapping that can be disabled",
             "Advanced vector editing",
+            "Advanced exports and distribution",
             "Future integrations",
             "not promises or deadlines"
         ];
@@ -53,6 +72,7 @@ public sealed class RepositoryRoadmapTests
         {
             StringAssert.Contains(roadmap, phrase);
         }
+        Assert.IsFalse(roadmap.Contains("Stage 2", StringComparison.Ordinal));
     }
 
     [TestMethod]
@@ -68,10 +88,18 @@ public sealed class RepositoryRoadmapTests
             "مسیریابی Undo/Redo در Properties",
             "معماری و رابط واقعی Layers/Groups",
             "بدون جابه‌جایی ضمنی و ناامن بین والدها",
-            "درج عناصر پایهٔ SVG",
+            "v0.9.0 — Visual Authoring (انتشار مستقل جاری)",
+            "درج محدود و امن عناصر پایهٔ SVG و گروه خالی",
+            "بازنویسی امن و قطعی ID/reference",
+            "انتقال صریح و محافظه‌کارانه به داخل، خارج و میان گروه‌های موجود",
+            "v0.10.0 — Visual Composition (برنامه‌ریزی‌شده)",
             "انتخاب چندگانه",
-            "هم‌ترازی",
-            "چسبیدن به راهنماها و نقاط",
+            "جابه‌جایی چند عنصر انتخاب‌شده",
+            "فرمان‌های Group و Ungroup",
+            "هم‌ترازی و توزیع",
+            "snapping پایه",
+            "bounding-box برای path",
+            "v1.0.0 — انتشار پایدار / پایدارسازی",
             "خطر از دست رفتن داده",
             "اعتبارسنجی ماندگاری و بازیابی",
             "بازطراحی پیشرفتهٔ ظاهر انتخاب",
@@ -81,7 +109,11 @@ public sealed class RepositoryRoadmapTests
             "سامانهٔ ظاهر و Theme",
             "System (پیش‌فرض)، Light و Dark",
             "هرگز نباید خود اثر SVG را تغییر دهد",
+            "خط‌کش‌ها، راهنماها و جای‌گذاری هوشمند",
+            "خط‌کش افقی و عمودی",
+            "snapping هوشمند اختیاری",
             "ویرایش پیشرفتهٔ برداری",
+            "خروجی و توزیع پیشرفته",
             "یکپارچه‌سازی‌های آینده",
             "نه وعده یا ضرب‌الاجل"
         ];
@@ -90,6 +122,7 @@ public sealed class RepositoryRoadmapTests
         {
             StringAssert.Contains(roadmap, phrase);
         }
+        Assert.IsFalse(roadmap.Contains("مرحلهٔ ۲", StringComparison.Ordinal));
     }
 
     [TestMethod]
@@ -105,7 +138,7 @@ public sealed class RepositoryRoadmapTests
     }
 
     [TestMethod]
-    public void EnglishAndPersianDocsDescribeTheSameLayersBoundaries()
+    public void EnglishAndPersianDocsDescribeTheSameVisualAuthoringBoundaries()
     {
         string english = ReadRepositoryDocument("README.md");
         string persian = ReadRepositoryDocument("README.fa.md");
@@ -113,26 +146,31 @@ public sealed class RepositoryRoadmapTests
 
         foreach (string phrase in new[]
                  {
-                     "Version 0.8.0",
-                     "higher rows paint in front",
+                     "Version 0.9.0 Visual Authoring is a complete standalone release",
+                     "before, after, and inside-group feedback",
                      "session-only",
-                     "deferred to v0.9"
+                     "Multi-selection, moving multiple selected elements, Group/Ungroup",
+                     "v0.10.0 Visual Composition",
+                     "Unsafe or ambiguous operations fail closed"
                  })
         {
             StringAssert.Contains(english, phrase);
         }
         foreach (string phrase in new[]
                  {
-                     "نسخهٔ ۰٫۸٫۰",
-                     "ردیف بالاتر Layers در جلوی ردیف پایین‌تر",
+                     "نسخهٔ ۰٫۹٫۰ Visual Authoring یک انتشار مستقل و کامل",
+                     "بازخورد جداگانهٔ before، after و داخل گروه",
                      "قفل فقط در نشست جاری",
-                     "به v0.9 موکول شده"
+                     "انتخاب چندگانه، حرکت چند عنصر انتخاب‌شده، Group/Ungroup",
+                     "v0.10.0 Visual Composition",
+                     "عملیات ناامن یا مبهم fail closed است"
                  })
         {
             StringAssert.Contains(persian, phrase);
         }
         StringAssert.Contains(security, "Layers and groups boundary");
-        StringAssert.Contains(security, "v0.8 does not infer or perform reparenting");
+        StringAssert.Contains(security, "Creation accepts only the fixed app-owned");
+        StringAssert.Contains(security, "Layers drag/drop uses explicit before, after, or inside-group placement");
         StringAssert.Contains(security, "never serialized");
     }
 

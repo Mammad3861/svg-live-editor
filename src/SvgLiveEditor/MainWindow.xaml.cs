@@ -1071,7 +1071,8 @@ public partial class MainWindow : Window
     private void ApplyValidationResult(
         string sourceSnapshot,
         long sourceRevision,
-        SvgDocumentIndexResult indexResult)
+        SvgDocumentIndexResult indexResult,
+        SvgElementIdentity? preferredSelection = null)
     {
         if (!_sourceRevisionTracker.IsCurrent(sourceRevision)
             || !SourceEditor.Text.Equals(sourceSnapshot, StringComparison.Ordinal))
@@ -1094,7 +1095,10 @@ public partial class MainWindow : Window
                 sourceRevision,
                 sourceSnapshot);
         }
-        ApplyDocumentInspectorResult(indexResult);
+        ApplyDocumentInspectorResult(
+            indexResult,
+            preferredSelection
+            ?? _viewModel.Inspector.CaptureSelectionIdentity());
         if (!result.IsValid)
         {
             OnVisualValidationCompleted(
@@ -2021,6 +2025,11 @@ public partial class MainWindow : Window
         if (controlOnly
             && pressedKey is Key.Z or Key.Y
             && TryHandleInspectorUndoShortcut(pressedKey))
+        {
+            e.Handled = true;
+            return;
+        }
+        if (TryHandleAuthoringShortcut(modifiers, pressedKey))
         {
             e.Handled = true;
             return;
