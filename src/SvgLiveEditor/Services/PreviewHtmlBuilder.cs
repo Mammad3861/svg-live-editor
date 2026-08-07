@@ -159,13 +159,18 @@ public sealed class PreviewHtmlBuilder
             }
 
             const loaded = state === 'loaded';
+            const imageRect = loaded ? image.getBoundingClientRect() : null;
             bridge.postMessage({
               type: 'imageState',
               token: bridgeToken,
               sourceRevision,
               state,
               naturalWidth: loaded ? image.naturalWidth : 0,
-              naturalHeight: loaded ? image.naturalHeight : 0
+              naturalHeight: loaded ? image.naturalHeight : 0,
+              renderedWidth: loaded ? imageRect.width : 0,
+              renderedHeight: loaded ? imageRect.height : 0,
+              viewportWidth: loaded ? viewport.clientWidth : 0,
+              viewportHeight: loaded ? viewport.clientHeight : 0
             });
           };
 
@@ -191,6 +196,19 @@ public sealed class PreviewHtmlBuilder
               bridge.postMessage({
                 type: 'copyCommand',
                 token: bridgeToken
+              });
+            }
+          };
+
+          const postAuthoringCommand = command => {
+            if (bridge && Number.isSafeInteger(sourceRevision) &&
+                sourceRevision >= 0 &&
+                (command === 'delete' || command === 'duplicate')) {
+              bridge.postMessage({
+                type: 'authoringCommand',
+                token: bridgeToken,
+                sourceRevision,
+                command
               });
             }
           };
@@ -1266,6 +1284,19 @@ public sealed class PreviewHtmlBuilder
                 !event.altKey && !event.metaKey) {
               event.preventDefault();
               postCopyCommand();
+            } else if (event.code === 'KeyD' &&
+                       event.ctrlKey && !event.shiftKey &&
+                       !event.altKey && !event.metaKey &&
+                       !event.repeat && !event.isComposing) {
+              event.preventDefault();
+              postAuthoringCommand('duplicate');
+            } else if ((event.code === 'Delete' ||
+                        event.code === 'Backspace') &&
+                       !event.ctrlKey && !event.shiftKey &&
+                       !event.altKey && !event.metaKey &&
+                       !event.repeat && !event.isComposing) {
+              event.preventDefault();
+              postAuthoringCommand('delete');
             } else if (event.code === 'Space') {
               spaceHeld = true;
               event.preventDefault();
@@ -1337,12 +1368,50 @@ public sealed class PreviewHtmlBuilder
 
           const initializeViewport = () =>
             requestAnimationFrame(() => requestAnimationFrame(applyInitialViewport));
-          const reportImageLoaded = () =>
-            requestAnimationFrame(() => requestAnimationFrame(
-              () => postImageState('loaded')));
-          const reportImageError = () => postImageState('error');
+          let presentationCheckPending = false;
+          let presentationReported = false;
+          const reportImageLoaded = async () => {
+            if (presentationCheckPending || presentationReported) {
+              return;
+            }
+
+            presentationCheckPending = true;
+            try {
+              await image.decode();
+              const probe = document.createElement('canvas');
+              probe.width = 1;
+              probe.height = 1;
+              const context = probe.getContext('2d', { alpha: true });
+              if (!context) {
+                throw new Error('No image presentation context');
+              }
+              context.drawImage(image, 0, 0, 1, 1);
+              image.dataset.presented = 'true';
+              await new Promise(resolve => requestAnimationFrame(resolve));
+              await new Promise(resolve => requestAnimationFrame(resolve));
+              const imageRect = image.getBoundingClientRect();
+              if (!image.isConnected || !image.complete ||
+                  image.naturalWidth <= 0 || image.naturalHeight <= 0 ||
+                  imageRect.width <= 0 || imageRect.height <= 0 ||
+                  viewport.clientWidth <= 0 || viewport.clientHeight <= 0) {
+                image.dataset.presented = 'false';
+                return;
+              }
+              presentationReported = true;
+              postImageState('loaded');
+            } catch {
+              reportImageError();
+            } finally {
+              presentationCheckPending = false;
+            }
+          };
+          const reportImageError = () => {
+            image.dataset.loadEvent = 'error';
+            postImageState('error');
+          };
           if (image.complete) {
             if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+              image.dataset.loadEvent = 'complete-before-listener';
               initializeViewport();
               reportImageLoaded();
             } else {
@@ -1350,10 +1419,17 @@ public sealed class PreviewHtmlBuilder
             }
           } else {
             image.addEventListener('load', initializeViewport, { once: true });
-            image.addEventListener('load', reportImageLoaded, { once: true });
+            image.addEventListener('load', () => {
+              image.dataset.loadEvent = 'load';
+              reportImageLoaded();
+            }, { once: true });
             image.addEventListener('error', reportImageError, { once: true });
           }
           new ResizeObserver(() => {
+            if (!presentationReported && image.complete &&
+                image.naturalWidth > 0 && image.naturalHeight > 0) {
+              reportImageLoaded();
+            }
             refreshCursor();
             scheduleViewportState();
             positionResizeHandles();
@@ -1509,6 +1585,9 @@ public sealed class PreviewHtmlBuilder
                   pointer-events: auto;
                   user-select: none;
                 }
+                img[data-presented="false"] {
+                  visibility: hidden;
+                }
                 .selection-overlay {
                   pointer-events: none;
                   overflow: visible;
@@ -1596,7 +1675,11 @@ public sealed class PreviewHtmlBuilder
                    role="region"
                    aria-label="Live SVG preview">
                 <main aria-label="SVG preview">
-                  <img alt="Rendered SVG preview" draggable="false" src="data:image/svg+xml;base64,{{encodedSvg}}">
+                  <img alt="Rendered SVG preview"
+                       draggable="false"
+                       data-load-event="pending"
+                       data-presented="false"
+                       src="data:image/svg+xml;base64,{{encodedSvg}}">
                   <svg class="selection-overlay"
                        aria-hidden="true"
                        viewBox="{{overlayViewBox}}"

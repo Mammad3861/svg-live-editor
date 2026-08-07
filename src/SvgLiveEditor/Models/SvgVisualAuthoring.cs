@@ -10,6 +10,12 @@ public enum SvgCreateElementKind
     Group
 }
 
+public enum SvgCreateDestination
+{
+    SvgRoot,
+    SelectedContext
+}
+
 public sealed record SvgAuthoringAvailability(
     bool CanExecute,
     string? UnavailableReason = null);

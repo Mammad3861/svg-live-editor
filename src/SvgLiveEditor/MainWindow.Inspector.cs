@@ -32,6 +32,7 @@ public partial class MainWindow
     private readonly SvgElementCreationService _svgElementCreationService = new();
     private readonly SvgElementDuplicateService _svgElementDuplicateService = new();
     private readonly SvgElementDeleteService _svgElementDeleteService = new();
+    private readonly SvgLayerRenameService _svgLayerRenameService = new();
     private readonly SvgLayerReparentService _svgLayerReparentService = new();
     private readonly DispatcherTimer _inspectorCaretTimer = new()
     {
@@ -75,6 +76,13 @@ public partial class MainWindow
             OnInspectorTextCompositionCompleted;
         InspectorPropertiesPanel.LostKeyboardFocus +=
             OnInspectorPropertiesLostKeyboardFocus;
+        TextCompositionManager.AddPreviewTextInputStartHandler(
+            LayersTree,
+            OnInspectorTextCompositionStarted);
+        TextCompositionManager.AddPreviewTextInputUpdateHandler(
+            LayersTree,
+            OnInspectorTextCompositionUpdated);
+        LayersTree.PreviewTextInput += OnInspectorTextCompositionCompleted;
     }
 
     private void DisposeDocumentInspector()
@@ -99,6 +107,13 @@ public partial class MainWindow
             OnInspectorTextCompositionCompleted;
         InspectorPropertiesPanel.LostKeyboardFocus -=
             OnInspectorPropertiesLostKeyboardFocus;
+        TextCompositionManager.RemovePreviewTextInputStartHandler(
+            LayersTree,
+            OnInspectorTextCompositionStarted);
+        TextCompositionManager.RemovePreviewTextInputUpdateHandler(
+            LayersTree,
+            OnInspectorTextCompositionUpdated);
+        LayersTree.PreviewTextInput -= OnInspectorTextCompositionCompleted;
     }
 
     private void ApplyDocumentInspectorResult(SvgDocumentIndexResult result)
@@ -271,6 +286,27 @@ public partial class MainWindow
         KeyEventArgs e)
     {
         Key key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (e.OriginalSource is DependencyObject originalSource
+            && FindVisualAncestor<TextBox>(originalSource)
+                is TextBox { Tag: SvgLayerViewModel renameLayer } renameTextBox
+            && key is Key.Enter or Key.Escape)
+        {
+            // PreviewKeyDown reaches the TreeView before the inline TextBox's
+            // bubbling KeyDown. Resolve rename keys here so the tree's Enter
+            // navigation behavior cannot consume the commit first.
+            if (TryHandleLayerRenameKey(renameTextBox, renameLayer, key))
+            {
+                e.Handled = true;
+            }
+            return;
+        }
+
+        if (key == Key.F2 && Keyboard.Modifiers == ModifierKeys.None)
+        {
+            BeginSelectedLayerRename();
+            e.Handled = true;
+            return;
+        }
         if (key is Key.Enter or Key.Space)
         {
             if (LayersTree.SelectedItem is SvgLayerViewModel layer
@@ -749,9 +785,12 @@ public partial class MainWindow
     private void OnCreateElementClick(object sender, RoutedEventArgs e)
     {
         if (sender is MenuItem item
-            && TryReadCreateElementKind(item.Tag, out SvgCreateElementKind kind))
+            && TryReadCreateElementCommand(
+                item.Tag,
+                out SvgCreateDestination destination,
+                out SvgCreateElementKind kind))
         {
-            CreateVisualElement(kind);
+            CreateVisualElement(destination, kind);
         }
     }
 
@@ -761,10 +800,18 @@ public partial class MainWindow
     private void OnDeleteElementClick(object sender, RoutedEventArgs e) =>
         DeleteSelectedElement();
 
+    private void OnRenameLayerClick(object sender, RoutedEventArgs e)
+    {
+        InspectorModeTabs.SelectedItem = LayersTab;
+        BeginSelectedLayerRename();
+    }
+
     private void OnMoveElementToRootClick(object sender, RoutedEventArgs e) =>
         MoveSelectedElementToRoot();
 
-    private void CreateVisualElement(SvgCreateElementKind kind)
+    private void CreateVisualElement(
+        SvgCreateDestination destination,
+        SvgCreateElementKind kind)
     {
         if (!TryGetAuthoringContext(
                 out SvgDocumentIndex document,
@@ -780,14 +827,22 @@ public partial class MainWindow
             source,
             document,
             selection,
+            destination,
             kind,
             _lastValidCanvasSize ?? new SvgCanvasSize(300, 150),
             _viewModel.Inspector.IsElementEffectivelyLocked);
+        SvgElementNode? parent = SvgElementCreationService.ResolveInsertionParent(
+            document,
+            selection,
+            destination);
+        string destinationLabel = parent?.Name == "svg"
+            ? "SVG root"
+            : parent?.DisplayLabel ?? "selected context";
         ApplyAuthoringEdit(
             result,
             source,
             revision,
-            $"{GetCreateElementLabel(kind)} created");
+            $"{GetCreateElementLabel(kind)} created in {destinationLabel}");
     }
 
     private void DuplicateSelectedElement()
@@ -943,7 +998,7 @@ public partial class MainWindow
         SvgAuthoringAvailability availability = GetCreateAvailability();
         AddElementButton.IsEnabled = availability.CanExecute;
         string help = availability.CanExecute
-            ? "Add Rectangle, Circle, Ellipse, Line, Text, or Group to the selected safe layer context."
+            ? "Choose the SVG root or the selected safe layer context before adding an element."
             : availability.UnavailableReason
                 ?? "Creation is unavailable for the current source.";
         AddElementButton.ToolTip = help;
@@ -969,6 +1024,7 @@ public partial class MainWindow
             SourceEditor.Text,
             document,
             _viewModel.Inspector.SelectedElement?.Element,
+            SvgCreateDestination.SvgRoot,
             _viewModel.Inspector.IsElementEffectivelyLocked);
     }
 
@@ -986,8 +1042,21 @@ public partial class MainWindow
                 _inspectorSourceRevision,
                 _sourceRevisionTracker.Current,
                 _isEditorTextCompositionActive);
-        SvgAuthoringAvailability create = isCurrent
-            ? GetCreateAvailability()
+        SvgAuthoringAvailability createRoot = isCurrent
+            ? _svgElementCreationService.GetAvailability(
+                source,
+                document!,
+                selected,
+                SvgCreateDestination.SvgRoot,
+                _viewModel.Inspector.IsElementEffectivelyLocked)
+            : unavailable;
+        SvgAuthoringAvailability createContext = isCurrent
+            ? _svgElementCreationService.GetAvailability(
+                source,
+                document!,
+                selected,
+                SvgCreateDestination.SelectedContext,
+                _viewModel.Inspector.IsElementEffectivelyLocked)
             : unavailable;
         SvgAuthoringAvailability duplicate = isCurrent
             ? _svgElementDuplicateService.GetAvailability(
@@ -1010,15 +1079,52 @@ public partial class MainWindow
                 selected,
                 _viewModel.Inspector.IsElementEffectivelyLocked)
             : unavailable;
+        SvgAuthoringAvailability rename = isCurrent
+            ? _svgLayerRenameService.GetAvailability(
+                source,
+                document!,
+                selected,
+                _viewModel.Inspector.IsElementEffectivelyLocked)
+            : unavailable;
 
         foreach (MenuItem item in EnumerateMenuItems(items))
         {
+            if (item.Tag is string destinationTag
+                && destinationTag.StartsWith(
+                    "CreateDestination:",
+                    StringComparison.Ordinal))
+            {
+                bool isRoot = destinationTag.EndsWith(
+                    ":Root",
+                    StringComparison.Ordinal);
+                SvgAuthoringAvailability destinationAvailability = isRoot
+                    ? createRoot
+                    : createContext;
+                if (!isRoot)
+                {
+                    item.Header = GetSelectedCreationContextHeader(
+                        document,
+                        selected);
+                }
+                item.IsEnabled = destinationAvailability.CanExecute;
+                item.ToolTip = destinationAvailability.UnavailableReason;
+                AutomationProperties.SetHelpText(
+                    item,
+                    destinationAvailability.CanExecute
+                        ? item.Header?.ToString() ?? "Creation destination"
+                        : destinationAvailability.UnavailableReason
+                            ?? "Creation destination unavailable");
+                continue;
+            }
+
             SvgAuthoringAvailability? availability = item.Tag switch
             {
-                string tag when tag.StartsWith("Create:", StringComparison.Ordinal) => create,
+                string tag when tag.StartsWith("Create:Root:", StringComparison.Ordinal) => createRoot,
+                string tag when tag.StartsWith("Create:Context:", StringComparison.Ordinal) => createContext,
                 "Duplicate" => duplicate,
                 "Delete" => delete,
                 "MoveToRoot" => moveRoot,
+                "Rename" => rename,
                 _ => null
             };
             if (availability is null)
@@ -1051,15 +1157,55 @@ public partial class MainWindow
         }
     }
 
-    private static bool TryReadCreateElementKind(
+    private static bool TryReadCreateElementCommand(
         object? value,
+        out SvgCreateDestination destination,
         out SvgCreateElementKind kind)
     {
+        destination = default;
         kind = default;
-        return value is string text
-            && text.StartsWith("Create:", StringComparison.Ordinal)
-            && Enum.TryParse(text["Create:".Length..], false, out kind)
+        if (value is not string text)
+        {
+            return false;
+        }
+
+        string[] parts = text.Split(':');
+        if (parts.Length != 3
+            || !parts[0].Equals("Create", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        destination = parts[1] switch
+        {
+            "Root" => SvgCreateDestination.SvgRoot,
+            "Context" => SvgCreateDestination.SelectedContext,
+            _ => (SvgCreateDestination)(-1)
+        };
+        return Enum.IsDefined(destination)
+            && Enum.TryParse(parts[2], false, out kind)
             && Enum.IsDefined(kind);
+    }
+
+    private static string GetSelectedCreationContextHeader(
+        SvgDocumentIndex? document,
+        SvgElementNode? selection)
+    {
+        if (document is null || selection is null)
+        {
+            return "In Selected Conte_xt";
+        }
+        if (SvgLayerPolicy.IsGroup(selection.Name))
+        {
+            return $"Inside {selection.DisplayLabel}";
+        }
+
+        SvgElementNode? parent = document.FindParent(selection);
+        return parent?.Name == "svg"
+            ? $"Alongside {selection.DisplayLabel} at SVG Root"
+            : parent is null
+                ? "In Selected Conte_xt"
+                : $"Alongside {selection.DisplayLabel} in {parent.DisplayLabel}";
     }
 
     private static string GetCreateElementLabel(SvgCreateElementKind kind) =>
@@ -1067,25 +1213,253 @@ public partial class MainWindow
             ? "Group"
             : kind.ToString();
 
+    private void BeginSelectedLayerRename()
+    {
+        SvgLayerViewModel? layer = _viewModel.Inspector.SelectedLayer;
+        if (layer is null)
+        {
+            _viewModel.SetOperationStatus(
+                "Select a current layer in Layers before naming it.");
+            return;
+        }
+        SvgDocumentIndex? document = _viewModel.Inspector.DocumentIndex;
+        SvgAuthoringAvailability availability = document is null
+            ? new SvgAuthoringAvailability(false, "The current SVG is not indexed.")
+            : _svgLayerRenameService.GetAvailability(
+                SourceEditor.Text,
+                document,
+                layer.Element,
+                _viewModel.Inspector.IsElementEffectivelyLocked);
+        if (!availability.CanExecute)
+        {
+            _viewModel.SetOperationStatus(
+                availability.UnavailableReason ?? "The layer cannot be renamed.");
+            return;
+        }
+
+        layer.BeginRename();
+    }
+
+    private void OnLayerRenameTextBoxIsVisibleChanged(
+        object sender,
+        DependencyPropertyChangedEventArgs e)
+    {
+        if (sender is TextBox textBox && textBox.IsVisible)
+        {
+            Dispatcher.BeginInvoke(
+                DispatcherPriority.Input,
+                new Action(() =>
+                {
+                    if (textBox.IsVisible)
+                    {
+                        textBox.Focus();
+                        textBox.SelectAll();
+                    }
+                }));
+        }
+    }
+
+    private void OnLayerRenameTextBoxKeyDown(object sender, KeyEventArgs e)
+    {
+        if (sender is not TextBox { Tag: SvgLayerViewModel layer })
+        {
+            return;
+        }
+
+        Key key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (TryHandleLayerRenameKey((TextBox)sender, layer, key))
+        {
+            e.Handled = true;
+        }
+    }
+
+    private bool TryHandleLayerRenameKey(
+        TextBox textBox,
+        SvgLayerViewModel layer,
+        Key key)
+    {
+        if (!textBox.IsKeyboardFocusWithin || !layer.IsRenaming)
+        {
+            return false;
+        }
+
+        if (key == Key.Escape)
+        {
+            layer.EndRename();
+            QueueFocusSelectedLayerRow();
+            _viewModel.SetOperationStatus("Rename cancelled");
+            return true;
+        }
+        if (key != Key.Enter || _isInspectorTextCompositionActive)
+        {
+            return false;
+        }
+
+        CommitLayerRename(
+            layer,
+            cancelOnFailure: false,
+            restoreLayerFocus: true);
+        return true;
+    }
+
+    private void OnLayerRenameTextBoxLostKeyboardFocus(
+        object sender,
+        KeyboardFocusChangedEventArgs e)
+    {
+        if (sender is TextBox { Tag: SvgLayerViewModel { IsRenaming: true } layer }
+            && !_isInspectorTextCompositionActive)
+        {
+            CommitLayerRename(
+                layer,
+                cancelOnFailure: true,
+                restoreLayerFocus: false);
+        }
+    }
+
+    private void CommitLayerRename(
+        SvgLayerViewModel layer,
+        bool cancelOnFailure,
+        bool restoreLayerFocus)
+    {
+        if (!layer.IsRenaming
+            || !TryGetAuthoringContext(
+                out SvgDocumentIndex document,
+                out _,
+                out string source,
+                out long revision,
+                "Name layer"))
+        {
+            if (cancelOnFailure)
+            {
+                layer.EndRename();
+            }
+            return;
+        }
+
+        SvgAuthoringEditResult result = _svgLayerRenameService.CreateEdit(
+            source,
+            document,
+            layer.Element,
+            layer.RenameText,
+            _viewModel.Inspector.IsElementEffectivelyLocked);
+        if (!result.IsSuccess)
+        {
+            _viewModel.SetOperationStatus(
+                result.ErrorMessage ?? "The layer could not be renamed.");
+            if (cancelOnFailure)
+            {
+                // A rejected focus-loss commit must not leave an invisible or
+                // stale editing transaction that can interfere with Save.
+                layer.EndRename();
+            }
+            return;
+        }
+
+        string friendlyName = layer.RenameText;
+        // End edit mode before applying the source change. Collapsing the
+        // TextBox raises LostKeyboardFocus synchronously/asynchronously, but
+        // that path now observes IsRenaming == false and cannot commit twice.
+        layer.EndRename();
+        bool applied = ApplyAuthoringEdit(
+            result,
+            source,
+            revision,
+            friendlyName.Length == 0
+                ? "Friendly layer name removed"
+                : $"Layer named {friendlyName}");
+        if (restoreLayerFocus || !applied)
+        {
+            QueueFocusSelectedLayerRow();
+        }
+    }
+
+    private void QueueFocusSelectedLayerRow()
+    {
+        Dispatcher.BeginInvoke(
+            DispatcherPriority.Input,
+            new Action(() =>
+            {
+                SvgLayerViewModel? selected =
+                    _viewModel.Inspector.SelectedLayer;
+                TreeViewItem? item = selected is null
+                    ? null
+                    : FindLayerContainer(LayersTree, selected);
+                if (item is not null)
+                {
+                    item.BringIntoView();
+                    item.Focus();
+                    return;
+                }
+
+                LayersTree.Focus();
+            }));
+    }
+
+    private static TreeViewItem? FindLayerContainer(
+        ItemsControl parent,
+        SvgLayerViewModel layer)
+    {
+        if (parent.ItemContainerGenerator.ContainerFromItem(layer)
+            is TreeViewItem direct)
+        {
+            return direct;
+        }
+
+        foreach (object child in parent.Items)
+        {
+            if (parent.ItemContainerGenerator.ContainerFromItem(child)
+                is not TreeViewItem childContainer)
+            {
+                continue;
+            }
+
+            TreeViewItem? nested = FindLayerContainer(childContainer, layer);
+            if (nested is not null)
+            {
+                return nested;
+            }
+        }
+
+        return null;
+    }
+
     private bool TryHandleAuthoringShortcut(
         ModifierKeys modifiers,
         Key pressedKey)
     {
-        bool authoringFocus = LayersTree.IsKeyboardFocusWithin
-            || InspectorTree.IsKeyboardFocusWithin
-            || PreviewWebView.IsKeyboardFocusWithin;
-        if (!authoringFocus || IsEditableControlFocused())
+        if (PreviewWebView.IsKeyboardFocusWithin
+            && (pressedKey is Key.Delete or Key.Back
+                || (pressedKey == Key.D
+                    && modifiers == ModifierKeys.Control)))
         {
+            // WebView2 owns these physical key events. The exact-hash trusted
+            // page forwards one token/revision-bound command, avoiding duplicate
+            // execution between WPF tunneling and the DOM.
             return false;
         }
-        if (modifiers == ModifierKeys.Control && pressedKey == Key.D)
+
+        bool authoringFocus = LayersTree.IsKeyboardFocusWithin
+            || InspectorTree.IsKeyboardFocusWithin
+            || InspectorPropertiesPanel.IsKeyboardFocusWithin
+            || PreviewWebView.IsKeyboardFocusWithin;
+        SvgAuthoringShortcutAction action = SvgAuthoringShortcutRouter.Resolve(
+            modifiers,
+            pressedKey,
+            authoringFocus,
+            IsEditableControlFocused(),
+            _isEditorTextCompositionActive
+                || _isInspectorTextCompositionActive);
+        if (action == SvgAuthoringShortcutAction.Duplicate)
         {
             DuplicateSelectedElement();
             return true;
         }
-        if (modifiers == ModifierKeys.None && pressedKey == Key.Delete)
+        if (action == SvgAuthoringShortcutAction.Delete)
         {
-            DeleteSelectedElement();
+            if (_viewModel.Inspector.SelectedElement is not null)
+            {
+                DeleteSelectedElement();
+            }
             return true;
         }
 

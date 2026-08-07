@@ -8,9 +8,14 @@ public sealed class PreviewNavigationPolicy
     {
         ArgumentNullException.ThrowIfNull(uri);
 
-        return uri.Equals("about:blank", StringComparison.OrdinalIgnoreCase)
-            || (isHostPreviewRequested
-                && IsTrustedPreviewDocument(uri));
+        // NavigateToString is reported as about:blank by current WebView2
+        // runtimes. That opaque URL is trusted only while the host is actively
+        // starting the next preview document. Otherwise an empty about:blank
+        // navigation could replace an attested preview while the WPF host kept
+        // displaying its previous Ready state.
+        return isHostPreviewRequested
+            && (uri.Equals("about:blank", StringComparison.OrdinalIgnoreCase)
+                || IsTrustedPreviewDocument(uri));
     }
 
     public bool IsTrustedPreviewDocument(string uri)

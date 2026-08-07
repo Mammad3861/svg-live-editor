@@ -10,6 +10,8 @@ public sealed class SvgLayerViewModel : ObservableObject
     private bool _isDropBefore;
     private bool _isDropAfter;
     private bool _isDropInside;
+    private bool _isRenaming;
+    private string _renameText = string.Empty;
     private InspectorSelectionOrigin? _pendingSelectionOrigin;
 
     public SvgLayerViewModel(
@@ -35,6 +37,10 @@ public sealed class SvgLayerViewModel : ObservableObject
 
     public string Label => Item.Label;
 
+    public string FriendlyName => Item.FriendlyName;
+
+    public string TechnicalLabel => Item.TechnicalLabel;
+
     public string TypeLabel => Item.IsGroup ? "Group" : Item.Element.Name;
 
     public string TypeIcon => Item.Element.Name switch
@@ -52,6 +58,12 @@ public sealed class SvgLayerViewModel : ObservableObject
     };
 
     public bool IsGroup => Item.IsGroup;
+
+    public bool HasExpandableChildren => IsGroup && Item.Children.Count > 0;
+
+    public string ExpansionAutomationName => IsExpanded
+        ? $"Collapse {Label}"
+        : $"Expand {Label}";
 
     public bool IsInspectionOnly => Item.IsInspectionOnly;
 
@@ -97,7 +109,7 @@ public sealed class SvgLayerViewModel : ObservableObject
             : "Visually editable artwork.";
 
     public string RowHelp =>
-        $"{EditabilityHelp} {VisibilityHelp} {LockHelp}";
+        $"SVG element {TechnicalLabel}. {EditabilityHelp} {VisibilityHelp} {LockHelp}";
 
     public bool IsSelected
     {
@@ -116,7 +128,25 @@ public sealed class SvgLayerViewModel : ObservableObject
     public bool IsExpanded
     {
         get => _isExpanded;
-        set => SetProperty(ref _isExpanded, value);
+        set
+        {
+            if (SetProperty(ref _isExpanded, value))
+            {
+                OnPropertyChanged(nameof(ExpansionAutomationName));
+            }
+        }
+    }
+
+    public bool IsRenaming
+    {
+        get => _isRenaming;
+        private set => SetProperty(ref _isRenaming, value);
+    }
+
+    public string RenameText
+    {
+        get => _renameText;
+        set => SetProperty(ref _renameText, value);
     }
 
     public bool IsDropBefore
@@ -151,4 +181,12 @@ public sealed class SvgLayerViewModel : ObservableObject
         _pendingSelectionOrigin = null;
         return origin;
     }
+
+    public void BeginRename()
+    {
+        RenameText = FriendlyName;
+        IsRenaming = true;
+    }
+
+    public void EndRename() => IsRenaming = false;
 }

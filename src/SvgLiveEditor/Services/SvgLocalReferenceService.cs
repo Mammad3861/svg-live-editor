@@ -11,6 +11,10 @@ internal sealed class SvgLocalReferenceService
         | RegexOptions.CultureInvariant
         | RegexOptions.Compiled,
         TimeSpan.FromMilliseconds(100));
+    private static readonly Regex IdReferenceTokenPattern = new(
+        "(?<target>[^\\s]+)",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled,
+        TimeSpan.FromMilliseconds(100));
 
     public IReadOnlyList<SvgLocalReference> FindReferences(
         IEnumerable<SvgElementNode> elements)
@@ -23,6 +27,12 @@ internal sealed class SvgLocalReferenceService
             {
                 foreach (SvgAttributeSpan attribute in element.Attributes)
                 {
+                    if (ContainsEncodedLocalReference(attribute))
+                    {
+                        throw new InvalidOperationException(
+                            "Encoded local SVG references cannot be analyzed or rewritten safely.");
+                    }
+
                     HashSet<string> targets = new(StringComparer.Ordinal);
                     if (attribute.Name.Equals("href", StringComparison.Ordinal))
                     {
@@ -30,6 +40,14 @@ internal sealed class SvgLocalReferenceService
                         if (href.Length > 1 && href[0] == '#')
                         {
                             targets.Add(href[1..]);
+                        }
+                    }
+                    if (IsIdReferenceAttribute(attribute.Name))
+                    {
+                        foreach (Match match in IdReferenceTokenPattern.Matches(
+                                     attribute.RawValue))
+                        {
+                            targets.Add(match.Groups["target"].Value);
                         }
                     }
 
@@ -79,7 +97,9 @@ internal sealed class SvgLocalReferenceService
         }
         if (!attribute.Name.Equals("href", StringComparison.Ordinal))
         {
-            return rewritten;
+            return IsIdReferenceAttribute(attribute.Name)
+                ? RewriteIdReferenceTokens(rewritten, idMap)
+                : rewritten;
         }
 
         int first = 0;
@@ -104,6 +124,41 @@ internal sealed class SvgLocalReferenceService
                 replacement,
                 rewritten.AsSpan(last))
             : rewritten;
+    }
+
+    private static bool IsIdReferenceAttribute(string name) =>
+        name is "aria-labelledby" or "aria-describedby"
+            or "aria-activedescendant";
+
+    private static bool ContainsEncodedLocalReference(
+        SvgAttributeSpan attribute) =>
+        attribute.RawValue.Contains('&', StringComparison.Ordinal)
+        && (attribute.Name.Equals("href", StringComparison.Ordinal)
+            || IsIdReferenceAttribute(attribute.Name)
+            || attribute.RawValue.Contains(
+                "url",
+                StringComparison.OrdinalIgnoreCase));
+
+    private static string RewriteIdReferenceTokens(
+        string value,
+        IReadOnlyDictionary<string, string> idMap)
+    {
+        try
+        {
+            return IdReferenceTokenPattern.Replace(
+                value,
+                match => idMap.TryGetValue(
+                    match.Groups["target"].Value,
+                    out string? replacement)
+                        ? replacement
+                        : match.Value);
+        }
+        catch (RegexMatchTimeoutException exception)
+        {
+            throw new InvalidOperationException(
+                "Local SVG ID references are too complex to rewrite safely.",
+                exception);
+        }
     }
 
     private static string RewriteUrlMatch(

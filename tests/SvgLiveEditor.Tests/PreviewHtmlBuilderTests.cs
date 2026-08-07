@@ -148,10 +148,42 @@ public sealed class PreviewHtmlBuilderTests
         StringAssert.Contains(script, "sourceRevision");
         StringAssert.Contains(script, "naturalWidth: loaded ? image.naturalWidth : 0");
         StringAssert.Contains(script, "naturalHeight: loaded ? image.naturalHeight : 0");
-        StringAssert.Contains(script, "image.addEventListener('load', reportImageLoaded");
+        StringAssert.Contains(script, "await image.decode()");
+        StringAssert.Contains(script, "context.drawImage(image, 0, 0, 1, 1)");
+        StringAssert.Contains(script, "image.dataset.presented = 'true'");
+        StringAssert.Contains(script, "imageRect.width <= 0");
+        StringAssert.Contains(script, "viewport.clientWidth <= 0");
+        StringAssert.Contains(script, "image.dataset.loadEvent = 'load'");
+        StringAssert.Contains(script, "image.dataset.loadEvent = 'complete-before-listener'");
+        StringAssert.Contains(script, "reportImageLoaded();");
         StringAssert.Contains(script, "image.addEventListener('error', reportImageError");
         StringAssert.Contains(script, "postImageState('loaded')");
         StringAssert.Contains(script, "postImageState('error')");
+    }
+
+    [TestMethod]
+    public void Build_RoutesPreviewDeleteAndDuplicateWithoutChangingPointerGestures()
+    {
+        string script = ExtractHostScript(
+            _builder.Build(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" />",
+                300,
+                150,
+                BridgeToken,
+                sourceRevision: 7));
+
+        StringAssert.Contains(script, "type: 'authoringCommand'");
+        StringAssert.Contains(script, "sourceRevision");
+        StringAssert.Contains(script, "postAuthoringCommand('delete')");
+        StringAssert.Contains(script, "postAuthoringCommand('duplicate')");
+        StringAssert.Contains(script, "!event.repeat && !event.isComposing");
+        StringAssert.Contains(script, "event.code === 'Delete'");
+        StringAssert.Contains(script, "event.code === 'Backspace'");
+        StringAssert.Contains(script, "event.code === 'KeyD'");
+        StringAssert.Contains(script, "const action = choosePointerAction(event)");
+        StringAssert.Contains(script, "if (action === 'visual')");
+        StringAssert.Contains(script, "if (action === 'drag')");
+        StringAssert.Contains(script, "if (action !== 'pan' || !canPan())");
     }
 
     [TestMethod]

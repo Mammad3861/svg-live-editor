@@ -138,7 +138,7 @@ public partial class MainWindow : Window
 
         if (await EnsureWebViewReadyAsync())
         {
-            await RefreshPreviewNowAsync();
+            await RefreshPreviewNowAsync(forcePreviewNavigation: true);
         }
 
         SourceEditor.Focus();
@@ -188,8 +188,6 @@ public partial class MainWindow : Window
             PreviewWebView.DefaultBackgroundColor = System.Drawing.Color.FromArgb(255, 248, 250, 252);
             PreviewWebView.ZoomFactor = 1.0;
 
-            // Settle any startup navigation before issuing the host's trusted data:text/html document.
-            core.Stop();
             _isWebViewReady = true;
             return true;
         }
@@ -420,6 +418,32 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_visiblePreviewSourceRevision is long visibleSourceRevision
+            && _previewInteractionMessageParser.TryParseAuthoringCommand(
+                messageJson,
+                bridgeToken,
+                visibleSourceRevision,
+                out PreviewAuthoringCommand authoringCommand))
+        {
+            if (!_sourceRevisionTracker.IsCurrent(visibleSourceRevision)
+                || _isEditorTextCompositionActive
+                || _isInspectorTextCompositionActive
+                || _viewModel.Inspector.SelectedElement is null)
+            {
+                return;
+            }
+
+            if (authoringCommand == PreviewAuthoringCommand.Duplicate)
+            {
+                DuplicateSelectedElement();
+            }
+            else
+            {
+                DeleteSelectedElement();
+            }
+            return;
+        }
+
         if (TryHandlePreviewTextMeasurements(
                 messageJson,
                 bridgeToken))
@@ -588,7 +612,10 @@ public partial class MainWindow : Window
         PreviewLoadingIndicator.Visibility = Visibility.Visible;
         PreviewRuntimeLink.Visibility = Visibility.Collapsed;
         PreviewMessagePanel.Visibility = Visibility.Visible;
-        PreviewWebView.Visibility = Visibility.Hidden;
+        // Keep the composition surface mounted behind the app-owned state
+        // panel. Hiding it during an in-flight NavigateToString render can
+        // discard the first presented frame even after image readiness.
+        PreviewWebView.Visibility = Visibility.Visible;
     }
 
     private void ShowPreviewRefreshing()
@@ -627,7 +654,7 @@ public partial class MainWindow : Window
         PreviewLoadingIndicator.Visibility = Visibility.Collapsed;
         PreviewRuntimeLink.Visibility = showRuntimeLink ? Visibility.Visible : Visibility.Collapsed;
         PreviewMessagePanel.Visibility = Visibility.Visible;
-        PreviewWebView.Visibility = Visibility.Hidden;
+        PreviewWebView.Visibility = Visibility.Visible;
     }
 
     private void UpdatePreviewStateText(string state)
@@ -1058,21 +1085,27 @@ public partial class MainWindow : Window
         });
     }
 
-    private async Task RefreshPreviewNowAsync()
+    private async Task RefreshPreviewNowAsync(
+        bool forcePreviewNavigation = true)
     {
         _previewDebouncer.Cancel();
         string sourceSnapshot = SourceEditor.Text;
         long sourceRevision = _sourceRevisionTracker.Current;
         SvgDocumentIndexResult result = await Task.Run(
             () => _documentIndexService.Build(sourceSnapshot));
-        ApplyValidationResult(sourceSnapshot, sourceRevision, result);
+        ApplyValidationResult(
+            sourceSnapshot,
+            sourceRevision,
+            result,
+            forcePreviewNavigation: forcePreviewNavigation);
     }
 
     private void ApplyValidationResult(
         string sourceSnapshot,
         long sourceRevision,
         SvgDocumentIndexResult indexResult,
-        SvgElementIdentity? preferredSelection = null)
+        SvgElementIdentity? preferredSelection = null,
+        bool forcePreviewNavigation = false)
     {
         if (!_sourceRevisionTracker.IsCurrent(sourceRevision)
             || !SourceEditor.Text.Equals(sourceSnapshot, StringComparison.Ordinal))
@@ -1115,10 +1148,10 @@ public partial class MainWindow : Window
         }
 
         _lastValidSvg = sourceSnapshot;
-        ShowLastValidPreview();
+        ShowLastValidPreview(forcePreviewNavigation);
     }
 
-    private void ShowLastValidPreview()
+    private void ShowLastValidPreview(bool forcePreviewNavigation = false)
     {
         if (!_isWebViewReady
             || _lastValidSvg is null
@@ -1132,7 +1165,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        _previewNavigationCoordinator.Enqueue(
+        if (!_previewNavigationCoordinator.TryEnqueue(
             sourceRevision,
             _lastValidSvg,
             canvasSize,
@@ -1140,7 +1173,12 @@ public partial class MainWindow : Window
             _previewZoomState,
             _previewZoomState.Mode == PreviewZoomMode.Manual
                 ? _previewViewport
-                : PreviewViewportPosition.Center);
+                : PreviewViewportPosition.Center,
+            forcePreviewNavigation,
+            out _))
+        {
+            return;
+        }
         PreviewUpdateDecision decision = _previewUpdatePolicy.Decide(
             PreviewUpdateKind.Source,
             _hasVisiblePreview);
@@ -1229,16 +1267,21 @@ public partial class MainWindow : Window
         bool isSuccess,
         string? errorMessage)
     {
-        CancelPreviewRenderTimeout();
-        _previewRenderReadiness.Reset();
-        _activePreviewNavigationId = null;
-        _activePreviewRevision = null;
         if (!_previewNavigationCoordinator.TryComplete(
                 renderRevision,
+                isSuccess,
                 out bool wasLatest))
         {
             return;
         }
+
+        // Clear host/browser state only after the coordinator accepts this
+        // exact active revision. A stale completion must not tear down the
+        // readiness/token state of a newer navigation.
+        CancelPreviewRenderTimeout();
+        _previewRenderReadiness.Reset();
+        _activePreviewNavigationId = null;
+        _activePreviewRevision = null;
 
         if (_previewNavigationCoordinator.HasPending)
         {

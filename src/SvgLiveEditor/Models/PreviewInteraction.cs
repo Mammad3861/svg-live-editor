@@ -25,6 +25,12 @@ public readonly record struct PreviewViewportPosition(double CenterX, double Cen
     public static PreviewViewportPosition Center { get; } = new(0.5, 0.5);
 }
 
+public enum PreviewAuthoringCommand
+{
+    Duplicate,
+    Delete
+}
+
 public enum PreviewImageLoadState
 {
     Loaded,
@@ -35,4 +41,8 @@ public readonly record struct PreviewImageLoadMessage(
     PreviewImageLoadState State,
     long SourceRevision,
     int NaturalWidth,
-    int NaturalHeight);
+    int NaturalHeight,
+    double RenderedWidth,
+    double RenderedHeight,
+    double ViewportWidth,
+    double ViewportHeight);

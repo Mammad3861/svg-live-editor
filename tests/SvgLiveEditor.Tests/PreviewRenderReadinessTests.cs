@@ -76,6 +76,10 @@ public sealed class PreviewRenderReadinessTests
                     PreviewImageLoadState.Error,
                     22,
                     0,
+                    0,
+                    0,
+                    0,
+                    0,
                     0)));
         Assert.AreEqual(
             PreviewRenderReadinessResult.Error,
@@ -96,5 +100,9 @@ public sealed class PreviewRenderReadinessTests
             PreviewImageLoadState.Loaded,
             sourceRevision,
             NaturalWidth: 300,
-            NaturalHeight: 150);
+            NaturalHeight: 150,
+            RenderedWidth: 300,
+            RenderedHeight: 150,
+            ViewportWidth: 640,
+            ViewportHeight: 480);
 }

@@ -87,17 +87,133 @@
         </Trigger>
       </Style.Triggers>
     </Style>
+    <Style x:Key="LayerDisclosureToggleStyle"
+           TargetType="{x:Type ToggleButton}">
+      <Setter Property="Width" Value="24" />
+      <Setter Property="Height" Value="24" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Focusable" Value="False" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="{x:Type ToggleButton}">
+            <Border x:Name="DisclosureBorder"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="3">
+              <Path x:Name="DisclosureChevron"
+                    Width="7"
+                    Height="12"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Data="M1,1 L6,6 L1,11"
+                    Fill="Transparent"
+                    Stroke="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}"
+                    StrokeThickness="1.7"
+                    StrokeStartLineCap="Round"
+                    StrokeEndLineCap="Round"
+                    RenderTransformOrigin="0.5,0.5" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="DisclosureChevron"
+                        Property="RenderTransform">
+                  <Setter.Value>
+                    <RotateTransform Angle="90" />
+                  </Setter.Value>
+                </Setter>
+              </Trigger>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="DisclosureBorder"
+                        Property="Background"
+                        Value="{DynamicResource {x:Static SystemColors.ControlLightBrushKey}}" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="LayerTreeItemStyle"
+           TargetType="{x:Type TreeViewItem}">
+      <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+      <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="AutomationProperties.Name" Value="{Binding Label}" />
+      <Setter Property="AutomationProperties.HelpText" Value="{Binding RowHelp}" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="{x:Type TreeViewItem}">
+            <StackPanel>
+              <Border x:Name="LayerHeaderBorder"
+                      Background="Transparent"
+                      BorderBrush="Transparent"
+                      BorderThickness="1"
+                      CornerRadius="3">
+                <ContentPresenter x:Name="PART_Header"
+                                  ContentSource="Header"
+                                  HorizontalAlignment="Stretch" />
+              </Border>
+              <ItemsPresenter x:Name="LayerItemsHost"
+                              Margin="18,0,0,0" />
+            </StackPanel>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsExpanded" Value="False">
+                <Setter TargetName="LayerItemsHost"
+                        Property="Visibility"
+                        Value="Collapsed" />
+              </Trigger>
+              <Trigger Property="HasItems" Value="False">
+                <Setter TargetName="LayerItemsHost"
+                        Property="Visibility"
+                        Value="Collapsed" />
+              </Trigger>
+              <Trigger Property="IsSelected" Value="True">
+                <Setter TargetName="LayerHeaderBorder"
+                        Property="Background"
+                        Value="{DynamicResource {x:Static SystemColors.ControlLightBrushKey}}" />
+                <Setter TargetName="LayerHeaderBorder"
+                        Property="BorderBrush"
+                        Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+              </Trigger>
+              <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                <Setter TargetName="LayerHeaderBorder"
+                        Property="BorderBrush"
+                        Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
     <ContextMenu x:Key="InspectorAuthoringContextMenu"
                  x:Shared="False">
       <MenuItem Header="_Add">
-        <MenuItem Header="_Rectangle" Tag="Create:Rectangle" Click="OnCreateElementClick" />
-        <MenuItem Header="_Circle" Tag="Create:Circle" Click="OnCreateElementClick" />
-        <MenuItem Header="_Ellipse" Tag="Create:Ellipse" Click="OnCreateElementClick" />
-        <MenuItem Header="_Line" Tag="Create:Line" Click="OnCreateElementClick" />
-        <MenuItem Header="_Text" Tag="Create:Text" Click="OnCreateElementClick" />
-        <MenuItem Header="_Empty Group" Tag="Create:Group" Click="OnCreateElementClick" />
+        <MenuItem Header="At SVG _Root" Tag="CreateDestination:Root">
+          <MenuItem Header="_Rectangle" Tag="Create:Root:Rectangle" Click="OnCreateElementClick" />
+          <MenuItem Header="_Circle" Tag="Create:Root:Circle" Click="OnCreateElementClick" />
+          <MenuItem Header="_Ellipse" Tag="Create:Root:Ellipse" Click="OnCreateElementClick" />
+          <MenuItem Header="_Line" Tag="Create:Root:Line" Click="OnCreateElementClick" />
+          <MenuItem Header="_Text" Tag="Create:Root:Text" Click="OnCreateElementClick" />
+          <MenuItem Header="_Empty Group" Tag="Create:Root:Group" Click="OnCreateElementClick" />
+        </MenuItem>
+        <MenuItem Header="In Selected Conte_xt" Tag="CreateDestination:Context">
+          <MenuItem Header="_Rectangle" Tag="Create:Context:Rectangle" Click="OnCreateElementClick" />
+          <MenuItem Header="_Circle" Tag="Create:Context:Circle" Click="OnCreateElementClick" />
+          <MenuItem Header="_Ellipse" Tag="Create:Context:Ellipse" Click="OnCreateElementClick" />
+          <MenuItem Header="_Line" Tag="Create:Context:Line" Click="OnCreateElementClick" />
+          <MenuItem Header="_Text" Tag="Create:Context:Text" Click="OnCreateElementClick" />
+          <MenuItem Header="_Empty Group" Tag="Create:Context:Group" Click="OnCreateElementClick" />
+        </MenuItem>
       </MenuItem>
       <Separator />
+      <MenuItem Header="_Rename Layer"
+                InputGestureText="F2"
+                Tag="Rename"
+                Click="OnRenameLayerClick"
+                AutomationProperties.Name="Rename selected layer" />
       <MenuItem Header="_Duplicate"
                 InputGestureText="Ctrl+D"
                 Tag="Duplicate"
@@ -121,12 +237,22 @@
     <ContextMenu x:Key="AddElementContextMenu"
                  x:Shared="False"
                  Opened="OnAddElementContextMenuOpened">
-      <MenuItem Header="_Rectangle" Tag="Create:Rectangle" Click="OnCreateElementClick" />
-      <MenuItem Header="_Circle" Tag="Create:Circle" Click="OnCreateElementClick" />
-      <MenuItem Header="_Ellipse" Tag="Create:Ellipse" Click="OnCreateElementClick" />
-      <MenuItem Header="_Line" Tag="Create:Line" Click="OnCreateElementClick" />
-      <MenuItem Header="_Text" Tag="Create:Text" Click="OnCreateElementClick" />
-      <MenuItem Header="_Empty Group" Tag="Create:Group" Click="OnCreateElementClick" />
+      <MenuItem Header="At SVG _Root" Tag="CreateDestination:Root">
+        <MenuItem Header="_Rectangle" Tag="Create:Root:Rectangle" Click="OnCreateElementClick" />
+        <MenuItem Header="_Circle" Tag="Create:Root:Circle" Click="OnCreateElementClick" />
+        <MenuItem Header="_Ellipse" Tag="Create:Root:Ellipse" Click="OnCreateElementClick" />
+        <MenuItem Header="_Line" Tag="Create:Root:Line" Click="OnCreateElementClick" />
+        <MenuItem Header="_Text" Tag="Create:Root:Text" Click="OnCreateElementClick" />
+        <MenuItem Header="_Empty Group" Tag="Create:Root:Group" Click="OnCreateElementClick" />
+      </MenuItem>
+      <MenuItem Header="In Selected Conte_xt" Tag="CreateDestination:Context">
+        <MenuItem Header="_Rectangle" Tag="Create:Context:Rectangle" Click="OnCreateElementClick" />
+        <MenuItem Header="_Circle" Tag="Create:Context:Circle" Click="OnCreateElementClick" />
+        <MenuItem Header="_Ellipse" Tag="Create:Context:Ellipse" Click="OnCreateElementClick" />
+        <MenuItem Header="_Line" Tag="Create:Context:Line" Click="OnCreateElementClick" />
+        <MenuItem Header="_Text" Tag="Create:Context:Text" Click="OnCreateElementClick" />
+        <MenuItem Header="_Empty Group" Tag="Create:Context:Group" Click="OnCreateElementClick" />
+      </MenuItem>
     </ContextMenu>
   </Window.Resources>
 
@@ -360,15 +486,31 @@
                       Height="26"
                       Margin="8,0,0,0"
                       Padding="0"
-                      Content="+"
-                      FontSize="18"
-                      FontWeight="SemiBold"
+                      HorizontalContentAlignment="Center"
+                      VerticalContentAlignment="Center"
                       IsEnabled="False"
                       Click="OnAddElementClick"
                       ContextMenu="{StaticResource AddElementContextMenu}"
                       ToolTip="Add SVG element"
-                      AutomationProperties.Name="Add SVG element"
-                      AutomationProperties.HelpText="Add Rectangle, Circle, Ellipse, Line, Text, or Group to the selected safe layer context." />
+                      AutomationProperties.Name="Add"
+                      AutomationProperties.HelpText="Choose the SVG root or selected safe layer context, then add Rectangle, Circle, Ellipse, Line, Text, or Group.">
+                <Viewbox Width="12"
+                         Height="12"
+                         Stretch="None"
+                         HorizontalAlignment="Center"
+                         VerticalAlignment="Center"
+                         SnapsToDevicePixels="True">
+                  <Grid Width="12" Height="12" UseLayoutRounding="True">
+                    <Path Data="M6,1 L6,11 M1,6 L11,6"
+                          Fill="Transparent"
+                          Stroke="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}"
+                          StrokeThickness="1.5"
+                          StrokeStartLineCap="Square"
+                          StrokeEndLineCap="Square"
+                          SnapsToDevicePixels="True" />
+                  </Grid>
+                </Viewbox>
+              </Button>
               <TextBlock DockPanel.Dock="Right"
                          Text="{Binding Inspector.StateMessage}"
                          Margin="8,0,0,0"
@@ -408,18 +550,10 @@
                             Drop="OnLayersTreeDrop"
                             BorderThickness="0"
                             Padding="4"
+                            ItemContainerStyle="{StaticResource LayerTreeItemStyle}"
                             ContextMenu="{StaticResource InspectorAuthoringContextMenu}"
                             AutomationProperties.Name="Layers, frontmost first"
                             AutomationProperties.HelpText="Items higher in this list paint in front. Drop near a row edge to reorder, or in the center of a group to move inside it.">
-                    <TreeView.ItemContainerStyle>
-                      <Style TargetType="TreeViewItem">
-                        <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
-                        <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}" />
-                        <Setter Property="Padding" Value="0" />
-                        <Setter Property="AutomationProperties.Name" Value="{Binding Label}" />
-                        <Setter Property="AutomationProperties.HelpText" Value="{Binding RowHelp}" />
-                      </Style>
-                    </TreeView.ItemContainerStyle>
                     <TreeView.ItemTemplate>
                       <HierarchicalDataTemplate ItemsSource="{Binding Children}">
                         <Grid MinHeight="27"
@@ -444,10 +578,18 @@
                               <ColumnDefinition Width="24" />
                               <ColumnDefinition Width="24" />
                               <ColumnDefinition Width="24" />
+                              <ColumnDefinition Width="24" />
                               <ColumnDefinition Width="*" />
                               <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <Button Grid.Column="0"
+                            <ToggleButton Grid.Column="0"
+                                          Style="{StaticResource LayerDisclosureToggleStyle}"
+                                          IsChecked="{Binding IsExpanded, Mode=TwoWay}"
+                                          Visibility="{Binding HasExpandableChildren, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                          ToolTip="{Binding ExpansionAutomationName}"
+                                          AutomationProperties.Name="{Binding ExpansionAutomationName}"
+                                          AutomationProperties.HelpText="Expand or collapse this group without changing SVG source." />
+                            <Button Grid.Column="1"
                                     Style="{StaticResource LayerIconButtonStyle}"
                                     IsEnabled="{Binding CanToggleVisibility}"
                                     Tag="{Binding}"
@@ -489,7 +631,7 @@
                                 </Grid>
                               </Viewbox>
                             </Button>
-                            <Button Grid.Column="1"
+                            <Button Grid.Column="2"
                                     Style="{StaticResource LayerIconButtonStyle}"
                                     IsEnabled="{Binding CanToggleLock}"
                                     Tag="{Binding}"
@@ -544,19 +686,52 @@
                                 </Grid>
                               </Viewbox>
                             </Button>
-                            <TextBlock Grid.Column="2"
+                            <TextBlock Grid.Column="3"
                                        Text="{Binding TypeIcon}"
                                        HorizontalAlignment="Center"
                                        VerticalAlignment="Center"
                                        Foreground="#64748B"
                                        AutomationProperties.Name="{Binding TypeLabel}" />
-                            <TextBlock Grid.Column="3"
-                                       Margin="3,0,4,0"
-                                       Text="{Binding Label}"
-                                       TextTrimming="CharacterEllipsis"
-                                       VerticalAlignment="Center"
-                                       Foreground="#0F172A" />
-                            <Border Grid.Column="4"
+                            <Grid Grid.Column="4"
+                                  Margin="3,0,4,0">
+                              <TextBlock Text="{Binding Label}"
+                                         ToolTip="{Binding TechnicalLabel}"
+                                         TextTrimming="CharacterEllipsis"
+                                         VerticalAlignment="Center"
+                                         Foreground="#0F172A">
+                                <TextBlock.Style>
+                                  <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                      <DataTrigger Binding="{Binding IsRenaming}" Value="True">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                      </DataTrigger>
+                                    </Style.Triggers>
+                                  </Style>
+                                </TextBlock.Style>
+                              </TextBlock>
+                              <TextBox Text="{Binding RenameText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                       Tag="{Binding}"
+                                       Padding="3,1"
+                                       VerticalContentAlignment="Center"
+                                       KeyDown="OnLayerRenameTextBoxKeyDown"
+                                       LostKeyboardFocus="OnLayerRenameTextBoxLostKeyboardFocus"
+                                       IsVisibleChanged="OnLayerRenameTextBoxIsVisibleChanged"
+                                       AutomationProperties.Name="Friendly layer name"
+                                       AutomationProperties.HelpText="Enter a Unicode friendly layer name. Enter or focus loss saves; Escape cancels. Clear the field to remove the name.">
+                                <TextBox.Style>
+                                  <Style TargetType="TextBox">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                      <DataTrigger Binding="{Binding IsRenaming}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                      </DataTrigger>
+                                    </Style.Triggers>
+                                  </Style>
+                                </TextBox.Style>
+                              </TextBox>
+                            </Grid>
+                            <Border Grid.Column="5"
                                     Margin="2,3,3,3"
                                     Padding="4,0"
                                     Background="#F1F5F9"

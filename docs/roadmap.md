@@ -23,9 +23,7 @@ This roadmap records product direction. Post-v1 entries are ideas, not promises,
 - Visibility and lock controls.
 - Address the same-parent layer limitation without unsafe implicit reparenting by exposing group boundaries.
 
-## Pre-v1 core work
-
-### v0.9.0 — Visual Authoring (current standalone release)
+### v0.9.0 — Visual Authoring (shipped standalone release)
 
 - Insert bounded basic SVG elements and empty groups.
 - Duplicate exact subtrees with safe deterministic ID/reference remapping.
@@ -33,7 +31,17 @@ This roadmap records product direction. Post-v1 entries are ideas, not promises,
 - Explicit conservative move into, out of, and between existing groups.
 - Preserve one-operation Undo, source selection, expansion state, Properties, and Preview synchronization.
 
-### v0.10.0 — Visual Composition (planned)
+## Pre-v1 core work
+
+### v0.10.0 — Visual Composition
+
+Current Stage 0 authoring stabilization:
+
+- Keep a valid Preview visible and latest-wins after creation, group reorganization, Undo/Redo, and invalid-to-valid recovery.
+- Make element/group creation destination explicit: SVG root or the selected group/sibling context.
+- Provide accessible native Layers disclosure, source-owned Unicode friendly layer names separate from technical SVG IDs, and focus-aware Delete/Backspace behavior.
+
+Planned Stage 1 scope (not implemented in Stage 0):
 
 - Multi-selection.
 - Moving multiple selected elements.

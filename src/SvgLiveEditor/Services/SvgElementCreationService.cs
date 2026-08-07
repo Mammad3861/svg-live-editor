@@ -14,18 +14,31 @@ public sealed class SvgElementCreationService
         string source,
         SvgDocumentIndex document,
         SvgElementNode? selection,
+        SvgCreateDestination destination,
         Func<SvgElementNode, bool>? isEffectivelyLocked = null)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(document);
 
-        SvgElementNode? parent = ResolveInsertionParent(document, selection);
+        if (!Enum.IsDefined(destination))
+        {
+            return new SvgAuthoringAvailability(
+                false,
+                "The requested creation destination is not supported.");
+        }
+
+        SvgElementNode? parent = ResolveInsertionParent(
+            document,
+            selection,
+            destination);
         if (parent is null
             || !SvgSourceMutationUtilities.IsCurrentElement(source, parent))
         {
             return new SvgAuthoringAvailability(
                 false,
-                "Creation is unavailable until the current SVG is valid and indexed.");
+                destination == SvgCreateDestination.SelectedContext
+                    ? "Select visual artwork or a group to choose its current layer context."
+                    : "Creation is unavailable until the current SVG is valid and indexed.");
         }
         if (SvgLayerPolicy.IsInsideDefinitionContainer(document, parent))
         {
@@ -47,6 +60,7 @@ public sealed class SvgElementCreationService
         string source,
         SvgDocumentIndex document,
         SvgElementNode? selection,
+        SvgCreateDestination destination,
         SvgCreateElementKind kind,
         SvgCanvasSize canvasSize,
         Func<SvgElementNode, bool>? isEffectivelyLocked = null)
@@ -63,6 +77,7 @@ public sealed class SvgElementCreationService
             source,
             document,
             selection,
+            destination,
             isEffectivelyLocked);
         if (!availability.CanExecute)
         {
@@ -71,7 +86,10 @@ public sealed class SvgElementCreationService
                 ?? "The element cannot be created.");
         }
 
-        SvgElementNode parent = ResolveInsertionParent(document, selection)!;
+        SvgElementNode parent = ResolveInsertionParent(
+            document,
+            selection,
+            destination)!;
         AuthoringCanvas canvas = ReadCanvas(document, canvasSize);
         string id = CreateUniqueId(GetIdStem(kind), document);
         string fragment = CreateFragment(kind, id, canvas);
@@ -111,9 +129,19 @@ public sealed class SvgElementCreationService
 
     internal static SvgElementNode? ResolveInsertionParent(
         SvgDocumentIndex document,
-        SvgElementNode? selection)
+        SvgElementNode? selection,
+        SvgCreateDestination destination)
     {
         ArgumentNullException.ThrowIfNull(document);
+        if (destination == SvgCreateDestination.SvgRoot)
+        {
+            return SvgSourceMutationUtilities.FindSvgRoot(document);
+        }
+        if (destination != SvgCreateDestination.SelectedContext)
+        {
+            return null;
+        }
+
         if (selection is not null
             && SvgLayerPolicy.IsLayerElement(selection.Name)
             && !SvgLayerPolicy.IsInsideDefinitionContainer(document, selection))
@@ -132,7 +160,7 @@ public sealed class SvgElementCreationService
             }
         }
 
-        return SvgSourceMutationUtilities.FindSvgRoot(document);
+        return null;
     }
 
     private static AuthoringCanvas ReadCanvas(

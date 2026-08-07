@@ -9,7 +9,12 @@ public sealed class SvgVisualAuthoringUxSurfaceTests
         string xaml = ReadUi("MainWindow.xaml");
 
         StringAssert.Contains(xaml, "x:Name=\"AddElementButton\"");
-        StringAssert.Contains(xaml, "AutomationProperties.Name=\"Add SVG element\"");
+        StringAssert.Contains(xaml, "AutomationProperties.Name=\"Add\"");
+        StringAssert.Contains(xaml, "Data=\"M6,1 L6,11 M1,6 L11,6\"");
+        StringAssert.Contains(xaml, "Width=\"12\" Height=\"12\"");
+        StringAssert.Contains(xaml, "SystemColors.ControlTextBrushKey");
+        StringAssert.Contains(xaml, "SnapsToDevicePixels=\"True\"");
+        Assert.IsFalse(xaml.Contains("Content=\"+\"", StringComparison.Ordinal));
         StringAssert.Contains(xaml, "AutomationProperties.Name=\"Layers, frontmost first\"");
         StringAssert.Contains(xaml, "AutomationProperties.Name=\"SVG element tree\"");
         Assert.IsTrue(
@@ -19,14 +24,17 @@ public sealed class SvgVisualAuthoringUxSurfaceTests
         StringAssert.Contains(xaml, "ContextMenu=\"{StaticResource InspectorAuthoringContextMenu}\"");
         foreach (string tag in new[]
         {
-            "Create:Rectangle",
-            "Create:Circle",
-            "Create:Ellipse",
-            "Create:Line",
-            "Create:Text",
-            "Create:Group",
+            "Create:Root:Rectangle",
+            "Create:Root:Circle",
+            "Create:Root:Ellipse",
+            "Create:Root:Line",
+            "Create:Root:Text",
+            "Create:Root:Group",
+            "Create:Context:Rectangle",
+            "Create:Context:Group",
             "Duplicate",
             "Delete",
+            "Rename",
             "MoveToRoot"
         })
         {
@@ -34,7 +42,7 @@ public sealed class SvgVisualAuthoringUxSurfaceTests
         }
         Assert.IsFalse(xaml.Contains("Create:Path", StringComparison.Ordinal));
         StringAssert.Contains(xaml, "PreviewMouseRightButtonDown=\"OnInspectorTreePreviewMouseRightButtonDown\"");
-        StringAssert.Contains(xaml, "AutomationProperties.HelpText=\"Add Rectangle, Circle, Ellipse, Line, Text, or Group");
+        StringAssert.Contains(xaml, "AutomationProperties.HelpText=\"Choose the SVG root or selected safe layer context");
     }
 
     [TestMethod]
@@ -49,11 +57,15 @@ public sealed class SvgVisualAuthoringUxSurfaceTests
 
         StringAssert.Contains(shortcut, "LayersTree.IsKeyboardFocusWithin");
         StringAssert.Contains(shortcut, "InspectorTree.IsKeyboardFocusWithin");
+        StringAssert.Contains(shortcut, "InspectorPropertiesPanel.IsKeyboardFocusWithin");
         StringAssert.Contains(shortcut, "PreviewWebView.IsKeyboardFocusWithin");
         StringAssert.Contains(shortcut, "IsEditableControlFocused()");
-        StringAssert.Contains(shortcut, "pressedKey == Key.D");
-        StringAssert.Contains(shortcut, "pressedKey == Key.Delete");
+        StringAssert.Contains(shortcut, "SvgAuthoringShortcutRouter.Resolve");
+        StringAssert.Contains(shortcut, "SvgAuthoringShortcutAction.Duplicate");
+        StringAssert.Contains(shortcut, "SvgAuthoringShortcutAction.Delete");
         StringAssert.Contains(main, "TryHandleAuthoringShortcut(modifiers, pressedKey)");
+        StringAssert.Contains(main, "TryParseAuthoringCommand(");
+        StringAssert.Contains(main, "_viewModel.Inspector.SelectedElement is null");
         StringAssert.Contains(inspector, "_documentEditService.Apply(SourceEditor.Document, result.Edit)");
         StringAssert.Contains(inspector, "TryHandleInspectorUndoShortcut");
     }
