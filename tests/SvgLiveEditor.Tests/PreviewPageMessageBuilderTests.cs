@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using SvgLiveEditor.Models;
 using SvgLiveEditor.Services;
@@ -9,6 +10,62 @@ public sealed class PreviewPageMessageBuilderTests
 {
     private const string BridgeToken = "00112233445566778899AABBCCDDEEFF";
     private readonly PreviewPageMessageBuilder _builder = new();
+
+    [TestMethod]
+    public void RenderImageMessage_UsesOnlyBoundedTokenRevisionAndDataImage()
+    {
+        const string svg = "<svg xmlns=\"http://www.w3.org/2000/svg\"><text>سلام</text></svg>";
+        string json = _builder.BuildRenderImageMessage(
+            BridgeToken,
+            sourceRevision: 42,
+            svg,
+            renderedWidth: 600,
+            renderedHeight: 300,
+            new PreviewViewportPosition(0.75, 0.25));
+
+        using JsonDocument document = JsonDocument.Parse(json);
+        JsonElement root = document.RootElement;
+        Assert.AreEqual(8, root.EnumerateObject().Count());
+        Assert.AreEqual("renderImage", root.GetProperty("type").GetString());
+        Assert.AreEqual(BridgeToken, root.GetProperty("token").GetString());
+        Assert.AreEqual(42, root.GetProperty("sourceRevision").GetInt64());
+        string imageSource = root.GetProperty("imageSource").GetString()!;
+        StringAssert.StartsWith(
+            imageSource,
+            "data:image/svg+xml;base64,");
+        CollectionAssert.AreEqual(
+            Encoding.UTF8.GetBytes(svg),
+            Convert.FromBase64String(imageSource[26..]));
+        Assert.AreEqual(600, root.GetProperty("renderedWidth").GetDouble());
+        Assert.AreEqual(300, root.GetProperty("renderedHeight").GetDouble());
+        Assert.AreEqual(0.75, root.GetProperty("centerX").GetDouble());
+        Assert.AreEqual(0.25, root.GetProperty("centerY").GetDouble());
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            _builder.BuildRenderImageMessage(
+                BridgeToken,
+                -1,
+                svg,
+                600,
+                300,
+                PreviewViewportPosition.Center));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            _builder.BuildRenderImageMessage(
+                BridgeToken,
+                1,
+                string.Empty,
+                600,
+                300,
+                PreviewViewportPosition.Center));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            _builder.BuildRenderImageMessage(
+                BridgeToken,
+                PreviewPageMessageBuilder.MaximumJavaScriptSafeInteger + 1,
+                svg,
+                600,
+                300,
+                PreviewViewportPosition.Center));
+    }
 
     [TestMethod]
     public void ZoomStateMessage_UsesOnlyTheFixedTokenBoundFiniteSchema()

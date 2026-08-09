@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using SvgLiveEditor.Models;
 
@@ -6,9 +7,54 @@ namespace SvgLiveEditor.Services;
 public sealed class PreviewPageMessageBuilder
 {
     public const double MaximumRenderedDimension = 10_000_000;
+    public const int MaximumRenderedSvgCharacters = 10_000_000;
+    public const int MaximumEncodedImageSourceCharacters = 40_000_026;
+    public const long MaximumJavaScriptSafeInteger = 9_007_199_254_740_991;
     public const double MaximumDragThreshold = 1_000;
     public const double MaximumHorizontalScrollDelta =
         PreviewNativeHorizontalScrollPolicy.MaximumDeltaPixels;
+
+    public string BuildRenderImageMessage(
+        string bridgeToken,
+        long sourceRevision,
+        string validatedSvg,
+        double renderedWidth,
+        double renderedHeight,
+        PreviewViewportPosition viewport)
+    {
+        ValidateBridgeToken(bridgeToken);
+        ArgumentNullException.ThrowIfNull(validatedSvg);
+        if (sourceRevision is < 0 or > MaximumJavaScriptSafeInteger)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sourceRevision));
+        }
+        if (validatedSvg.Length is 0 or > MaximumRenderedSvgCharacters)
+        {
+            throw new ArgumentOutOfRangeException(nameof(validatedSvg));
+        }
+        ValidateDimension(renderedWidth, nameof(renderedWidth));
+        ValidateDimension(renderedHeight, nameof(renderedHeight));
+        ValidateNormalized(viewport.CenterX, nameof(viewport));
+        ValidateNormalized(viewport.CenterY, nameof(viewport));
+
+        string imageSource = "data:image/svg+xml;base64,"
+            + Convert.ToBase64String(Encoding.UTF8.GetBytes(validatedSvg));
+        if (imageSource.Length > MaximumEncodedImageSourceCharacters)
+        {
+            throw new ArgumentOutOfRangeException(nameof(validatedSvg));
+        }
+        return JsonSerializer.Serialize(new
+        {
+            type = "renderImage",
+            token = bridgeToken,
+            sourceRevision,
+            imageSource,
+            renderedWidth,
+            renderedHeight,
+            centerX = viewport.CenterX,
+            centerY = viewport.CenterY
+        });
+    }
 
     public string BuildZoomStateMessage(
         string bridgeToken,

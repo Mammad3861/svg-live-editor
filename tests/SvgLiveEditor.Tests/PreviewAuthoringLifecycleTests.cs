@@ -195,7 +195,8 @@ public sealed class PreviewAuthoringLifecycleTests
             canvas,
             visual,
             PreviewZoomState.Fit,
-            PreviewViewportPosition.Center);
+            PreviewViewportPosition.Center,
+            RequiresNavigation: false);
     }
 
     private SvgDocumentIndex Build(string source)

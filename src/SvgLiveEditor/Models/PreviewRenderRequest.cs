@@ -7,4 +7,5 @@ public sealed record PreviewRenderRequest(
     SvgCanvasSize CanvasSize,
     SvgVisualDocument VisualDocument,
     PreviewZoomState ZoomState,
-    PreviewViewportPosition Viewport);
+    PreviewViewportPosition Viewport,
+    bool RequiresNavigation);

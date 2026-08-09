@@ -11,6 +11,8 @@ public sealed class PreviewNavigationCoordinator
 
     public bool HasPending => _pending is not null;
 
+    internal PreviewRenderRequest? LastSuccessful => _lastSuccessful;
+
     public bool TryEnqueue(
         long sourceRevision,
         string svg,
@@ -49,7 +51,8 @@ public sealed class PreviewNavigationCoordinator
             canvasSize,
             visualDocument,
             zoomState,
-            viewport);
+            viewport,
+            RequiresNavigation: force);
         _pending = request;
         return true;
     }

@@ -24,7 +24,7 @@ public sealed class PreviewHtmlBuilder
             '.resize-handle-layer');
           const bridge = window.chrome && window.chrome.webview;
           const bridgeToken = document.body.dataset.bridgeToken;
-          const sourceRevision = Number.parseInt(
+          let sourceRevision = Number.parseInt(
             document.body.dataset.sourceRevision || '-1',
             10);
           let spaceHeld = false;
@@ -762,6 +762,31 @@ public sealed class PreviewHtmlBuilder
                 return;
               }
 
+              if (message.type === 'renderImage' &&
+                  Object.keys(message).length === 8 &&
+                  Number.isSafeInteger(message.sourceRevision) &&
+                  message.sourceRevision > sourceRevision &&
+                  typeof message.imageSource === 'string' &&
+                  message.imageSource.length <= 40000026 &&
+                  (message.imageSource.length - 26) % 4 === 0 &&
+                  /^data:image\/svg\+xml;base64,[A-Za-z0-9+/]+={0,2}$/
+                    .test(message.imageSource) &&
+                  Number.isFinite(message.renderedWidth) &&
+                  message.renderedWidth > 0 &&
+                  message.renderedWidth <= 10000000 &&
+                  Number.isFinite(message.renderedHeight) &&
+                  message.renderedHeight > 0 &&
+                  message.renderedHeight <= 10000000 &&
+                  Number.isFinite(message.centerX) &&
+                  message.centerX >= 0 &&
+                  message.centerX <= 1 &&
+                  Number.isFinite(message.centerY) &&
+                  message.centerY >= 0 &&
+                  message.centerY <= 1) {
+                beginImagePresentation(message);
+                return;
+              }
+
               if (message.type === 'zoomState' &&
                   Object.keys(message).length === 6 &&
                   Number.isFinite(message.renderedWidth) &&
@@ -1366,18 +1391,27 @@ public sealed class PreviewHtmlBuilder
             restoreViewportCenter(centerX, centerY);
           };
 
-          const initializeViewport = () =>
-            requestAnimationFrame(() => requestAnimationFrame(applyInitialViewport));
+          let presentationGeneration = 0;
+          const initializeViewport = generation =>
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+              if (generation === presentationGeneration) {
+                applyInitialViewport();
+              }
+            }));
           let presentationCheckPending = false;
           let presentationReported = false;
-          const reportImageLoaded = async () => {
-            if (presentationCheckPending || presentationReported) {
+          const reportImageLoaded = async generation => {
+            if (generation !== presentationGeneration ||
+                presentationCheckPending || presentationReported) {
               return;
             }
 
             presentationCheckPending = true;
             try {
               await image.decode();
+              if (generation !== presentationGeneration) {
+                return;
+              }
               const probe = document.createElement('canvas');
               probe.width = 1;
               probe.height = 1;
@@ -1389,6 +1423,9 @@ public sealed class PreviewHtmlBuilder
               image.dataset.presented = 'true';
               await new Promise(resolve => requestAnimationFrame(resolve));
               await new Promise(resolve => requestAnimationFrame(resolve));
+              if (generation !== presentationGeneration) {
+                return;
+              }
               const imageRect = image.getBoundingClientRect();
               if (!image.isConnected || !image.complete ||
                   image.naturalWidth <= 0 || image.naturalHeight <= 0 ||
@@ -1398,37 +1435,135 @@ public sealed class PreviewHtmlBuilder
                 return;
               }
               presentationReported = true;
+              viewport.style.pointerEvents = '';
               postImageState('loaded');
             } catch {
-              reportImageError();
+              reportImageError(generation);
             } finally {
-              presentationCheckPending = false;
+              if (generation === presentationGeneration) {
+                presentationCheckPending = false;
+              }
             }
           };
-          const reportImageError = () => {
+          const reportImageError = generation => {
+            if (generation !== presentationGeneration) {
+              return;
+            }
             image.dataset.loadEvent = 'error';
+            viewport.style.pointerEvents = '';
             postImageState('error');
           };
+          const watchImagePresentation = generation => {
+            const handleLoad = () => {
+              if (generation !== presentationGeneration) {
+                return;
+              }
+              image.dataset.loadEvent = 'load';
+              initializeViewport(generation);
+              reportImageLoaded(generation);
+            };
+            const handleError = () => reportImageError(generation);
+            image.addEventListener('load', handleLoad, { once: true });
+            image.addEventListener('error', handleError, { once: true });
+          };
+          const checkCompletePresentation = generation => {
+            if (image.complete) {
+              queueMicrotask(() => {
+                if (generation !== presentationGeneration) {
+                  return;
+                }
+                if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+                  image.dataset.loadEvent = 'complete-before-listener';
+                  initializeViewport(generation);
+                  reportImageLoaded(generation);
+                } else {
+                  reportImageError(generation);
+                }
+              });
+            }
+          };
+          const stageAndPresentImage = async (message, generation) => {
+            const stagedImage = new Image();
+            stagedImage.decoding = 'async';
+            stagedImage.src = message.imageSource;
+            try {
+              await stagedImage.decode();
+              if (generation !== presentationGeneration ||
+                  stagedImage.naturalWidth <= 0 ||
+                  stagedImage.naturalHeight <= 0) {
+                return;
+              }
+
+              const probe = document.createElement('canvas');
+              probe.width = 1;
+              probe.height = 1;
+              const context = probe.getContext('2d', { alpha: true });
+              if (!context) {
+                throw new Error('No staged image presentation context');
+              }
+              context.drawImage(stagedImage, 0, 0, 1, 1);
+
+              // Keep the currently presented artwork intact until the new
+              // isolated data image has decoded. WebView2CompositionControl
+              // captures the browser surface; exposing an undecoded visible
+              // image can otherwise publish a checkerboard-only frame.
+              image.style.width = `${message.renderedWidth}px`;
+              image.style.height = `${message.renderedHeight}px`;
+              selectionOverlay.style.width = `${message.renderedWidth}px`;
+              selectionOverlay.style.height = `${message.renderedHeight}px`;
+              stage.style.width = `${message.renderedWidth + 48}px`;
+              stage.style.height = `${message.renderedHeight + 48}px`;
+              image.dataset.loadEvent = 'atomic-swap';
+              image.dataset.presented = 'false';
+              image.src = stagedImage.src;
+              await image.decode();
+              if (generation !== presentationGeneration) {
+                return;
+              }
+              image.dataset.loadEvent = 'load';
+              initializeViewport(generation);
+              await reportImageLoaded(generation);
+            } catch {
+              reportImageError(generation);
+            }
+          };
+          const beginImagePresentation = message => {
+            presentationGeneration++;
+            const generation = presentationGeneration;
+            presentationCheckPending = false;
+            presentationReported = false;
+            sourceRevision = message.sourceRevision;
+            document.body.dataset.sourceRevision = `${sourceRevision}`;
+            document.body.dataset.initialCenterX = `${message.centerX}`;
+            document.body.dataset.initialCenterY = `${message.centerY}`;
+            viewport.style.pointerEvents = 'none';
+            stopPan();
+            stopDirectDrag();
+            stopResizeGesture(null, false);
+            stopVisualGesture(null, false);
+            activeVisualSelection = null;
+            selectionOverlay.replaceChildren();
+            resizeHandleLayer.replaceChildren();
+            image.dataset.loadEvent = 'host-staging';
+            stageAndPresentImage(message, generation);
+            refreshCursor();
+          };
+          const initialGeneration = ++presentationGeneration;
           if (image.complete) {
             if (image.naturalWidth > 0 && image.naturalHeight > 0) {
               image.dataset.loadEvent = 'complete-before-listener';
-              initializeViewport();
-              reportImageLoaded();
+              initializeViewport(initialGeneration);
+              reportImageLoaded(initialGeneration);
             } else {
-              reportImageError();
+              reportImageError(initialGeneration);
             }
           } else {
-            image.addEventListener('load', initializeViewport, { once: true });
-            image.addEventListener('load', () => {
-              image.dataset.loadEvent = 'load';
-              reportImageLoaded();
-            }, { once: true });
-            image.addEventListener('error', reportImageError, { once: true });
+            watchImagePresentation(initialGeneration);
           }
           new ResizeObserver(() => {
             if (!presentationReported && image.complete &&
                 image.naturalWidth > 0 && image.naturalHeight > 0) {
-              reportImageLoaded();
+              reportImageLoaded(presentationGeneration);
             }
             refreshCursor();
             scheduleViewportState();

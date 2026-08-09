@@ -155,10 +155,30 @@ public sealed class PreviewHtmlBuilderTests
         StringAssert.Contains(script, "viewport.clientWidth <= 0");
         StringAssert.Contains(script, "image.dataset.loadEvent = 'load'");
         StringAssert.Contains(script, "image.dataset.loadEvent = 'complete-before-listener'");
-        StringAssert.Contains(script, "reportImageLoaded();");
-        StringAssert.Contains(script, "image.addEventListener('error', reportImageError");
+        StringAssert.Contains(script, "reportImageLoaded(generation)");
+        StringAssert.Contains(script, "image.addEventListener('error', handleError");
+        StringAssert.Contains(script, "message.type === 'renderImage'");
+        StringAssert.Contains(script, "message.sourceRevision > sourceRevision");
+        StringAssert.Contains(script, "message.imageSource.length <= 40000026");
+        StringAssert.Contains(script, "(message.imageSource.length - 26) % 4 === 0");
+        StringAssert.Contains(script, "const stagedImage = new Image()");
+        StringAssert.Contains(script, "await stagedImage.decode()");
+        StringAssert.Contains(script, "context.drawImage(stagedImage, 0, 0, 1, 1)");
+        StringAssert.Contains(script, "image.src = stagedImage.src");
+        StringAssert.Contains(script, "generation !== presentationGeneration");
         StringAssert.Contains(script, "postImageState('loaded')");
         StringAssert.Contains(script, "postImageState('error')");
+
+        int stagedDecode = script.IndexOf(
+            "await stagedImage.decode()",
+            StringComparison.Ordinal);
+        int visibleSwap = script.IndexOf(
+            "image.src = stagedImage.src",
+            StringComparison.Ordinal);
+        Assert.IsTrue(stagedDecode >= 0 && visibleSwap > stagedDecode);
+        Assert.IsFalse(script.Contains(
+            "image.src = message.imageSource",
+            StringComparison.Ordinal));
     }
 
     [TestMethod]
@@ -442,8 +462,8 @@ public sealed class PreviewHtmlBuilderTests
         StringAssert.Contains(script, "centerX:");
         StringAssert.Contains(script, "centerY:");
         StringAssert.Contains(script, "viewport.addEventListener('scroll', scheduleViewportState)");
-        StringAssert.Contains(script, "image.addEventListener('load', initializeViewport");
-        StringAssert.Contains(script, "requestAnimationFrame(() => requestAnimationFrame(applyInitialViewport))");
+        StringAssert.Contains(script, "initializeViewport(generation)");
+        StringAssert.Contains(script, "generation === presentationGeneration");
         StringAssert.Contains(script, "image.style.width = `${message.renderedWidth}px`");
         StringAssert.Contains(script, "stage.style.width = `${message.renderedWidth + 48}px`");
         StringAssert.Contains(script, "restoreViewportCenter(message.centerX, message.centerY)");

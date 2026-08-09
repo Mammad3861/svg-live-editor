@@ -39,12 +39,14 @@ public partial class MainWindow : Window
     private readonly PreviewViewportCalculator _previewViewportCalculator = new();
     private readonly PreviewNavigationCoordinator _previewNavigationCoordinator = new();
     private readonly PreviewRenderReadiness _previewRenderReadiness = new();
+    private readonly PreviewRenderTransportPolicy
+        _previewRenderTransportPolicy = new();
     private readonly PreviewPageMessageBuilder _previewPageMessageBuilder = new();
     private readonly PreviewUpdatePolicy _previewUpdatePolicy = new();
     private readonly SvgCanvasSizeReader _svgCanvasSizeReader = new();
     private readonly PreviewPngCopyPolicy _previewPngCopyPolicy = new();
     private readonly PreviewPngMessageParser _previewPngMessageParser = new();
-    private readonly PreviewDragFileStore _previewDragFileStore = new();
+    private readonly PreviewDragFileStore _previewDragFileStore;
     private readonly PreviewDragDataObjectFactory
         _previewDragDataObjectFactory = new();
     private readonly PreviewDragGestureTracker
@@ -55,9 +57,9 @@ public partial class MainWindow : Window
     private readonly FileDropOverlayState _fileDropOverlayState = new();
     private readonly ClipboardCopyService _clipboardCopyService =
         new(new WindowsClipboardWriter());
-    private readonly UserPreferencesService _userPreferencesService = new();
+    private readonly UserPreferencesService _userPreferencesService;
     private readonly LastDocumentService _lastDocumentService = new();
-    private readonly WebView2UserDataFolderProvider _webView2UserDataFolderProvider = new();
+    private readonly WebView2UserDataFolderProvider _webView2UserDataFolderProvider;
     private readonly SourceRevisionTracker _sourceRevisionTracker = new();
     private readonly ApplicationInfoService _applicationInfoService = new();
     private readonly InstalledFontFamilyProvider
@@ -96,7 +98,39 @@ public partial class MainWindow : Window
     private PreviewContextMenuRequest? _boundPreviewContextMenuRequest;
 
     public MainWindow()
+        : this(localApplicationData: null)
     {
+    }
+
+    internal MainWindow(string? localApplicationData)
+    {
+        if (localApplicationData is null)
+        {
+            _previewDragFileStore = new PreviewDragFileStore();
+            _userPreferencesService = new UserPreferencesService();
+            _webView2UserDataFolderProvider =
+                new WebView2UserDataFolderProvider();
+            _recoverySnapshotStore = new RecoverySnapshotStore();
+        }
+        else
+        {
+            string applicationData = Path.GetFullPath(
+                localApplicationData);
+            string applicationDirectory = Path.Combine(
+                applicationData,
+                "SvgLiveEditor");
+            _previewDragFileStore = new PreviewDragFileStore(
+                Path.Combine(applicationDirectory, "DragOut"));
+            _userPreferencesService = new UserPreferencesService(
+                Path.Combine(applicationDirectory, "settings.json"));
+            _webView2UserDataFolderProvider =
+                new WebView2UserDataFolderProvider(applicationData);
+            _recoverySnapshotStore = new RecoverySnapshotStore(
+                Path.Combine(applicationDirectory, "Recovery"),
+                new Utf8FileService(),
+                new SafeDocumentPathService());
+        }
+
         InitializeComponent();
         _previewContextMenu = CreatePreviewContextMenu();
         DataContext = _viewModel;
@@ -613,8 +647,8 @@ public partial class MainWindow : Window
         PreviewRuntimeLink.Visibility = Visibility.Collapsed;
         PreviewMessagePanel.Visibility = Visibility.Visible;
         // Keep the composition surface mounted behind the app-owned state
-        // panel. Hiding it during an in-flight NavigateToString render can
-        // discard the first presented frame even after image readiness.
+        // panel. Hiding it during an in-flight presentation can discard the
+        // first painted frame even after image readiness.
         PreviewWebView.Visibility = Visibility.Visible;
     }
 
@@ -1208,15 +1242,16 @@ public partial class MainWindow : Window
             double scale = _previewZoomCalculator.ResolveScale(request.ZoomState, fitScale);
             double renderedWidth = request.CanvasSize.Width * scale;
             double renderedHeight = request.CanvasSize.Height * scale;
-            string bridgeToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
-            string html = _previewHtmlBuilder.Build(
-                request.Svg,
-                renderedWidth,
-                renderedHeight,
-                bridgeToken,
-                request.Viewport,
-                request.SourceRevision,
-                request.VisualDocument.Viewport);
+            PreviewRenderTransport transport =
+                _previewRenderTransportPolicy.Decide(
+                    request,
+                    _previewNavigationCoordinator.LastSuccessful,
+                    _hasVisiblePreview,
+                    _activePreviewBridgeToken is not null);
+            string bridgeToken = transport
+                == PreviewRenderTransport.InPlaceImage
+                ? _activePreviewBridgeToken!
+                : Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
             PreviewWebView.UpdateLayout();
             PreviewWebView.ZoomFactor = 1.0;
 
@@ -1229,10 +1264,43 @@ public partial class MainWindow : Window
             OnVisualPreviewNavigationStarted(
                 request.VisualDocument,
                 request.SourceRevision);
+            ClosePreviewContextMenu();
             _previewDirectDragHandshake.Reset();
+            StartPreviewRenderTimeout(request.Revision, bridgeToken);
+
+            if (transport == PreviewRenderTransport.InPlaceImage)
+            {
+                CancelVisualEditGesture();
+                CancelPendingPreviewPngRequest(
+                    "Preview changed before the PNG copy completed. Try again.");
+                _isPreviewNavigationRequested = false;
+                core.PostWebMessageAsJson(
+                    _previewPageMessageBuilder.BuildRenderImageMessage(
+                        bridgeToken,
+                        request.SourceRevision,
+                        request.Svg,
+                        renderedWidth,
+                        renderedHeight,
+                        request.Viewport));
+                HandlePreviewRenderReadiness(
+                    request.Revision,
+                    _previewRenderReadiness.RecordNavigation(
+                        request.Revision,
+                        isSuccess: true),
+                    errorMessage: null);
+                return;
+            }
+
+            string html = _previewHtmlBuilder.Build(
+                request.Svg,
+                renderedWidth,
+                renderedHeight,
+                bridgeToken,
+                request.Viewport,
+                request.SourceRevision,
+                request.VisualDocument.Viewport);
             _isPreviewNavigationRequested = true;
             core.NavigateToString(html);
-            StartPreviewRenderTimeout(request.Revision, bridgeToken);
         }
         catch (Exception exception)
         {
@@ -1241,7 +1309,7 @@ public partial class MainWindow : Window
             CompleteActivePreviewRender(
                 request.Revision,
                 isSuccess: false,
-                $"WebView2 could not start the preview navigation: {exception.Message}");
+                $"WebView2 could not start rendering the preview: {exception.Message}");
         }
     }
 
