@@ -9,7 +9,7 @@ namespace SvgLiveEditor;
 public partial class MainWindow
 {
     private readonly SvgTemplateCatalog _templateCatalog = new();
-    private readonly RecoverySnapshotStore _recoverySnapshotStore = new();
+    private readonly RecoverySnapshotStore _recoverySnapshotStore;
     private readonly AutoSaveFileService _autoSaveFileService = new();
     private readonly AutoSavePolicy _autoSavePolicy = new();
     private readonly SvgValidationService _persistenceValidationService = new();

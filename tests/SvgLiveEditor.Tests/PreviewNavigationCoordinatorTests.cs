@@ -22,36 +22,24 @@ public sealed class PreviewNavigationCoordinatorTests
     public void RapidReplacement_RendersOnlyTheLatestPendingContentAfterActiveNavigation()
     {
         PreviewNavigationCoordinator coordinator = new();
-        PreviewRenderRequest first = coordinator.Enqueue(
-            sourceRevision: 1,
-            FileA,
-            CanvasSize,
-            VisualDocument,
-            PreviewZoomState.Fit,
-            PreviewViewportPosition.Center);
+        PreviewRenderRequest first = Enqueue(coordinator, 1, FileA);
         Assert.AreEqual(first, coordinator.TryBeginNext());
 
-        coordinator.Enqueue(
-            sourceRevision: 2,
-            FileA,
-            CanvasSize,
-            VisualDocument,
-            PreviewZoomState.Fit,
-            PreviewViewportPosition.Center);
-        PreviewRenderRequest latest = coordinator.Enqueue(
-            sourceRevision: 3,
-            FileB,
-            CanvasSize,
-            VisualDocument,
-            PreviewZoomState.Fit,
-            PreviewViewportPosition.Center);
+        Enqueue(coordinator, 2, FileA);
+        PreviewRenderRequest latest = Enqueue(coordinator, 3, FileB);
 
-        Assert.IsTrue(coordinator.TryComplete(first.Revision, out bool firstWasLatest));
+        Assert.IsTrue(coordinator.TryComplete(
+            first.Revision,
+            isSuccess: true,
+            out bool firstWasLatest));
         Assert.IsFalse(firstWasLatest);
         Assert.AreEqual(latest, coordinator.TryBeginNext());
         Assert.AreEqual(FileB, latest.Svg);
         Assert.AreEqual(3, latest.SourceRevision);
-        Assert.IsTrue(coordinator.TryComplete(latest.Revision, out bool latestWasLatest));
+        Assert.IsTrue(coordinator.TryComplete(
+            latest.Revision,
+            isSuccess: true,
+            out bool latestWasLatest));
         Assert.IsTrue(latestWasLatest);
     }
 
@@ -59,26 +47,105 @@ public sealed class PreviewNavigationCoordinatorTests
     public void StaleCompletion_CannotCompleteOrSupersedeTheActiveRevision()
     {
         PreviewNavigationCoordinator coordinator = new();
-        PreviewRenderRequest active = coordinator.Enqueue(
-            sourceRevision: 10,
+        PreviewRenderRequest active = Enqueue(coordinator, 10, FileA);
+        coordinator.TryBeginNext();
+        PreviewRenderRequest latest = Enqueue(
+            coordinator,
+            11,
+            FileB,
+            PreviewZoomState.At100Percent,
+            new PreviewViewportPosition(0.75, 0.25));
+
+        Assert.IsFalse(coordinator.TryComplete(
+            active.Revision + 100,
+            isSuccess: true,
+            out _));
+        Assert.IsNull(coordinator.TryBeginNext());
+        Assert.IsTrue(coordinator.TryComplete(
+            active.Revision,
+            isSuccess: true,
+            out bool activeWasLatest));
+        Assert.IsFalse(activeWasLatest);
+        Assert.AreEqual(latest, coordinator.TryBeginNext());
+    }
+
+    [TestMethod]
+    public void IdenticalSourceRevision_IsIdempotentUntilForcedRefresh()
+    {
+        PreviewNavigationCoordinator coordinator = new();
+        PreviewRenderRequest first = Enqueue(coordinator, 20, FileA);
+        Assert.AreEqual(first, coordinator.TryBeginNext());
+
+        Assert.IsFalse(coordinator.TryEnqueue(
+            20,
             FileA,
             CanvasSize,
             VisualDocument,
             PreviewZoomState.Fit,
-            PreviewViewportPosition.Center);
-        coordinator.TryBeginNext();
-        PreviewRenderRequest latest = coordinator.Enqueue(
-            sourceRevision: 11,
-            FileB,
+            PreviewViewportPosition.Center,
+            force: false,
+            out _));
+        Assert.IsTrue(coordinator.TryComplete(
+            first.Revision,
+            isSuccess: true,
+            out bool wasLatest));
+        Assert.IsTrue(wasLatest);
+        Assert.IsFalse(coordinator.TryEnqueue(
+            20,
+            FileA,
             CanvasSize,
             VisualDocument,
-            PreviewZoomState.At100Percent,
-            new PreviewViewportPosition(0.75, 0.25));
+            PreviewZoomState.Fit,
+            PreviewViewportPosition.Center,
+            force: false,
+            out _));
 
-        Assert.IsFalse(coordinator.TryComplete(active.Revision + 100, out _));
-        Assert.IsNull(coordinator.TryBeginNext());
-        Assert.IsTrue(coordinator.TryComplete(active.Revision, out bool activeWasLatest));
-        Assert.IsFalse(activeWasLatest);
-        Assert.AreEqual(latest, coordinator.TryBeginNext());
+        Assert.IsTrue(coordinator.TryEnqueue(
+            20,
+            FileA,
+            CanvasSize,
+            VisualDocument,
+            PreviewZoomState.Fit,
+            PreviewViewportPosition.Center,
+            force: true,
+            out PreviewRenderRequest? refresh));
+        Assert.IsNotNull(refresh);
+        Assert.AreNotEqual(first.Revision, refresh.Revision);
+    }
+
+    [TestMethod]
+    public void FailedLatestRender_DoesNotSuppressAValidRetry()
+    {
+        PreviewNavigationCoordinator coordinator = new();
+        PreviewRenderRequest failed = Enqueue(coordinator, 30, FileB);
+        Assert.AreEqual(failed, coordinator.TryBeginNext());
+        Assert.IsTrue(coordinator.TryComplete(
+            failed.Revision,
+            isSuccess: false,
+            out bool wasLatest));
+        Assert.IsTrue(wasLatest);
+
+        PreviewRenderRequest retry = Enqueue(coordinator, 30, FileB);
+        Assert.AreNotEqual(failed.Revision, retry.Revision);
+    }
+
+    private static PreviewRenderRequest Enqueue(
+        PreviewNavigationCoordinator coordinator,
+        long sourceRevision,
+        string svg,
+        PreviewZoomState? zoom = null,
+        PreviewViewportPosition? viewport = null)
+    {
+        Assert.IsTrue(coordinator.TryEnqueue(
+            sourceRevision,
+            svg,
+            CanvasSize,
+            VisualDocument,
+            zoom ?? PreviewZoomState.Fit,
+            viewport ?? PreviewViewportPosition.Center,
+            force: false,
+            out PreviewRenderRequest? request));
+        Assert.IsNotNull(request);
+        return request;
     }
 }

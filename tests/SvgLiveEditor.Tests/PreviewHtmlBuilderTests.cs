@@ -148,10 +148,62 @@ public sealed class PreviewHtmlBuilderTests
         StringAssert.Contains(script, "sourceRevision");
         StringAssert.Contains(script, "naturalWidth: loaded ? image.naturalWidth : 0");
         StringAssert.Contains(script, "naturalHeight: loaded ? image.naturalHeight : 0");
-        StringAssert.Contains(script, "image.addEventListener('load', reportImageLoaded");
-        StringAssert.Contains(script, "image.addEventListener('error', reportImageError");
+        StringAssert.Contains(script, "await image.decode()");
+        StringAssert.Contains(script, "context.drawImage(image, 0, 0, 1, 1)");
+        StringAssert.Contains(script, "image.dataset.presented = 'true'");
+        StringAssert.Contains(script, "imageRect.width <= 0");
+        StringAssert.Contains(script, "viewport.clientWidth <= 0");
+        StringAssert.Contains(script, "image.dataset.loadEvent = 'load'");
+        StringAssert.Contains(script, "image.dataset.loadEvent = 'complete-before-listener'");
+        StringAssert.Contains(script, "reportImageLoaded(generation)");
+        StringAssert.Contains(script, "image.addEventListener('error', handleError");
+        StringAssert.Contains(script, "message.type === 'renderImage'");
+        StringAssert.Contains(script, "message.sourceRevision > sourceRevision");
+        StringAssert.Contains(script, "message.imageSource.length <= 40000026");
+        StringAssert.Contains(script, "(message.imageSource.length - 26) % 4 === 0");
+        StringAssert.Contains(script, "const stagedImage = new Image()");
+        StringAssert.Contains(script, "await stagedImage.decode()");
+        StringAssert.Contains(script, "context.drawImage(stagedImage, 0, 0, 1, 1)");
+        StringAssert.Contains(script, "image.src = stagedImage.src");
+        StringAssert.Contains(script, "generation !== presentationGeneration");
         StringAssert.Contains(script, "postImageState('loaded')");
         StringAssert.Contains(script, "postImageState('error')");
+
+        int stagedDecode = script.IndexOf(
+            "await stagedImage.decode()",
+            StringComparison.Ordinal);
+        int visibleSwap = script.IndexOf(
+            "image.src = stagedImage.src",
+            StringComparison.Ordinal);
+        Assert.IsTrue(stagedDecode >= 0 && visibleSwap > stagedDecode);
+        Assert.IsFalse(script.Contains(
+            "image.src = message.imageSource",
+            StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void Build_RoutesPreviewDeleteAndDuplicateWithoutChangingPointerGestures()
+    {
+        string script = ExtractHostScript(
+            _builder.Build(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" />",
+                300,
+                150,
+                BridgeToken,
+                sourceRevision: 7));
+
+        StringAssert.Contains(script, "type: 'authoringCommand'");
+        StringAssert.Contains(script, "sourceRevision");
+        StringAssert.Contains(script, "postAuthoringCommand('delete')");
+        StringAssert.Contains(script, "postAuthoringCommand('duplicate')");
+        StringAssert.Contains(script, "!event.repeat && !event.isComposing");
+        StringAssert.Contains(script, "event.code === 'Delete'");
+        StringAssert.Contains(script, "event.code === 'Backspace'");
+        StringAssert.Contains(script, "event.code === 'KeyD'");
+        StringAssert.Contains(script, "const action = choosePointerAction(event)");
+        StringAssert.Contains(script, "if (action === 'visual')");
+        StringAssert.Contains(script, "if (action === 'drag')");
+        StringAssert.Contains(script, "if (action !== 'pan' || !canPan())");
     }
 
     [TestMethod]
@@ -410,8 +462,8 @@ public sealed class PreviewHtmlBuilderTests
         StringAssert.Contains(script, "centerX:");
         StringAssert.Contains(script, "centerY:");
         StringAssert.Contains(script, "viewport.addEventListener('scroll', scheduleViewportState)");
-        StringAssert.Contains(script, "image.addEventListener('load', initializeViewport");
-        StringAssert.Contains(script, "requestAnimationFrame(() => requestAnimationFrame(applyInitialViewport))");
+        StringAssert.Contains(script, "initializeViewport(generation)");
+        StringAssert.Contains(script, "generation === presentationGeneration");
         StringAssert.Contains(script, "image.style.width = `${message.renderedWidth}px`");
         StringAssert.Contains(script, "stage.style.width = `${message.renderedWidth + 48}px`");
         StringAssert.Contains(script, "restoreViewportCenter(message.centerX, message.centerY)");

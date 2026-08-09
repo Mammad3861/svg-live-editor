@@ -38,11 +38,16 @@ public sealed class RepositoryRoadmapTests
             "Properties Undo/Redo routing",
             "Real Layers/Groups architecture and UI",
             "same-parent layer limitation without unsafe implicit reparenting",
-            "v0.9.0 — Visual Authoring (current standalone release)",
+            "v0.9.0 — Visual Authoring (shipped standalone release)",
             "Insert bounded basic SVG elements and empty groups",
             "safe deterministic ID/reference remapping",
             "Explicit conservative move into, out of, and between existing groups",
-            "v0.10.0 — Visual Composition (planned)",
+            "v0.10.0 — Visual Composition",
+            "Current Stage 0 authoring stabilization",
+            "valid Preview visible and latest-wins",
+            "explicit: SVG root or the selected group/sibling context",
+            "accessible native Layers disclosure",
+            "Planned Stage 1 scope (not implemented in Stage 0)",
             "Multi-selection",
             "Moving multiple selected elements",
             "Group and Ungroup commands",
@@ -53,6 +58,13 @@ public sealed class RepositoryRoadmapTests
             "Reliability and data-loss review",
             "Persistence and recovery validation",
             "Advanced selection visual redesign",
+            "Real-time WYSIWYG manipulation",
+            "actual artwork follow the pointer smoothly during Move and Resize",
+            "source authoritative and commit it once on pointer release",
+            "Escape cancels",
+            "one logical Undo operation",
+            "without rebuilding or navigating the full Preview for every pointer movement",
+            "after the initial v1 release",
             "Visual color editing",
             "Expanded Templates",
             "Keyboard customization",
@@ -88,11 +100,16 @@ public sealed class RepositoryRoadmapTests
             "مسیریابی Undo/Redo در Properties",
             "معماری و رابط واقعی Layers/Groups",
             "بدون جابه‌جایی ضمنی و ناامن بین والدها",
-            "v0.9.0 — Visual Authoring (انتشار مستقل جاری)",
+            "v0.9.0 — Visual Authoring (انتشار مستقل عرضه‌شده)",
             "درج محدود و امن عناصر پایهٔ SVG و گروه خالی",
             "بازنویسی امن و قطعی ID/reference",
             "انتقال صریح و محافظه‌کارانه به داخل، خارج و میان گروه‌های موجود",
-            "v0.10.0 — Visual Composition (برنامه‌ریزی‌شده)",
+            "v0.10.0 — Visual Composition",
+            "مرحلهٔ ۰ جاری برای پایدارسازی authoring",
+            "Preview معتبر و latest-wins",
+            "ریشهٔ SVG یا گروه/زمینهٔ هم‌سطح انتخاب‌شده",
+            "disclosure بومی و دسترس‌پذیر در Layers",
+            "محدودهٔ برنامه‌ریزی‌شدهٔ مرحلهٔ ۱ (در مرحلهٔ ۰ پیاده‌سازی نشده است)",
             "انتخاب چندگانه",
             "جابه‌جایی چند عنصر انتخاب‌شده",
             "فرمان‌های Group و Ungroup",
@@ -103,6 +120,12 @@ public sealed class RepositoryRoadmapTests
             "خطر از دست رفتن داده",
             "اعتبارسنجی ماندگاری و بازیابی",
             "بازطراحی پیشرفتهٔ ظاهر انتخاب",
+            "دست‌کاری بلادرنگ WYSIWYG",
+            "هنگام Move و Resize خود اثر",
+            "Escape عملیات را لغو کند",
+            "یک Undo منطقی",
+            "navigation کامل Preview",
+            "پس از انتشار اولیهٔ v1",
             "ویرایش دیداری رنگ",
             "گسترش Templates",
             "سفارشی‌سازی صفحه‌کلید",
@@ -146,10 +169,13 @@ public sealed class RepositoryRoadmapTests
 
         foreach (string phrase in new[]
                  {
-                     "Version 0.9.0 Visual Authoring is a complete standalone release",
+                     "Version 0.10.0 Stage 0 stabilizes the complete v0.9.0 Visual Authoring scope",
+                     "latest-wins across rapid authoring/Undo/Redo changes",
+                     "explicit SVG-root or selected-context target",
+                     "Unicode friendly layer names",
                      "before, after, and inside-group feedback",
                      "session-only",
-                     "Multi-selection, moving multiple selected elements, Group/Ungroup",
+                     "multi-selection, moving multiple selected elements, Group/Ungroup",
                      "v0.10.0 Visual Composition",
                      "Unsafe or ambiguous operations fail closed"
                  })
@@ -158,7 +184,10 @@ public sealed class RepositoryRoadmapTests
         }
         foreach (string phrase in new[]
                  {
-                     "نسخهٔ ۰٫۹٫۰ Visual Authoring یک انتشار مستقل و کامل",
+                     "مرحلهٔ ۰ نسخهٔ ۰٫۱۰٫۰ محدودهٔ کامل Visual Authoring در v0.9.0 را پایدار می‌کند",
+                     "latest-wins دارای تأیید ارائهٔ تصویر",
+                     "مقصد صریح ریشهٔ SVG یا زمینهٔ انتخاب‌شده",
+                     "نام دوستانهٔ یونیکد",
                      "بازخورد جداگانهٔ before، after و داخل گروه",
                      "قفل فقط در نشست جاری",
                      "انتخاب چندگانه، حرکت چند عنصر انتخاب‌شده، Group/Ungroup",
@@ -170,6 +199,8 @@ public sealed class RepositoryRoadmapTests
         }
         StringAssert.Contains(security, "Layers and groups boundary");
         StringAssert.Contains(security, "Creation accepts only the fixed app-owned");
+        StringAssert.Contains(security, "requires an explicit SVG-root or selected-context destination");
+        StringAssert.Contains(security, "Friendly layer rename edits only an optional bounded `data-name` attribute");
         StringAssert.Contains(security, "Layers drag/drop uses explicit before, after, or inside-group placement");
         StringAssert.Contains(security, "never serialized");
     }

@@ -7,6 +7,7 @@ public sealed class PreviewInteractionMessageParser
 {
     private const double MaximumViewportDimension = 100_000;
     private const int MaximumImageDimension = 10_000_000;
+    private const double MaximumRenderedDimension = 100_000_000;
 
     public bool TryParseImageLoadState(
         string json,
@@ -20,7 +21,7 @@ public sealed class PreviewInteractionMessageParser
             using JsonDocument document = JsonDocument.Parse(json);
             JsonElement root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object
-                || root.EnumerateObject().Count() != 6
+                || root.EnumerateObject().Count() != 10
                 || !TryReadString(root, "type", out string? type)
                 || type != "imageState"
                 || !TryReadString(root, "token", out string? token)
@@ -43,7 +44,31 @@ public sealed class PreviewInteractionMessageParser
                     "naturalHeight",
                     0,
                     MaximumImageDimension,
-                    out int naturalHeight))
+                    out int naturalHeight)
+                || !TryReadNumber(
+                    root,
+                    "renderedWidth",
+                    0,
+                    MaximumRenderedDimension,
+                    out double renderedWidth)
+                || !TryReadNumber(
+                    root,
+                    "renderedHeight",
+                    0,
+                    MaximumRenderedDimension,
+                    out double renderedHeight)
+                || !TryReadNumber(
+                    root,
+                    "viewportWidth",
+                    0,
+                    MaximumViewportDimension,
+                    out double viewportWidth)
+                || !TryReadNumber(
+                    root,
+                    "viewportHeight",
+                    0,
+                    MaximumViewportDimension,
+                    out double viewportHeight))
             {
                 return false;
             }
@@ -51,13 +76,21 @@ public sealed class PreviewInteractionMessageParser
             PreviewImageLoadState state;
             if (stateText == "loaded"
                 && naturalWidth > 0
-                && naturalHeight > 0)
+                && naturalHeight > 0
+                && renderedWidth > 0
+                && renderedHeight > 0
+                && viewportWidth > 0
+                && viewportHeight > 0)
             {
                 state = PreviewImageLoadState.Loaded;
             }
             else if (stateText == "error"
                 && naturalWidth == 0
-                && naturalHeight == 0)
+                && naturalHeight == 0
+                && renderedWidth == 0
+                && renderedHeight == 0
+                && viewportWidth == 0
+                && viewportHeight == 0)
             {
                 state = PreviewImageLoadState.Error;
             }
@@ -70,7 +103,11 @@ public sealed class PreviewInteractionMessageParser
                 state,
                 sourceRevision,
                 naturalWidth,
-                naturalHeight);
+                naturalHeight,
+                renderedWidth,
+                renderedHeight,
+                viewportWidth,
+                viewportHeight);
             return true;
         }
         catch (JsonException)
@@ -283,6 +320,53 @@ public sealed class PreviewInteractionMessageParser
                 && type == "copyCommand"
                 && TryReadString(root, "token", out string? token)
                 && string.Equals(token, expectedToken, StringComparison.Ordinal);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    public bool TryParseAuthoringCommand(
+        string json,
+        string expectedToken,
+        long expectedSourceRevision,
+        out PreviewAuthoringCommand command)
+    {
+        command = default;
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || root.EnumerateObject().Count() != 4
+                || !TryReadString(root, "type", out string? type)
+                || type != "authoringCommand"
+                || !TryReadString(root, "token", out string? token)
+                || !string.Equals(token, expectedToken, StringComparison.Ordinal)
+                || !root.TryGetProperty(
+                    "sourceRevision",
+                    out JsonElement revisionProperty)
+                || revisionProperty.ValueKind != JsonValueKind.Number
+                || !revisionProperty.TryGetInt64(out long sourceRevision)
+                || sourceRevision != expectedSourceRevision
+                || !TryReadString(root, "command", out string? commandText))
+            {
+                return false;
+            }
+
+            if (commandText == "delete")
+            {
+                command = PreviewAuthoringCommand.Delete;
+                return true;
+            }
+            if (commandText == "duplicate")
+            {
+                command = PreviewAuthoringCommand.Duplicate;
+                return true;
+            }
+
+            return false;
         }
         catch (JsonException)
         {

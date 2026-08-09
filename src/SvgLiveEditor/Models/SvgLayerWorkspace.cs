@@ -18,6 +18,8 @@ public sealed record SvgLayerItem(
     string OpaqueId,
     SvgElementNode Element,
     string Label,
+    string FriendlyName,
+    string TechnicalLabel,
     bool IsGroup,
     bool IsInspectionOnly,
     bool IsLocked,

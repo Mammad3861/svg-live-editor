@@ -31,6 +31,7 @@ public sealed class SvgVisualAuthoringCreationTests
             source,
             document,
             selection: null,
+            SvgCreateDestination.SvgRoot,
             kind,
             new SvgCanvasSize(400, 200));
 
@@ -69,6 +70,7 @@ public sealed class SvgVisualAuthoringCreationTests
             source,
             document,
             Find(document, "target"),
+            SvgCreateDestination.SelectedContext,
             SvgCreateElementKind.Rectangle,
             new SvgCanvasSize(300, 150));
         string candidate = result.Edit!.Apply(source);
@@ -82,7 +84,7 @@ public sealed class SvgVisualAuthoringCreationTests
     }
 
     [TestMethod]
-    public void Create_SelectedArtworkUsesItsParentAndDefinitionSelectionFallsBackToRoot()
+    public void Create_SelectedContextUsesArtworkParentAndExplicitRootIgnoresDefinitionSelection()
     {
         const string source =
             "<svg xmlns=\"http://www.w3.org/2000/svg\"><defs><path id=\"definition\"/></defs><g id=\"group\"><rect id=\"selected\"/></g></svg>";
@@ -92,6 +94,7 @@ public sealed class SvgVisualAuthoringCreationTests
             source,
             document,
             Find(document, "selected"),
+            SvgCreateDestination.SelectedContext,
             SvgCreateElementKind.Circle,
             new SvgCanvasSize(300, 150));
         SvgDocumentIndex siblingDocument = _indexService.Build(
@@ -104,11 +107,44 @@ public sealed class SvgVisualAuthoringCreationTests
             source,
             document,
             Find(document, "definition"),
+            SvgCreateDestination.SvgRoot,
             SvgCreateElementKind.Line,
             new SvgCanvasSize(300, 150));
         SvgDocumentIndex rootDocument = _indexService.Build(
             root.Edit!.Apply(source)).Document!;
         Assert.AreEqual("line", rootDocument.Roots.Single().Children.Last().Name);
+    }
+
+    [TestMethod]
+    public void Create_ExplicitRootAndSelectedGroupDestinationsNeverGuess()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><g id=\"target\"></g></svg>";
+        SvgDocumentIndex document = _indexService.Build(source).Document!;
+        SvgElementNode target = Find(document, "target");
+
+        SvgAuthoringEditResult root = _service.CreateEdit(
+            source,
+            document,
+            target,
+            SvgCreateDestination.SvgRoot,
+            SvgCreateElementKind.Circle,
+            new SvgCanvasSize(300, 150));
+        SvgDocumentIndex rootDocument = _indexService.Build(
+            root.Edit!.Apply(source)).Document!;
+        Assert.AreEqual("circle", rootDocument.Roots.Single().Children.Last().Name);
+        Assert.AreEqual(0, Find(rootDocument, "target").Children.Count);
+
+        SvgAuthoringEditResult missingContext = _service.CreateEdit(
+            source,
+            document,
+            selection: null,
+            SvgCreateDestination.SelectedContext,
+            SvgCreateElementKind.Circle,
+            new SvgCanvasSize(300, 150));
+        Assert.IsFalse(missingContext.IsSuccess);
+        Assert.IsNull(missingContext.Edit);
+        StringAssert.Contains(missingContext.ErrorMessage, "Select visual artwork or a group");
     }
 
     [TestMethod]
@@ -122,6 +158,7 @@ public sealed class SvgVisualAuthoringCreationTests
             source,
             document,
             Find(document, "target"),
+            SvgCreateDestination.SelectedContext,
             SvgCreateElementKind.Text,
             new SvgCanvasSize(300, 150));
         string candidate = result.Edit!.Apply(source);
@@ -142,6 +179,7 @@ public sealed class SvgVisualAuthoringCreationTests
             source,
             document,
             null,
+            SvgCreateDestination.SvgRoot,
             SvgCreateElementKind.Group,
             new SvgCanvasSize(300, 150));
         string candidate = result.Edit!.Apply(source);
@@ -178,6 +216,7 @@ public sealed class SvgVisualAuthoringCreationTests
             source,
             document,
             group,
+            SvgCreateDestination.SelectedContext,
             SvgCreateElementKind.Rectangle,
             new SvgCanvasSize(300, 150),
             element => ReferenceEquals(element, group));
@@ -185,6 +224,7 @@ public sealed class SvgVisualAuthoringCreationTests
             source.Replace("<g", "<g data-x=\"1\"", StringComparison.Ordinal),
             document,
             group,
+            SvgCreateDestination.SelectedContext,
             SvgCreateElementKind.Rectangle,
             new SvgCanvasSize(300, 150));
 
@@ -206,6 +246,7 @@ public sealed class SvgVisualAuthoringCreationTests
             source,
             document,
             null,
+            SvgCreateDestination.SvgRoot,
             (SvgCreateElementKind)999,
             new SvgCanvasSize(300, 150));
 
@@ -224,6 +265,7 @@ public sealed class SvgVisualAuthoringCreationTests
             source,
             document,
             null,
+            SvgCreateDestination.SvgRoot,
             SvgCreateElementKind.Group,
             new SvgCanvasSize(300, 150));
         TextDocument textDocument = new(source);

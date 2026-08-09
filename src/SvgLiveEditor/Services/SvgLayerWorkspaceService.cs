@@ -63,10 +63,17 @@ public sealed class SvgLayerWorkspaceService
                 element.Identity);
             bool inspectionOnly = !SvgLayerPolicy.IsGroup(element.Name)
                 && (visual is null || !visual.IsMovable);
+            string friendlyName = SvgLayerRenameService.DecodeFriendlyName(
+                element.FindAttribute(SvgLayerRenameService.AttributeName)?.RawValue);
+            string technicalLabel = CreateTechnicalLabel(element, source);
             SvgLayerItem item = new(
                 opaqueId,
                 element,
-                CreateLabel(element, source),
+                string.IsNullOrWhiteSpace(friendlyName)
+                    ? technicalLabel
+                    : Truncate(friendlyName),
+                friendlyName,
+                technicalLabel,
                 SvgLayerPolicy.IsGroup(element.Name),
                 inspectionOnly,
                 isLocked,
@@ -324,7 +331,7 @@ public sealed class SvgLayerWorkspaceService
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     }
 
-    private static string CreateLabel(
+    private static string CreateTechnicalLabel(
         SvgElementNode element,
         string source)
     {

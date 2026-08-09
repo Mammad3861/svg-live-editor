@@ -17,13 +17,17 @@ public sealed class PreviewInteractionTests
             {"type":"imageState",
              "token":"00112233445566778899AABBCCDDEEFF",
              "sourceRevision":7,"state":"loaded",
-             "naturalWidth":300,"naturalHeight":150}
+             "naturalWidth":300,"naturalHeight":150,
+             "renderedWidth":300,"renderedHeight":150,
+             "viewportWidth":640,"viewportHeight":480}
             """;
         const string error = """
             {"type":"imageState",
              "token":"00112233445566778899AABBCCDDEEFF",
              "sourceRevision":7,"state":"error",
-             "naturalWidth":0,"naturalHeight":0}
+             "naturalWidth":0,"naturalHeight":0,
+             "renderedWidth":0,"renderedHeight":0,
+             "viewportWidth":0,"viewportHeight":0}
             """;
 
         Assert.IsTrue(_parser.TryParseImageLoadState(
@@ -33,6 +37,7 @@ public sealed class PreviewInteractionTests
             out PreviewImageLoadMessage message));
         Assert.AreEqual(PreviewImageLoadState.Loaded, message.State);
         Assert.AreEqual(300, message.NaturalWidth);
+        Assert.AreEqual(300, message.RenderedWidth);
         Assert.IsTrue(_parser.TryParseImageLoadState(
             error,
             BridgeToken,
@@ -52,6 +57,11 @@ public sealed class PreviewInteractionTests
             out _));
         Assert.IsFalse(_parser.TryParseImageLoadState(
             loaded.Replace("\"naturalWidth\":300", "\"naturalWidth\":0"),
+            BridgeToken,
+            expectedSourceRevision: 7,
+            out _));
+        Assert.IsFalse(_parser.TryParseImageLoadState(
+            loaded.Replace("\"renderedWidth\":300", "\"renderedWidth\":0"),
             BridgeToken,
             expectedSourceRevision: 7,
             out _));
@@ -285,6 +295,56 @@ public sealed class PreviewInteractionTests
         Assert.IsFalse(_parser.IsCopyCommand(
             """{"type":"navigate","token":"00112233445566778899AABBCCDDEEFF"}""",
             BridgeToken));
+    }
+
+    [TestMethod]
+    public void AuthoringCommand_RequiresExactTokenRevisionSchemaAndKnownCommand()
+    {
+        const string delete =
+            """
+            {"type":"authoringCommand",
+             "token":"00112233445566778899AABBCCDDEEFF",
+             "sourceRevision":7,"command":"delete"}
+            """;
+        const string duplicate =
+            """
+            {"type":"authoringCommand",
+             "token":"00112233445566778899AABBCCDDEEFF",
+             "sourceRevision":7,"command":"duplicate"}
+            """;
+
+        Assert.IsTrue(_parser.TryParseAuthoringCommand(
+            delete,
+            BridgeToken,
+            expectedSourceRevision: 7,
+            out PreviewAuthoringCommand deleteCommand));
+        Assert.AreEqual(PreviewAuthoringCommand.Delete, deleteCommand);
+        Assert.IsTrue(_parser.TryParseAuthoringCommand(
+            duplicate,
+            BridgeToken,
+            expectedSourceRevision: 7,
+            out PreviewAuthoringCommand duplicateCommand));
+        Assert.AreEqual(PreviewAuthoringCommand.Duplicate, duplicateCommand);
+        Assert.IsFalse(_parser.TryParseAuthoringCommand(
+            delete.Replace("\"sourceRevision\":7", "\"sourceRevision\":6"),
+            BridgeToken,
+            expectedSourceRevision: 7,
+            out _));
+        Assert.IsFalse(_parser.TryParseAuthoringCommand(
+            delete.Replace(BridgeToken, "FFEEDDCCBBAA99887766554433221100"),
+            BridgeToken,
+            expectedSourceRevision: 7,
+            out _));
+        Assert.IsFalse(_parser.TryParseAuthoringCommand(
+            delete.Replace("\"delete\"", "\"removeAll\""),
+            BridgeToken,
+            expectedSourceRevision: 7,
+            out _));
+        Assert.IsFalse(_parser.TryParseAuthoringCommand(
+            delete.Replace("}", ",\"extra\":true}"),
+            BridgeToken,
+            expectedSourceRevision: 7,
+            out _));
     }
 
     [TestMethod]

@@ -23,9 +23,7 @@ This roadmap records product direction. Post-v1 entries are ideas, not promises,
 - Visibility and lock controls.
 - Address the same-parent layer limitation without unsafe implicit reparenting by exposing group boundaries.
 
-## Pre-v1 core work
-
-### v0.9.0 — Visual Authoring (current standalone release)
+### v0.9.0 — Visual Authoring (shipped standalone release)
 
 - Insert bounded basic SVG elements and empty groups.
 - Duplicate exact subtrees with safe deterministic ID/reference remapping.
@@ -33,7 +31,17 @@ This roadmap records product direction. Post-v1 entries are ideas, not promises,
 - Explicit conservative move into, out of, and between existing groups.
 - Preserve one-operation Undo, source selection, expansion state, Properties, and Preview synchronization.
 
-### v0.10.0 — Visual Composition (planned)
+## Pre-v1 core work
+
+### v0.10.0 — Visual Composition
+
+Current Stage 0 authoring stabilization:
+
+- Keep a valid Preview visible and latest-wins after creation, group reorganization, Undo/Redo, and invalid-to-valid recovery.
+- Make element/group creation destination explicit: SVG root or the selected group/sibling context.
+- Provide accessible native Layers disclosure, source-owned Unicode friendly layer names separate from technical SVG IDs, and focus-aware Delete/Backspace behavior.
+
+Planned Stage 1 scope (not implemented in Stage 0):
 
 - Multi-selection.
 - Moving multiple selected elements.
@@ -59,34 +67,39 @@ These entries are optional product-direction ideas, not promises or deadlines.
    - Bring selection, handles, and interaction polish closer to modern Microsoft/Adobe-class desktop UX.
    - Richer hover, selection, move, and resize states.
    - Optional future appearance customization.
-2. **Visual color editing**
+2. **Real-time WYSIWYG manipulation**
+   - Make the actual artwork follow the pointer smoothly during Move and Resize instead of moving only the selection or bounding box until release.
+   - Keep source authoritative and commit it once on pointer release; Escape cancels and each completed gesture creates one logical Undo operation.
+   - Use a low-latency presentation path without rebuilding or navigating the full Preview for every pointer movement.
+   - Target modern Figma/Adobe-style direct-manipulation quality after the initial v1 release, unless later architecture makes it naturally inexpensive sooner.
+3. **Visual color editing**
    - Fill/stroke color swatches and a visual color picker.
    - HEX, RGB, and other useful representations.
    - Alpha and recent colors.
    - Safely preserve non-color SVG paint values such as `none`, `currentColor`, and `url(#gradient)`.
-3. **Expanded Templates**
+4. **Expanded Templates**
    - A substantially larger template library with more categories and visual variety.
    - Improved thumbnails and discovery.
    - Personal/user templates and future template extensibility.
-4. **Keyboard customization**
+5. **Keyboard customization**
    - Shortcut reference UI, customizable shortcuts/keymap, and conflict detection.
-5. **Appearance and Theme system**
+6. **Appearance and Theme system**
    - System (default), Light, and Dark modes.
    - System mode follows the Windows appearance preference; users may override it with Light or Dark.
    - Persist the choice per user and eventually react dynamically to Windows theme changes.
    - Consistently theme WPF chrome, menus, dialogs, AvalonEdit, Inspector, Properties, and other app-owned UI.
    - Never modify SVG artwork merely because the application theme changes.
-6. **Rulers, Guides & Smart Placement**
+7. **Rulers, Guides & Smart Placement**
    - Horizontal and vertical rulers with document-coordinate display.
    - Draggable guides with guide locking and hiding.
    - Snap indicators and optional smart snapping that can be disabled.
    - Smart alignment guides, equal-spacing suggestions, and center/edge alignment suggestions.
    - Placement feedback similar to modern Office, Figma, and design applications.
    - Visual property and position hints where useful, without hidden source rewrites.
-7. **Advanced vector editing**
+8. **Advanced vector editing**
    - Path-node editing, advanced gradients, masks/effects editing, and richer transforms.
-8. **Advanced exports and distribution**
+9. **Advanced exports and distribution**
    - Additional carefully audited export formats and distribution options after the stable baseline.
-9. **Future integrations**
+10. **Future integrations**
    - External design-tool workflows and advanced AI-assisted workflows.
 
