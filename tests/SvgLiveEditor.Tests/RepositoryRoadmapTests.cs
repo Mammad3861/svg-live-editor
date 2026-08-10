@@ -43,17 +43,20 @@ public sealed class RepositoryRoadmapTests
             "safe deterministic ID/reference remapping",
             "Explicit conservative move into, out of, and between existing groups",
             "v0.10.0 — Visual Composition",
-            "Current Stage 0 authoring stabilization",
+            "Stage 0 authoring stabilization (completed)",
             "valid Preview visible and latest-wins",
             "explicit: SVG root or the selected group/sibling context",
             "accessible native Layers disclosure",
-            "Planned Stage 1 scope (not implemented in Stage 0)",
-            "Multi-selection",
-            "Moving multiple selected elements",
-            "Group and Ungroup commands",
-            "Alignment and distribution",
-            "Basic snapping",
+            "Stage 1 multi-selection and layout tools (implemented)",
+            "Bounded Preview/Layers multi-selection",
+            "Atomic movement and nudge",
+            "Conservative same-parent contiguous Group",
+            "Six visual-bounds alignment commands",
+            "Optional basic sibling/object and canvas-center snapping",
+            "Later v0.10 polish (not part of Stage 1)",
             "safe basic path bounding-box resize",
+            "partially positioned or resized outside the root SVG viewBox/canvas",
+            "360-degree rotation",
             "v1.0.0 — Stable Release / stabilization",
             "Reliability and data-loss review",
             "Persistence and recovery validation",
@@ -105,17 +108,20 @@ public sealed class RepositoryRoadmapTests
             "بازنویسی امن و قطعی ID/reference",
             "انتقال صریح و محافظه‌کارانه به داخل، خارج و میان گروه‌های موجود",
             "v0.10.0 — Visual Composition",
-            "مرحلهٔ ۰ جاری برای پایدارسازی authoring",
+            "مرحلهٔ ۰ برای پایدارسازی authoring (تکمیل‌شده)",
             "Preview معتبر و latest-wins",
             "ریشهٔ SVG یا گروه/زمینهٔ هم‌سطح انتخاب‌شده",
             "disclosure بومی و دسترس‌پذیر در Layers",
-            "محدودهٔ برنامه‌ریزی‌شدهٔ مرحلهٔ ۱ (در مرحلهٔ ۰ پیاده‌سازی نشده است)",
-            "انتخاب چندگانه",
-            "جابه‌جایی چند عنصر انتخاب‌شده",
-            "فرمان‌های Group و Ungroup",
-            "هم‌ترازی و توزیع",
-            "snapping پایه",
+            "مرحلهٔ ۱ انتخاب چندگانه و ابزارهای layout (پیاده‌سازی‌شده)",
+            "انتخاب چندگانهٔ محدود در Preview/Layers",
+            "حرکت و Nudge اتمی",
+            "Group محافظه‌کارانه برای siblingهای پیوستهٔ هم‌والد",
+            "شش فرمان هم‌ترازی بر پایهٔ bounds دیداری",
+            "snapping پایه و اختیاری به sibling/شیء و مرکز canvas",
+            "پرداخت بعدی v0.10 (خارج از مرحلهٔ ۱)",
             "bounding-box برای path",
+            "بخشی بیرون viewBox/canvas ریشه",
+            "rotation کامل ۳۶۰ درجه",
             "v1.0.0 — انتشار پایدار / پایدارسازی",
             "خطر از دست رفتن داده",
             "اعتبارسنجی ماندگاری و بازیابی",
@@ -169,14 +175,16 @@ public sealed class RepositoryRoadmapTests
 
         foreach (string phrase in new[]
                  {
-                     "Version 0.10.0 Stage 0 stabilizes the complete v0.9.0 Visual Authoring scope",
-                     "latest-wins across rapid authoring/Undo/Redo changes",
-                     "explicit SVG-root or selected-context target",
-                     "Unicode friendly layer names",
-                     "before, after, and inside-group feedback",
+                     "Version 0.10.0 Stage 1 implements bounded multi-selection",
+                     "atomic multi-object movement/nudge",
+                     "conservative Group/Ungroup",
+                     "equal-gap distribution",
+                     "optional object/canvas-center snapping",
+                     "within 4 CSS pixels",
+                     "Use `Ctrl`+left-drag",
+                     "explicit before/after/inside cross-parent operation",
                      "session-only",
-                     "multi-selection, moving multiple selected elements, Group/Ungroup",
-                     "v0.10.0 Visual Composition",
+                     "Stage 0 latest-wins mounted preview",
                      "Unsafe or ambiguous operations fail closed"
                  })
         {
@@ -184,24 +192,31 @@ public sealed class RepositoryRoadmapTests
         }
         foreach (string phrase in new[]
                  {
-                     "مرحلهٔ ۰ نسخهٔ ۰٫۱۰٫۰ محدودهٔ کامل Visual Authoring در v0.9.0 را پایدار می‌کند",
-                     "latest-wins دارای تأیید ارائهٔ تصویر",
-                     "مقصد صریح ریشهٔ SVG یا زمینهٔ انتخاب‌شده",
-                     "نام دوستانهٔ یونیکد",
-                     "بازخورد جداگانهٔ before، after و داخل گروه",
+                     "مرحلهٔ ۱ نسخهٔ ۰٫۱۰٫۰ انتخاب چندگانهٔ محدود",
+                     "حرکت/Nudge اتمی چند شیء",
+                     "Group/Ungroup محافظه‌کارانه",
+                     "توزیع با فاصلهٔ برابر",
+                     "snapping اختیاری شیء/مرکز canvas",
+                     "آستانهٔ ۴ پیکسل CSS",
+                     "با `Ctrl` همراه کشیدن چپ",
+                     "مسیر صریح before/after/inside برای تغییر والد",
                      "قفل فقط در نشست جاری",
-                     "انتخاب چندگانه، حرکت چند عنصر انتخاب‌شده، Group/Ungroup",
-                     "v0.10.0 Visual Composition",
+                     "پایهٔ latest-wins و source-authoritative مرحلهٔ ۰",
                      "عملیات ناامن یا مبهم fail closed است"
                  })
         {
             StringAssert.Contains(persian, phrase);
         }
         StringAssert.Contains(security, "Layers and groups boundary");
+        StringAssert.Contains(
+            security,
+            "Direct PNG drag requires explicit `Ctrl`+primary drag");
         StringAssert.Contains(security, "Creation accepts only the fixed app-owned");
         StringAssert.Contains(security, "requires an explicit SVG-root or selected-context destination");
         StringAssert.Contains(security, "Friendly layer rename edits only an optional bounded `data-name` attribute");
-        StringAssert.Contains(security, "Layers drag/drop uses explicit before, after, or inside-group placement");
+        StringAssert.Contains(
+            security,
+            "Layers drag/drop remains the only explicit before/after/inside cross-parent path");
         StringAssert.Contains(security, "never serialized");
     }
 

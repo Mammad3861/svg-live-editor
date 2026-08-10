@@ -152,7 +152,12 @@ public readonly record struct PreviewImageMetrics(
 
 public readonly record struct SvgMappedPreviewPoint(
     SvgVisualPoint Point,
-    double HitTolerance);
+    double HitTolerance)
+{
+    public double SvgUnitsPerCssPixelX { get; init; }
+
+    public double SvgUnitsPerCssPixelY { get; init; }
+}
 
 public enum PreviewVisualPointerPhase
 {
@@ -207,7 +212,8 @@ public readonly record struct PreviewVisualSelection(
     double DeltaX,
     double DeltaY,
     string SelectionId,
-    IReadOnlyList<SvgResizeHandleDefinition> ResizeHandles);
+    IReadOnlyList<SvgResizeHandleDefinition> ResizeHandles,
+    bool IsPrimary = true);
 
 public readonly record struct SvgResizeHandleDefinition(
     SvgResizeHandle Handle,

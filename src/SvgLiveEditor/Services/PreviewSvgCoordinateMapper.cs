@@ -39,10 +39,12 @@ public sealed class PreviewSvgCoordinateMapper
         double userX;
         double userY;
         double tolerance;
+        double unitsPerPixelX;
+        double unitsPerPixelY;
         if (aspect.IsNone)
         {
-            double unitsPerPixelX = viewport.Width / image.Width;
-            double unitsPerPixelY = viewport.Height / image.Height;
+            unitsPerPixelX = viewport.Width / image.Width;
+            unitsPerPixelY = viewport.Height / image.Height;
             userX = viewport.MinX + (localX * unitsPerPixelX);
             userY = viewport.MinY + (localY * unitsPerPixelY);
             tolerance = HitTolerancePixels
@@ -76,6 +78,8 @@ public sealed class PreviewSvgCoordinateMapper
             userX = viewport.MinX + ((localX - offsetX) / scale);
             userY = viewport.MinY + ((localY - offsetY) / scale);
             tolerance = HitTolerancePixels / scale;
+            unitsPerPixelX = 1 / scale;
+            unitsPerPixelY = 1 / scale;
         }
 
         if (!double.IsFinite(userX)
@@ -87,7 +91,11 @@ public sealed class PreviewSvgCoordinateMapper
 
         mappedPoint = new SvgMappedPreviewPoint(
             new SvgVisualPoint(userX, userY),
-            tolerance);
+            tolerance)
+        {
+            SvgUnitsPerCssPixelX = unitsPerPixelX,
+            SvgUnitsPerCssPixelY = unitsPerPixelY
+        };
         return true;
     }
 

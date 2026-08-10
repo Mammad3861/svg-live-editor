@@ -117,6 +117,68 @@ public sealed class InspectorSelectionCoordinationTests
     }
 
     [TestMethod]
+    public void PreviewNavigationWithDuplicateAuthoredIds_SelectsExactStructuralSpan()
+    {
+        const string duplicateIds =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect id=\"same\" x=\"1\"/><rect id=\"same\" x=\"2\"/></svg>";
+        CoordinationHarness harness = new(duplicateIds);
+        SvgElementNode second = harness.Inspector.DocumentIndex!.Elements
+            .Where(element => element.Id == "same")
+            .OrderBy(element => element.StartTagSpan.Start)
+            .Last();
+
+        harness.Inspector.SelectNode(
+            second,
+            InspectorSelectionOrigin.PreviewNavigation);
+        harness.RaiseTreeSelectionChanged();
+
+        Assert.AreEqual(second.StartTagSpan.Start, harness.SelectionStart);
+        Assert.AreEqual(second.StartTagSpan.Length, harness.SelectionLength);
+        StringAssert.Contains(
+            harness.Document.GetText(
+                harness.SelectionStart,
+                harness.SelectionLength),
+            "x=\"2\"");
+    }
+
+    [TestMethod]
+    public void PreviewMultiSelectionPrimaryChange_NavigatesOnlyNewPrimary()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect id=\"a\"/><circle id=\"b\"/></svg>";
+        CoordinationHarness harness = new(source);
+        SvgElementNode first = harness.Inspector.DocumentIndex!.Elements
+            .Single(element => element.Id == "a");
+        SvgElementNode second = harness.Inspector.DocumentIndex!.Elements
+            .Single(element => element.Id == "b");
+        SvgMultiSelectionService selections = new();
+        SvgMultiSelectionState state = selections.Replace(
+            harness.SourceRevision,
+            first.Identity);
+        SvgMultiSelectionChange changed = selections.Toggle(
+            state,
+            harness.SourceRevision,
+            second.Identity);
+
+        Assert.IsTrue(changed.IsSuccess);
+        Assert.AreEqual(2, changed.State.Identities.Count);
+        Assert.AreEqual(second.Identity, changed.State.Primary);
+        Assert.IsNotNull(changed.State.Primary);
+        harness.Inspector.SelectNode(
+            harness.Inspector.DocumentIndex.FindBestMatch(
+                changed.State.Primary!),
+            InspectorSelectionOrigin.PreviewNavigation);
+        harness.RaiseTreeSelectionChanged();
+
+        Assert.AreEqual(second.StartTagSpan.Start, harness.SelectionStart);
+        StringAssert.StartsWith(
+            harness.Document.GetText(
+                harness.SelectionStart,
+                harness.SelectionLength),
+            "<circle");
+    }
+
+    [TestMethod]
     public void ContinuedPersianTypingAfterInspectorRestore_InsertsAtCaret()
     {
         CoordinationHarness harness = new(Source);

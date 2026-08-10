@@ -17,29 +17,77 @@ public sealed class SvgVisualAuthoringUxSurfaceTests
         Assert.IsFalse(xaml.Contains("Content=\"+\"", StringComparison.Ordinal));
         StringAssert.Contains(xaml, "AutomationProperties.Name=\"Layers, frontmost first\"");
         StringAssert.Contains(xaml, "AutomationProperties.Name=\"SVG element tree\"");
-        Assert.IsTrue(
+        StringAssert.Contains(
+            xaml,
+            "<Setter Property=\"AutomationProperties.Name\" Value=\"{Binding AutomationName}\" />");
+        StringAssert.Contains(
+            xaml,
+            "<Setter Property=\"AutomationProperties.Name\" Value=\"{Binding Label}\" />");
+        Assert.AreEqual(
+            2,
             xaml.Split(
-                "AutomationProperties.Name\" Value=\"{Binding Label}\"",
-                StringSplitOptions.None).Length >= 3);
-        StringAssert.Contains(xaml, "ContextMenu=\"{StaticResource InspectorAuthoringContextMenu}\"");
-        foreach (string tag in new[]
-        {
-            "Create:Root:Rectangle",
-            "Create:Root:Circle",
-            "Create:Root:Ellipse",
-            "Create:Root:Line",
-            "Create:Root:Text",
-            "Create:Root:Group",
-            "Create:Context:Rectangle",
-            "Create:Context:Group",
-            "Duplicate",
-            "Delete",
-            "Rename",
-            "MoveToRoot"
-        })
-        {
-            StringAssert.Contains(xaml, $"Tag=\"{tag}\"");
-        }
+                "ContextMenu=\"{StaticResource InspectorAuthoringContextMenu}\"",
+                StringSplitOptions.None).Length - 1);
+
+        string inspectorMenu = ExtractSection(
+            xaml,
+            "<ContextMenu x:Key=\"InspectorAuthoringContextMenu\"",
+            "</ContextMenu>");
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                "CreateDestination:Root",
+                "Create:Root:Rectangle",
+                "Create:Root:Circle",
+                "Create:Root:Ellipse",
+                "Create:Root:Line",
+                "Create:Root:Text",
+                "Create:Root:Group",
+                "CreateDestination:Context",
+                "Create:Context:Rectangle",
+                "Create:Context:Circle",
+                "Create:Context:Ellipse",
+                "Create:Context:Line",
+                "Create:Context:Text",
+                "Create:Context:Group",
+                "Rename",
+                "Duplicate",
+                "Delete",
+                "MoveToRoot",
+                "Group",
+                "Ungroup",
+                "BringToFront",
+                "BringForward",
+                "SendBackward",
+                "SendToBack"
+            },
+            ReadTags(inspectorMenu));
+
+        string addMenu = ExtractSection(
+            xaml,
+            "<ContextMenu x:Key=\"AddElementContextMenu\"",
+            "</ContextMenu>");
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                "CreateDestination:Root",
+                "Create:Root:Rectangle",
+                "Create:Root:Circle",
+                "Create:Root:Ellipse",
+                "Create:Root:Line",
+                "Create:Root:Text",
+                "Create:Root:Group",
+                "CreateDestination:Context",
+                "Create:Context:Rectangle",
+                "Create:Context:Circle",
+                "Create:Context:Ellipse",
+                "Create:Context:Line",
+                "Create:Context:Text",
+                "Create:Context:Group"
+            },
+            ReadTags(addMenu));
+        Assert.IsFalse(inspectorMenu.Contains("Tag=\"Align", StringComparison.Ordinal));
+        Assert.IsFalse(inspectorMenu.Contains("Tag=\"Distribute", StringComparison.Ordinal));
         Assert.IsFalse(xaml.Contains("Create:Path", StringComparison.Ordinal));
         StringAssert.Contains(xaml, "PreviewMouseRightButtonDown=\"OnInspectorTreePreviewMouseRightButtonDown\"");
         StringAssert.Contains(xaml, "AutomationProperties.HelpText=\"Choose the SVG root or selected safe layer context");
@@ -130,4 +178,11 @@ public sealed class SvgVisualAuthoringUxSurfaceTests
         Assert.IsTrue(end > start);
         return source[start..end];
     }
+
+    private static string[] ReadTags(string xaml) =>
+        System.Text.RegularExpressions.Regex.Matches(
+                xaml,
+                "Tag=\"([^\"]+)\"")
+            .Select(match => match.Groups[1].Value)
+            .ToArray();
 }

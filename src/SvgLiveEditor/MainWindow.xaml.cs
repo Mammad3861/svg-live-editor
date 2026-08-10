@@ -156,6 +156,7 @@ public partial class MainWindow : Window
         _userPreferences = _userPreferencesService.Load();
         _previewZoomState = _userPreferences.PreviewZoom;
         ApplyWordWrap(_userPreferences.WordWrap, persist: false);
+        SnapToObjectsMenuItem.IsChecked = _userPreferences.SnapToObjects;
         ReopenLastDocumentMenuItem.IsChecked =
             _userPreferences.ReopenLastDocumentOnStartup;
         InitializeDocumentPersistence();
@@ -471,9 +472,17 @@ public partial class MainWindow : Window
             {
                 DuplicateSelectedElement();
             }
-            else
+            else if (authoringCommand == PreviewAuthoringCommand.Delete)
             {
                 DeleteSelectedElement();
+            }
+            else if (authoringCommand == PreviewAuthoringCommand.Group)
+            {
+                GroupSelectedElements();
+            }
+            else
+            {
+                UngroupSelectedGroup();
             }
             return;
         }
@@ -1954,6 +1963,12 @@ public partial class MainWindow : Window
         KeyEventArgs e)
     {
         Key pressedKey = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (TryHandlePreviewNudgeShortcut(Keyboard.Modifiers, pressedKey)
+            || TryHandleCompositionShortcut(Keyboard.Modifiers, pressedKey))
+        {
+            e.Handled = true;
+            return;
+        }
         if (Keyboard.Modifiers == ModifierKeys.Control
             && pressedKey == Key.Z)
         {
@@ -2094,6 +2109,20 @@ public partial class MainWindow : Window
         ApplyWordWrap(WordWrapMenuItem.IsChecked, persist: true);
     }
 
+    private void OnSnapToObjectsClick(object sender, RoutedEventArgs e)
+    {
+        _userPreferences = _userPreferences with
+        {
+            SnapToObjects = SnapToObjectsMenuItem.IsChecked
+        };
+        _userPreferencesService.TrySave(_userPreferences);
+        CancelVisualEditGesture();
+        _viewModel.SetOperationStatus(
+            _userPreferences.SnapToObjects
+                ? "Snap to objects enabled"
+                : "Snap to objects disabled");
+    }
+
     private void OnReopenLastDocumentClick(
         object sender,
         RoutedEventArgs e)
@@ -2140,7 +2169,9 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
-        if (TryHandleAuthoringShortcut(modifiers, pressedKey))
+        if (TryHandlePreviewNudgeShortcut(modifiers, pressedKey)
+            || TryHandleCompositionShortcut(modifiers, pressedKey)
+            || TryHandleAuthoringShortcut(modifiers, pressedKey))
         {
             e.Handled = true;
             return;
@@ -2273,6 +2304,29 @@ public partial class MainWindow : Window
             OnCloseFindClick(sender, new RoutedEventArgs());
             e.Handled = true;
         }
+    }
+
+    private bool TryHandlePreviewNudgeShortcut(
+        ModifierKeys modifiers,
+        Key pressedKey)
+    {
+        if (!PreviewVisualNudgeFocusPolicy.TryResolveShortcut(
+                modifiers,
+                pressedKey,
+                PreviewWebView.IsKeyboardFocusWithin,
+                SourceEditor.IsKeyboardFocusWithin,
+                IsEditableControlFocused(),
+                _isPanModeEnabled,
+                _isEditorTextCompositionActive
+                    || _isInspectorTextCompositionActive,
+                _sourceRevisionTracker.Current,
+                out PreviewVisualNudgeRequest request))
+        {
+            return false;
+        }
+
+        HandlePreviewVisualNudge(request);
+        return true;
     }
 
     private bool CanUseHostPanShortcut()

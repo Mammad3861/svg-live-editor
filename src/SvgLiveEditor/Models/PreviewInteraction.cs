@@ -28,7 +28,9 @@ public readonly record struct PreviewViewportPosition(double CenterX, double Cen
 public enum PreviewAuthoringCommand
 {
     Duplicate,
-    Delete
+    Delete,
+    Group,
+    Ungroup
 }
 
 public enum PreviewImageLoadState

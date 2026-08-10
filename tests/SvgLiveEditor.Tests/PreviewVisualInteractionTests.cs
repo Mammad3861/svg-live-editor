@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Windows.Input;
 using SvgLiveEditor.Models;
 using SvgLiveEditor.Services;
 
@@ -176,11 +177,16 @@ public sealed class PreviewVisualInteractionTests
         using JsonDocument document = JsonDocument.Parse(json);
 
         Assert.AreEqual(
-            13,
+            5,
             document.RootElement.EnumerateObject().Count());
+        JsonElement selections =
+            document.RootElement.GetProperty("selections");
+        Assert.AreEqual(1, selections.GetArrayLength());
+        JsonElement selection = selections[0];
+        Assert.AreEqual(10, selection.EnumerateObject().Count());
         Assert.AreEqual(
             "circle",
-            document.RootElement.GetProperty("kind").GetString());
+            selection.GetProperty("kind").GetString());
         Assert.AreEqual(
             7,
             document.RootElement.GetProperty("sourceRevision").GetInt64());
@@ -225,7 +231,8 @@ public sealed class PreviewVisualInteractionTests
 
         Assert.AreEqual(
             "rect",
-            document.RootElement.GetProperty("kind").GetString());
+            document.RootElement.GetProperty("selections")[0]
+                .GetProperty("kind").GetString());
     }
 
     [TestMethod]
@@ -297,16 +304,16 @@ public sealed class PreviewVisualInteractionTests
             StringComparison.Ordinal));
 
         int panPriority = html.IndexOf(
-            "spaceHeld || event.ctrlKey || panModeEnabled",
+            "spaceHeld || panModeEnabled",
             StringComparison.Ordinal);
         int resizeChoice = html.IndexOf(
             "return 'resize';",
             StringComparison.Ordinal);
-        int altDrag = html.IndexOf(
+        int outboundDrag = html.IndexOf(
             "return 'drag';",
             StringComparison.Ordinal);
         Assert.IsTrue(panPriority >= 0 && panPriority < resizeChoice);
-        Assert.IsTrue(altDrag >= 0 && altDrag < resizeChoice);
+        Assert.IsTrue(outboundDrag >= 0 && outboundDrag < resizeChoice);
     }
 
     [TestMethod]
@@ -364,6 +371,56 @@ public sealed class PreviewVisualInteractionTests
     }
 
     [TestMethod]
+    public void PreviewFocusedWpfArrowRouteResolvesNormalAndLargeNudgesOnly()
+    {
+        Assert.IsTrue(PreviewVisualNudgeFocusPolicy.TryResolveShortcut(
+            ModifierKeys.None,
+            Key.Left,
+            previewHasKeyboardFocus: true,
+            sourceEditorHasKeyboardFocus: false,
+            editableControlHasKeyboardFocus: false,
+            isPanModeEnabled: false,
+            isTextCompositionActive: false,
+            sourceRevision: 12,
+            out PreviewVisualNudgeRequest normal));
+        Assert.AreEqual(12, normal.SourceRevision);
+        Assert.AreEqual(-1, normal.DeltaX);
+        Assert.AreEqual(0, normal.DeltaY);
+
+        Assert.IsTrue(PreviewVisualNudgeFocusPolicy.TryResolveShortcut(
+            ModifierKeys.Shift,
+            Key.Down,
+            previewHasKeyboardFocus: true,
+            sourceEditorHasKeyboardFocus: false,
+            editableControlHasKeyboardFocus: false,
+            isPanModeEnabled: false,
+            isTextCompositionActive: false,
+            sourceRevision: 12,
+            out PreviewVisualNudgeRequest large));
+        Assert.AreEqual(10, large.DeltaY);
+
+        Assert.IsFalse(TryResolveNudge(
+            ModifierKeys.Control,
+            Key.Right));
+        Assert.IsFalse(TryResolveNudge(
+            ModifierKeys.None,
+            Key.Right,
+            previewFocus: false));
+        Assert.IsFalse(TryResolveNudge(
+            ModifierKeys.None,
+            Key.Right,
+            editableFocus: true));
+        Assert.IsFalse(TryResolveNudge(
+            ModifierKeys.None,
+            Key.Right,
+            panMode: true));
+        Assert.IsFalse(TryResolveNudge(
+            ModifierKeys.None,
+            Key.Right,
+            ime: true));
+    }
+
+    [TestMethod]
     public void PreviewNavigationOriginCanNavigateOnlyCurrentSourceSpan()
     {
         InspectorSelectionCoordinator coordinator = new();
@@ -388,6 +445,24 @@ public sealed class PreviewVisualInteractionTests
             documentLength: 100,
             out _));
     }
+
+    private static bool TryResolveNudge(
+        ModifierKeys modifiers,
+        Key key,
+        bool previewFocus = true,
+        bool editableFocus = false,
+        bool panMode = false,
+        bool ime = false) =>
+        PreviewVisualNudgeFocusPolicy.TryResolveShortcut(
+            modifiers,
+            key,
+            previewFocus,
+            sourceEditorHasKeyboardFocus: editableFocus,
+            editableControlHasKeyboardFocus: editableFocus,
+            panMode,
+            ime,
+            sourceRevision: 1,
+            out _);
 
     [TestMethod]
     public void PreviewShellKeepsBase64IsolationAndExactHashCsp()
@@ -423,7 +498,9 @@ public sealed class PreviewVisualInteractionTests
             "class=\"selection-overlay\"");
         StringAssert.Contains(
             html,
-            "Object.keys(message).length === 13");
+            "Object.keys(message).length === 5");
+        StringAssert.Contains(html, "message.selections.length <= 128");
+        StringAssert.Contains(html, "message.guides.length <= 2");
         StringAssert.Contains(html, "visualResizePointer");
         StringAssert.Contains(html, "selectionId");
         StringAssert.Contains(html, "resize-handle-layer");

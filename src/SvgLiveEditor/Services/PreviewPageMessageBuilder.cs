@@ -151,56 +151,79 @@ public sealed class PreviewPageMessageBuilder
     public string BuildVisualSelectionMessage(
         string bridgeToken,
         long sourceRevision,
-        PreviewVisualSelection? selection)
+        PreviewVisualSelection? selection) =>
+        BuildVisualOverlayMessage(
+            bridgeToken,
+            sourceRevision,
+            selection is null ? [] : [selection.Value],
+            []);
+
+    public string BuildVisualOverlayMessage(
+        string bridgeToken,
+        long sourceRevision,
+        IReadOnlyList<PreviewVisualSelection> selections,
+        IReadOnlyList<PreviewAlignmentGuide> guides)
     {
         ValidateBridgeToken(bridgeToken);
-        if (sourceRevision < 0)
+        ArgumentNullException.ThrowIfNull(selections);
+        ArgumentNullException.ThrowIfNull(guides);
+        if (sourceRevision is < 0 or > MaximumJavaScriptSafeInteger
+            || selections.Count > SvgMultiSelectionService.MaximumSelectionCount
+            || selections.Select(item => item.SelectionId).Distinct().Count()
+                != selections.Count
+            || guides.Count > 2
+            || (selections.Count == 0 && guides.Count > 0)
+            || guides.Select(item => item.Orientation).Distinct().Count()
+                != guides.Count)
         {
             throw new ArgumentOutOfRangeException(nameof(sourceRevision));
         }
-
-        PreviewVisualSelection value = selection ?? new PreviewVisualSelection(
-            SvgVisualElementKind.Rect,
-            new SvgVisualShapeGeometry(
-                SvgVisualElementKind.Rect,
-                0,
-                0,
-                0,
-                0),
-            0,
-            0,
-            string.Empty,
-            []);
-        ValidateVisualCoordinate(value.Geometry.X1, nameof(selection));
-        ValidateVisualCoordinate(value.Geometry.Y1, nameof(selection));
-        ValidateVisualCoordinate(value.Geometry.X2, nameof(selection));
-        ValidateVisualCoordinate(value.Geometry.Y2, nameof(selection));
-        ValidateVisualCoordinate(value.DeltaX, nameof(selection));
-        ValidateVisualCoordinate(value.DeltaY, nameof(selection));
-        ArgumentNullException.ThrowIfNull(value.ResizeHandles);
-        if (selection is not null)
+        if (selections.Count > 0
+            && selections.Count(item => item.IsPrimary) != 1)
         {
-            ValidateHexToken(value.SelectionId, nameof(selection));
+            throw new ArgumentOutOfRangeException(nameof(selections));
         }
-        else if (value.SelectionId.Length != 0
-            || value.ResizeHandles.Count != 0)
+        foreach (PreviewVisualSelection value in selections)
         {
-            throw new ArgumentOutOfRangeException(nameof(selection));
+            ValidateVisualCoordinate(value.Geometry.X1, nameof(selections));
+            ValidateVisualCoordinate(value.Geometry.Y1, nameof(selections));
+            ValidateVisualCoordinate(value.Geometry.X2, nameof(selections));
+            ValidateVisualCoordinate(value.Geometry.Y2, nameof(selections));
+            ValidateVisualCoordinate(value.DeltaX, nameof(selections));
+            ValidateVisualCoordinate(value.DeltaY, nameof(selections));
+            ValidateHexToken(value.SelectionId, nameof(selections));
+            ArgumentNullException.ThrowIfNull(value.ResizeHandles);
+            if (value.ResizeHandles.Count > 8
+                || value.ResizeHandles
+                    .Select(handle => handle.Handle)
+                    .Distinct()
+                    .Count() != value.ResizeHandles.Count
+                || value.ResizeHandles.Any(handle =>
+                    !IsAllowedResizeHandle(value.Kind, handle.Handle))
+                || (selections.Count > 1 && value.ResizeHandles.Count > 0)
+                || (!value.IsPrimary && value.ResizeHandles.Count > 0))
+            {
+                throw new ArgumentOutOfRangeException(nameof(selections));
+            }
+            foreach (SvgResizeHandleDefinition handle in value.ResizeHandles)
+            {
+                ValidateVisualCoordinate(handle.Point.X, nameof(selections));
+                ValidateVisualCoordinate(handle.Point.Y, nameof(selections));
+            }
         }
-        if (value.ResizeHandles.Count > 8
-            || value.ResizeHandles
-                .Select(handle => handle.Handle)
-                .Distinct()
-                .Count() != value.ResizeHandles.Count
-            || value.ResizeHandles.Any(handle =>
-                !IsAllowedResizeHandle(value.Kind, handle.Handle)))
+        foreach (PreviewAlignmentGuide guide in guides)
         {
-            throw new ArgumentOutOfRangeException(nameof(selection));
-        }
-        foreach (SvgResizeHandleDefinition handle in value.ResizeHandles)
-        {
-            ValidateVisualCoordinate(handle.Point.X, nameof(selection));
-            ValidateVisualCoordinate(handle.Point.Y, nameof(selection));
+            if (!Enum.IsDefined(guide.Orientation))
+            {
+                throw new ArgumentOutOfRangeException(nameof(guides));
+            }
+            ValidateVisualCoordinate(guide.Position, nameof(guides));
+            ValidateVisualCoordinate(guide.Start, nameof(guides));
+            ValidateVisualCoordinate(guide.End, nameof(guides));
+            if (guide.End < guide.Start)
+            {
+                throw new ArgumentOutOfRangeException(nameof(guides));
+            }
         }
 
         return JsonSerializer.Serialize(new
@@ -208,10 +231,9 @@ public sealed class PreviewPageMessageBuilder
             type = "visualSelection",
             token = bridgeToken,
             sourceRevision,
-            visible = selection is not null,
-            kind = selection is null
-                ? "none"
-                : value.Kind switch
+            selections = selections.Select(value => new
+            {
+                kind = value.Kind switch
                 {
                     SvgVisualElementKind.Rect
                         or SvgVisualElementKind.Unsupported => "rect",
@@ -220,20 +242,32 @@ public sealed class PreviewPageMessageBuilder
                     SvgVisualElementKind.Line => "line",
                     SvgVisualElementKind.Text => "text",
                     _ => throw new ArgumentOutOfRangeException(
-                        nameof(selection))
+                        nameof(selections))
                 },
-            x1 = value.Geometry.X1,
-            y1 = value.Geometry.Y1,
-            x2 = value.Geometry.X2,
-            y2 = value.Geometry.Y2,
-            deltaX = value.DeltaX,
-            deltaY = value.DeltaY,
-            selectionId = value.SelectionId,
-            handles = value.ResizeHandles.Select(handle => new
+                x1 = value.Geometry.X1,
+                y1 = value.Geometry.Y1,
+                x2 = value.Geometry.X2,
+                y2 = value.Geometry.Y2,
+                deltaX = value.DeltaX,
+                deltaY = value.DeltaY,
+                selectionId = value.SelectionId,
+                isPrimary = value.IsPrimary,
+                handles = value.ResizeHandles.Select(handle => new
+                {
+                    id = SvgVisualResizeHandleService.ToWireName(handle.Handle),
+                    x = handle.Point.X,
+                    y = handle.Point.Y
+                })
+            }),
+            guides = guides.Select(guide => new
             {
-                id = SvgVisualResizeHandleService.ToWireName(handle.Handle),
-                x = handle.Point.X,
-                y = handle.Point.Y
+                orientation = guide.Orientation
+                    == PreviewAlignmentGuideOrientation.Vertical
+                        ? "vertical"
+                        : "horizontal",
+                position = guide.Position,
+                start = guide.Start,
+                end = guide.End
             })
         });
     }

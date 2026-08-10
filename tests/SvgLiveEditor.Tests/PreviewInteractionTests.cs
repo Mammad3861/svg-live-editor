@@ -312,6 +312,18 @@ public sealed class PreviewInteractionTests
              "token":"00112233445566778899AABBCCDDEEFF",
              "sourceRevision":7,"command":"duplicate"}
             """;
+        const string group =
+            """
+            {"type":"authoringCommand",
+             "token":"00112233445566778899AABBCCDDEEFF",
+             "sourceRevision":7,"command":"group"}
+            """;
+        const string ungroup =
+            """
+            {"type":"authoringCommand",
+             "token":"00112233445566778899AABBCCDDEEFF",
+             "sourceRevision":7,"command":"ungroup"}
+            """;
 
         Assert.IsTrue(_parser.TryParseAuthoringCommand(
             delete,
@@ -325,6 +337,18 @@ public sealed class PreviewInteractionTests
             expectedSourceRevision: 7,
             out PreviewAuthoringCommand duplicateCommand));
         Assert.AreEqual(PreviewAuthoringCommand.Duplicate, duplicateCommand);
+        Assert.IsTrue(_parser.TryParseAuthoringCommand(
+            group,
+            BridgeToken,
+            expectedSourceRevision: 7,
+            out PreviewAuthoringCommand groupCommand));
+        Assert.AreEqual(PreviewAuthoringCommand.Group, groupCommand);
+        Assert.IsTrue(_parser.TryParseAuthoringCommand(
+            ungroup,
+            BridgeToken,
+            expectedSourceRevision: 7,
+            out PreviewAuthoringCommand ungroupCommand));
+        Assert.AreEqual(PreviewAuthoringCommand.Ungroup, ungroupCommand);
         Assert.IsFalse(_parser.TryParseAuthoringCommand(
             delete.Replace("\"sourceRevision\":7", "\"sourceRevision\":6"),
             BridgeToken,

@@ -35,20 +35,24 @@ This roadmap records product direction. Post-v1 entries are ideas, not promises,
 
 ### v0.10.0 — Visual Composition
 
-Current Stage 0 authoring stabilization:
+Stage 0 authoring stabilization (completed):
 
 - Keep a valid Preview visible and latest-wins after creation, group reorganization, Undo/Redo, and invalid-to-valid recovery.
 - Make element/group creation destination explicit: SVG root or the selected group/sibling context.
 - Provide accessible native Layers disclosure, source-owned Unicode friendly layer names separate from technical SVG IDs, and focus-aware Delete/Backspace behavior.
 
-Planned Stage 1 scope (not implemented in Stage 0):
+Stage 1 multi-selection and layout tools (implemented):
 
-- Multi-selection.
-- Moving multiple selected elements.
-- Group and Ungroup commands.
-- Alignment and distribution.
-- Basic snapping.
+- Bounded Preview/Layers multi-selection with one primary and anchor.
+- Atomic movement and nudge of multiple safely movable selected elements.
+- Conservative same-parent contiguous Group and semantics-preserving Ungroup commands.
+- Six visual-bounds alignment commands and equal-gap horizontal/vertical distribution.
+- Optional basic sibling/object and canvas-center snapping with CSS-pixel thresholds and temporary host guides.
+
+Later v0.10 polish (not part of Stage 1):
+
 - Evaluate safe basic path bounding-box resize after the core composition architecture is stable.
+- Allow safely supported elements to be partially positioned or resized outside the root SVG viewBox/canvas instead of reverting solely because their visual bounds cross the canvas edge.
 
 ### v1.0.0 — Stable Release / stabilization
 
@@ -97,7 +101,7 @@ These entries are optional product-direction ideas, not promises or deadlines.
    - Placement feedback similar to modern Office, Figma, and design applications.
    - Visual property and position hints where useful, without hidden source rewrites.
 8. **Advanced vector editing**
-   - Path-node editing, advanced gradients, masks/effects editing, and richer transforms.
+   - Path-node editing, advanced gradients, masks/effects editing, richer transforms, and 360-degree rotation.
 9. **Advanced exports and distribution**
    - Additional carefully audited export formats and distribution options after the stable baseline.
 10. **Future integrations**

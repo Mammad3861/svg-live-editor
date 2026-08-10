@@ -338,28 +338,16 @@ public sealed class PreviewBridgeIntegrationTests
                 type = "visualSelection",
                 token = BridgeToken,
                 sourceRevision = 6,
-                visible = false,
-                kind = "none",
-                x1 = 0,
-                y1 = 0,
-                x2 = 0,
-                y2 = 0,
-                deltaX = 0,
-                deltaY = 0
+                selections = Array.Empty<object>(),
+                guides = Array.Empty<object>()
             }));
             core.PostWebMessageAsJson(JsonSerializer.Serialize(new
             {
                 type = "visualSelection",
                 token = BridgeToken,
                 sourceRevision = 7,
-                visible = false,
-                kind = "none",
-                x1 = 0,
-                y1 = 0,
-                x2 = 0,
-                y2 = 0,
-                deltaX = 0,
-                deltaY = 0,
+                selections = Array.Empty<object>(),
+                guides = Array.Empty<object>(),
                 extra = true
             }));
             await Task.Delay(50);
