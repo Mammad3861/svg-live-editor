@@ -194,6 +194,27 @@ public sealed class SvgLayersUxSurfaceTests
         StringAssert.Contains(property, "IsElementEffectivelyLocked(property.Element)");
     }
 
+    [TestMethod]
+    public void FocusingAnAlreadySelectedLayerPreservesTheMultiSelection()
+    {
+        string inspector = ReadUi("MainWindow.Inspector.cs");
+        string handler = ExtractSection(
+            inspector,
+            "private void OnLayersTreePreviewMouseLeftButtonDown(",
+            "private void OnInspectorTreePreviewMouseRightButtonDown(");
+
+        StringAssert.Contains(handler, "EnsureCurrentVisualSelectionState()");
+        StringAssert.Contains(handler, "current.Identities.Count > 1");
+        StringAssert.Contains(
+            handler,
+            "current.Identities.Contains(layer.Element.Identity)");
+        StringAssert.Contains(
+            handler,
+            "current with { Primary = layer.Element.Identity }");
+        StringAssert.Contains(handler, "navigateSource: preserveMultiSelection");
+        StringAssert.Contains(handler, "_layerDragCandidate = layer");
+    }
+
     private static string ReadUi(string fileName) => File.ReadAllText(
         Path.Combine(AppContext.BaseDirectory, "ui", fileName));
 

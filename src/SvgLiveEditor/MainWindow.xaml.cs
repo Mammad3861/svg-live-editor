@@ -79,6 +79,7 @@ public partial class MainWindow : Window
     private bool _hasVisiblePreview;
     private bool _isPreviewNavigationRequested;
     private bool _isPanModeEnabled;
+    private bool _isPreviewControllerKeyboardFocused;
     private PreviewPngSourceState _previewPngSourceState =
         PreviewPngSourceState.PendingValidation;
     private string _previewPresentationState = "Loading";
@@ -1934,6 +1935,7 @@ public partial class MainWindow : Window
 
     private void OnWindowDeactivated(object? sender, EventArgs e)
     {
+        _isPreviewControllerKeyboardFocused = false;
         ClosePreviewContextMenu();
         ApplyFileDropOverlay(
             _fileDropOverlayState.Transition(
@@ -1952,19 +1954,51 @@ public partial class MainWindow : Window
         object sender,
         KeyboardFocusChangedEventArgs e)
     {
+        _isPreviewControllerKeyboardFocused = false;
         _previewDirectDragHandshake.Reset();
         CancelVisualEditGesture();
         CancelPendingDirectArtworkDrag();
         TryUpdatePreviewPanModeInPlace();
     }
 
+    private void OnPreviewWebViewGotKeyboardFocus(
+        object sender,
+        KeyboardFocusChangedEventArgs e)
+    {
+        _isPreviewControllerKeyboardFocused = true;
+    }
+
+    private void OnWindowGotKeyboardFocus(
+        object sender,
+        KeyboardFocusChangedEventArgs e)
+    {
+        if (!ReferenceEquals(e.OriginalSource, PreviewWebView)
+            && !PreviewWebView.IsKeyboardFocusWithin)
+        {
+            _isPreviewControllerKeyboardFocused = false;
+        }
+    }
+
     private void OnPreviewWebViewPreviewKeyDown(
         object sender,
         KeyEventArgs e)
     {
+        // WebView2CompositionControl forwards controller accelerators as WPF
+        // routed events even though WPF does not own the focused child HWND.
+        // The event origin is therefore stronger evidence than
+        // IsKeyboardFocusWithin, which remains false for this real route.
+        _isPreviewControllerKeyboardFocused = true;
         Key pressedKey = e.Key == Key.System ? e.SystemKey : e.Key;
-        if (TryHandlePreviewNudgeShortcut(Keyboard.Modifiers, pressedKey)
-            || TryHandleCompositionShortcut(Keyboard.Modifiers, pressedKey))
+        ModifierKeys modifiers = GetPreviewAcceleratorModifiers(
+            Keyboard.Modifiers);
+        if (TryHandlePreviewNudgeShortcut(
+                modifiers,
+                pressedKey,
+                previewKeyRoute: true)
+            || TryHandleCompositionShortcut(
+                modifiers,
+                pressedKey,
+                previewKeyRoute: true))
         {
             e.Handled = true;
             return;
@@ -2159,9 +2193,14 @@ public partial class MainWindow : Window
 
     private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
     {
-        ModifierKeys modifiers = Keyboard.Modifiers;
-        bool controlOnly = modifiers == ModifierKeys.Control;
         Key pressedKey = e.Key == Key.System ? e.SystemKey : e.Key;
+        bool previewKeyRoute = ReferenceEquals(
+            e.OriginalSource,
+            PreviewWebView);
+        ModifierKeys modifiers = previewKeyRoute
+            ? GetPreviewAcceleratorModifiers(Keyboard.Modifiers)
+            : Keyboard.Modifiers;
+        bool controlOnly = modifiers == ModifierKeys.Control;
         if (controlOnly
             && pressedKey is Key.Z or Key.Y
             && TryHandleInspectorUndoShortcut(pressedKey))
@@ -2169,8 +2208,14 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
-        if (TryHandlePreviewNudgeShortcut(modifiers, pressedKey)
-            || TryHandleCompositionShortcut(modifiers, pressedKey)
+        if (TryHandlePreviewNudgeShortcut(
+                modifiers,
+                pressedKey,
+                previewKeyRoute)
+            || TryHandleCompositionShortcut(
+                modifiers,
+                pressedKey,
+                previewKeyRoute)
             || TryHandleAuthoringShortcut(modifiers, pressedKey))
         {
             e.Handled = true;
@@ -2308,14 +2353,30 @@ public partial class MainWindow : Window
 
     private bool TryHandlePreviewNudgeShortcut(
         ModifierKeys modifiers,
-        Key pressedKey)
+        Key pressedKey,
+        bool previewKeyRoute = false)
     {
+        bool previewHasKeyboardFocus = previewKeyRoute
+            || HasPreviewKeyboardFocus();
+        if (previewHasKeyboardFocus
+            && pressedKey is Key.Left or Key.Right or Key.Up or Key.Down
+            && modifiers is ModifierKeys.None or ModifierKeys.Shift
+            && _isPanModeEnabled)
+        {
+            _viewModel.SetOperationStatus(
+                "Exit Pan mode before nudging the current selection.");
+            return true;
+        }
         if (!PreviewVisualNudgeFocusPolicy.TryResolveShortcut(
                 modifiers,
                 pressedKey,
-                PreviewWebView.IsKeyboardFocusWithin,
-                SourceEditor.IsKeyboardFocusWithin,
-                IsEditableControlFocused(),
+                previewHasKeyboardFocus,
+                previewHasKeyboardFocus
+                    ? false
+                    : SourceEditor.IsKeyboardFocusWithin,
+                previewHasKeyboardFocus
+                    ? false
+                    : IsEditableControlFocused(),
                 _isPanModeEnabled,
                 _isEditorTextCompositionActive
                     || _isInspectorTextCompositionActive,
@@ -2325,9 +2386,13 @@ public partial class MainWindow : Window
             return false;
         }
 
-        HandlePreviewVisualNudge(request);
+        HandlePreviewVisualNudge(request, previewHasKeyboardFocus);
         return true;
     }
+
+    private bool HasPreviewKeyboardFocus() =>
+        _isPreviewControllerKeyboardFocused
+        || PreviewWebView.IsKeyboardFocusWithin;
 
     private bool CanUseHostPanShortcut()
     {

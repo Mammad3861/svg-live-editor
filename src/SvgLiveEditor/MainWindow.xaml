@@ -14,6 +14,7 @@
         Loaded="OnWindowLoaded"
         Closing="OnWindowClosing"
         Deactivated="OnWindowDeactivated"
+        GotKeyboardFocus="OnWindowGotKeyboardFocus"
         PreviewKeyDown="OnWindowPreviewKeyDown"
         PreviewDragEnter="OnWindowPreviewDragEnter"
         PreviewDragOver="OnWindowPreviewDragOver"
@@ -1293,6 +1294,7 @@
                 AllowExternalDrop="False"
                 DefaultBackgroundColor="#FFF8FAFC"
                 PreviewKeyDown="OnPreviewWebViewPreviewKeyDown"
+                GotKeyboardFocus="OnPreviewWebViewGotKeyboardFocus"
                 ZoomFactorChanged="OnPreviewWebViewZoomFactorChanged"
                 LostKeyboardFocus="OnPreviewWebViewLostKeyboardFocus"
                 SizeChanged="OnPreviewWebViewSizeChanged" />

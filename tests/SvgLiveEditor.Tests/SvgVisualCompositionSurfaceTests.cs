@@ -86,6 +86,8 @@ public sealed class SvgVisualCompositionSurfaceTests
     {
         string inspector = ReadUi("MainWindow.Inspector.cs");
         string main = ReadUi("MainWindow.xaml.cs");
+        string nativeInput = ReadUi("MainWindow.PreviewNativeInput.cs");
+        string xaml = ReadUi("MainWindow.xaml");
 
         StringAssert.Contains(
             inspector,
@@ -98,20 +100,33 @@ public sealed class SvgVisualCompositionSurfaceTests
             "_isInspectorTextCompositionActive");
         StringAssert.Contains(
             inspector,
-            "PreviewWebView.IsKeyboardFocusWithin");
+            "HasPreviewKeyboardFocus()");
+        StringAssert.Contains(inspector, "previewKeyRoute");
         StringAssert.Contains(inspector, "|| IsActive");
         Assert.IsFalse(inspector.Contains(
             "SourceEditor.IsKeyboardFocusWithin\n            || compositionFocus",
             StringComparison.Ordinal));
         StringAssert.Contains(
             main,
-            "TryHandleCompositionShortcut(modifiers, pressedKey)");
+            "ReferenceEquals(\n            e.OriginalSource,\n            PreviewWebView)");
         StringAssert.Contains(
             main,
-            "TryHandlePreviewNudgeShortcut(modifiers, pressedKey)");
+            "TryHandlePreviewNudgeShortcut(\n                modifiers,\n                pressedKey,\n                previewKeyRoute)");
+        StringAssert.Contains(
+            main,
+            "TryHandleCompositionShortcut(\n                modifiers,\n                pressedKey,\n                previewKeyRoute)");
         StringAssert.Contains(
             main,
             "OnPreviewWebViewPreviewKeyDown");
+        StringAssert.Contains(main, "GetPreviewAcceleratorModifiers(");
+        StringAssert.Contains(main, "_isPreviewControllerKeyboardFocused = false;");
+        StringAssert.Contains(
+            nativeInput,
+            "GetPreviewAcceleratorModifiers(");
+        StringAssert.Contains(nativeInput, "GetAsyncKeyState(virtualKey)");
+        StringAssert.Contains(nativeInput, "GetKeyState(virtualKey)");
+        StringAssert.Contains(xaml, "GotKeyboardFocus=\"OnWindowGotKeyboardFocus\"");
+        StringAssert.Contains(xaml, "GotKeyboardFocus=\"OnPreviewWebViewGotKeyboardFocus\"");
         StringAssert.Contains(inspector, "GroupSelectedElements()");
         StringAssert.Contains(inspector, "UngroupSelectedGroup()");
         StringAssert.Contains(

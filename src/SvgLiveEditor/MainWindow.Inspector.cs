@@ -360,11 +360,17 @@ public partial class MainWindow
             return;
         }
 
+        SvgMultiSelectionState current = EnsureCurrentVisualSelectionState();
+        bool preserveMultiSelection = current.Identities.Count > 1
+            && current.Identities.Contains(layer.Element.Identity);
         ApplyVisualSelectionState(
-            _multiSelectionService.Replace(
-                _sourceRevisionTracker.Current,
-                layer.Element.Identity),
-            InspectorSelectionOrigin.ExplicitTreeNavigation);
+            preserveMultiSelection
+                ? current with { Primary = layer.Element.Identity }
+                : _multiSelectionService.Replace(
+                    _sourceRevisionTracker.Current,
+                    layer.Element.Identity),
+            InspectorSelectionOrigin.ExplicitTreeNavigation,
+            navigateSource: preserveMultiSelection);
 
         _layerDragCandidate = layer;
         _layerDragStart = e.GetPosition(LayersTree);
@@ -1554,18 +1560,22 @@ public partial class MainWindow
 
     private bool TryHandleCompositionShortcut(
         ModifierKeys modifiers,
-        Key pressedKey)
+        Key pressedKey,
+        bool previewKeyRoute = false)
     {
         bool compositionFocus = LayersTree.IsKeyboardFocusWithin
             || InspectorTree.IsKeyboardFocusWithin
             || InspectorPropertiesPanel.IsKeyboardFocusWithin
-            || PreviewWebView.IsKeyboardFocusWithin
+            || previewKeyRoute
+            || HasPreviewKeyboardFocus()
             || IsActive;
         SvgLayoutShortcutAction action = SvgLayoutShortcutRouter.Resolve(
             modifiers,
             pressedKey,
             compositionFocus,
-            IsEditableControlFocused(),
+            previewKeyRoute || HasPreviewKeyboardFocus()
+                ? false
+                : IsEditableControlFocused(),
             _isEditorTextCompositionActive
                 || _isInspectorTextCompositionActive);
         if (action == SvgLayoutShortcutAction.Group)

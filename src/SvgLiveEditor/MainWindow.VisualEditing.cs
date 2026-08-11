@@ -89,7 +89,7 @@ public partial class MainWindow
                 sourceRevision,
                 out PreviewVisualNudgeRequest nudge))
         {
-            HandlePreviewVisualNudge(nudge);
+            HandlePreviewVisualNudge(nudge, HasPreviewKeyboardFocus());
             return true;
         }
 
@@ -639,16 +639,31 @@ public partial class MainWindow
     }
 
     private void HandlePreviewVisualNudge(
-        PreviewVisualNudgeRequest request)
+        PreviewVisualNudgeRequest request,
+        bool previewHasKeyboardFocus)
     {
         if (!PreviewVisualNudgeFocusPolicy.CanRoute(
-                PreviewWebView.IsKeyboardFocusWithin,
-                SourceEditor.IsKeyboardFocusWithin,
-                Keyboard.FocusedElement is TextBoxBase)
-            || !CanUseVisualEditing(request.SourceRevision)
-            || _visualSelectionState.SourceRevision != request.SourceRevision
+                previewHasKeyboardFocus,
+                previewHasKeyboardFocus
+                    ? false
+                    : SourceEditor.IsKeyboardFocusWithin,
+                previewHasKeyboardFocus
+                    ? false
+                    : Keyboard.FocusedElement is TextBoxBase))
+        {
+            return;
+        }
+        if (!CanUseVisualEditing(request.SourceRevision))
+        {
+            _viewModel.SetOperationStatus(
+                "Visual nudge requires the current valid Preview revision.");
+            return;
+        }
+        if (_visualSelectionState.SourceRevision != request.SourceRevision
             || _visualSelectionState.Identities.Count == 0)
         {
+            _viewModel.SetOperationStatus(
+                "Select one or more current movable elements before nudging.");
             return;
         }
 

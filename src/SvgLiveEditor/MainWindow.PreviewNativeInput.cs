@@ -12,6 +12,11 @@ public partial class MainWindow
 {
     private const uint GetWheelScrollCharacters = 0x006C;
     private const uint DefaultHorizontalScrollCharacters = 3;
+    private const int VirtualKeyShift = 0x10;
+    private const int VirtualKeyControl = 0x11;
+    private const int VirtualKeyMenu = 0x12;
+    private const int VirtualKeyLeftWindows = 0x5B;
+    private const int VirtualKeyRightWindows = 0x5C;
 
     private readonly NativeHorizontalWheelMessageParser
         _nativeHorizontalWheelMessageParser = new();
@@ -156,6 +161,39 @@ public partial class MainWindow
             : DefaultHorizontalScrollCharacters;
     }
 
+    private static System.Windows.Input.ModifierKeys
+        GetPreviewAcceleratorModifiers(
+            System.Windows.Input.ModifierKeys reportedModifiers)
+    {
+        // WebView2's child HWND can forward an accelerator to WPF without
+        // updating WPF's Keyboard.Modifiers snapshot. Read-only native state
+        // is consulted only for an event already proven to originate from the
+        // Preview control; this does not broaden Window-level shortcut scope.
+        System.Windows.Input.ModifierKeys modifiers = reportedModifiers;
+        if (IsNativeKeyDown(VirtualKeyShift))
+        {
+            modifiers |= System.Windows.Input.ModifierKeys.Shift;
+        }
+        if (IsNativeKeyDown(VirtualKeyControl))
+        {
+            modifiers |= System.Windows.Input.ModifierKeys.Control;
+        }
+        if (IsNativeKeyDown(VirtualKeyMenu))
+        {
+            modifiers |= System.Windows.Input.ModifierKeys.Alt;
+        }
+        if (IsNativeKeyDown(VirtualKeyLeftWindows)
+            || IsNativeKeyDown(VirtualKeyRightWindows))
+        {
+            modifiers |= System.Windows.Input.ModifierKeys.Windows;
+        }
+        return modifiers;
+    }
+
+    private static bool IsNativeKeyDown(int virtualKey) =>
+        (GetKeyState(virtualKey) & 0x8000) != 0
+        || (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
+
     private void DetachNativePreviewInputHook()
     {
         if (_mainWindowHwndSource is not HwndSource source)
@@ -184,4 +222,10 @@ public partial class MainWindow
         uint parameter,
         out uint value,
         uint update);
+
+    [DllImport("user32.dll", SetLastError = false)]
+    private static extern short GetAsyncKeyState(int virtualKey);
+
+    [DllImport("user32.dll", SetLastError = false)]
+    private static extern short GetKeyState(int virtualKey);
 }
