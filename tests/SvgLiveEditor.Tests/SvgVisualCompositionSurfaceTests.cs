@@ -64,21 +64,27 @@ public sealed class SvgVisualCompositionSurfaceTests
     public void ExplicitPreviewSelectionNavigatesSourceButRefreshDoesNot()
     {
         string visual = ReadUi("MainWindow.VisualEditing.cs");
+        string applySelection = CompactCode(ExtractMethod(
+            visual,
+            "private void ApplyVisualSelectionState("));
 
         Assert.AreEqual(
             3,
-            CountOccurrences(visual, "navigateSource: true"));
+            CountOccurrences(CompactCode(visual), "navigateSource:true"));
         StringAssert.Contains(
-            visual,
-            "if (navigateSource\n            && _viewModel.Inspector.SelectedElement");
+            applySelection,
+            "boolnavigateSource=false)");
         StringAssert.Contains(
-            visual,
-            "NavigateToInspectorElement(selected, origin)");
+            applySelection,
+            "_viewModel.Inspector.SelectNode(primaryNode,origin);");
+        StringAssert.Contains(
+            applySelection,
+            "if(navigateSource&&_viewModel.Inspector.SelectedElementisSvgElementViewModelselected){NavigateToInspectorElement(selected,origin);}");
         Assert.AreEqual(
             1,
             CountOccurrences(
-                visual,
-                "NavigateToInspectorElement(selected, origin)"));
+                applySelection,
+                "NavigateToInspectorElement(selected,origin)"));
     }
 
     [TestMethod]
@@ -88,43 +94,70 @@ public sealed class SvgVisualCompositionSurfaceTests
         string main = ReadUi("MainWindow.xaml.cs");
         string nativeInput = ReadUi("MainWindow.PreviewNativeInput.cs");
         string xaml = ReadUi("MainWindow.xaml");
+        string windowRoute = CompactCode(ExtractMethod(
+            main,
+            "private void OnWindowPreviewKeyDown("));
+        string previewRoute = CompactCode(ExtractMethod(
+            main,
+            "private void OnPreviewWebViewPreviewKeyDown("));
+        string nudgeRoute = CompactCode(ExtractMethod(
+            main,
+            "private bool TryHandlePreviewNudgeShortcut("));
+        string compositionRoute = CompactCode(ExtractMethod(
+            inspector,
+            "private bool TryHandleCompositionShortcut("));
+        string modifierRoute = CompactCode(ExtractMethod(
+            nativeInput,
+            "private static System.Windows.Input.ModifierKeys"));
+        string nativeKeyState = CompactCode(ExtractMethod(
+            nativeInput,
+            "private static bool IsNativeKeyDown("));
 
         StringAssert.Contains(
-            inspector,
+            compositionRoute,
             "SvgLayoutShortcutRouter.Resolve(");
         StringAssert.Contains(
-            inspector,
+            compositionRoute,
             "IsEditableControlFocused()");
         StringAssert.Contains(
-            inspector,
+            compositionRoute,
             "_isInspectorTextCompositionActive");
         StringAssert.Contains(
-            inspector,
+            compositionRoute,
             "HasPreviewKeyboardFocus()");
-        StringAssert.Contains(inspector, "previewKeyRoute");
-        StringAssert.Contains(inspector, "|| IsActive");
-        Assert.IsFalse(inspector.Contains(
-            "SourceEditor.IsKeyboardFocusWithin\n            || compositionFocus",
-            StringComparison.Ordinal));
         StringAssert.Contains(
-            main,
-            "ReferenceEquals(\n            e.OriginalSource,\n            PreviewWebView)");
+            windowRoute,
+            "boolpreviewKeyRoute=ReferenceEquals(e.OriginalSource,PreviewWebView);");
         StringAssert.Contains(
-            main,
-            "TryHandlePreviewNudgeShortcut(\n                modifiers,\n                pressedKey,\n                previewKeyRoute)");
+            windowRoute,
+            "TryHandlePreviewNudgeShortcut(modifiers,pressedKey,previewKeyRoute)");
         StringAssert.Contains(
-            main,
-            "TryHandleCompositionShortcut(\n                modifiers,\n                pressedKey,\n                previewKeyRoute)");
+            windowRoute,
+            "TryHandleCompositionShortcut(modifiers,pressedKey,previewKeyRoute)");
         StringAssert.Contains(
-            main,
-            "OnPreviewWebViewPreviewKeyDown");
-        StringAssert.Contains(main, "GetPreviewAcceleratorModifiers(");
+            previewRoute,
+            "TryHandlePreviewNudgeShortcut(modifiers,pressedKey,previewKeyRoute:true)");
+        StringAssert.Contains(
+            previewRoute,
+            "TryHandleCompositionShortcut(modifiers,pressedKey,previewKeyRoute:true)");
+        StringAssert.Contains(
+            nudgeRoute,
+            "boolpreviewHasKeyboardFocus=previewKeyRoute||HasPreviewKeyboardFocus();");
+        StringAssert.Contains(
+            nudgeRoute,
+            "previewHasKeyboardFocus?false:SourceEditor.IsKeyboardFocusWithin");
+        StringAssert.Contains(
+            nudgeRoute,
+            "previewHasKeyboardFocus?false:IsEditableControlFocused()");
+        StringAssert.Contains(
+            compositionRoute,
+            "previewKeyRoute||HasPreviewKeyboardFocus()?false:IsEditableControlFocused()");
         StringAssert.Contains(main, "_isPreviewControllerKeyboardFocused = false;");
         StringAssert.Contains(
-            nativeInput,
+            modifierRoute,
             "GetPreviewAcceleratorModifiers(");
-        StringAssert.Contains(nativeInput, "GetAsyncKeyState(virtualKey)");
-        StringAssert.Contains(nativeInput, "GetKeyState(virtualKey)");
+        StringAssert.Contains(nativeKeyState, "GetAsyncKeyState(virtualKey)");
+        StringAssert.Contains(nativeKeyState, "GetKeyState(virtualKey)");
         StringAssert.Contains(xaml, "GotKeyboardFocus=\"OnWindowGotKeyboardFocus\"");
         StringAssert.Contains(xaml, "GotKeyboardFocus=\"OnPreviewWebViewGotKeyboardFocus\"");
         StringAssert.Contains(inspector, "GroupSelectedElements()");
@@ -171,14 +204,24 @@ public sealed class SvgVisualCompositionSurfaceTests
     public void SnapCandidatesAreFilteredBeforeNearestCorrectionRanking()
     {
         string visual = ReadUi("MainWindow.VisualEditing.cs");
+        string resolveSnap = CompactCode(ExtractMethod(
+            visual,
+            "private SvgSnapResult ResolveSnap("));
 
-        StringAssert.Contains(visual, "&& element.IsMovable");
         StringAssert.Contains(
-            visual,
-            "IsElementEffectivelyLocked(\n                    element.SourceElement)");
+            resolveSnap,
+            "ReferenceEquals(sourceDocument.FindParent(element.SourceElement),parent)");
+        StringAssert.Contains(resolveSnap, "&&element.IsMovable");
+        StringAssert.Contains(resolveSnap, "&&element.Geometryisnotnull");
         StringAssert.Contains(
-            visual,
-            "IsElementEffectivelyVisible(\n                    element.SourceElement)");
+            resolveSnap,
+            "&&!_viewModel.Inspector.IsElementEffectivelyLocked(element.SourceElement)");
+        StringAssert.Contains(
+            resolveSnap,
+            "&&_viewModel.Inspector.IsElementEffectivelyVisible(element.SourceElement)");
+        StringAssert.Contains(
+            resolveSnap,
+            "return_objectSnapService.Snap(moving,siblings,document.Viewport,");
     }
 
     private static string ReadUi(string fileName)
@@ -201,4 +244,30 @@ public sealed class SvgVisualCompositionSurfaceTests
         }
         return count;
     }
+
+    private static string ExtractMethod(string source, string signature)
+    {
+        int start = source.IndexOf(signature, StringComparison.Ordinal);
+        Assert.IsTrue(start >= 0, $"Method signature not found: {signature}");
+        int openingBrace = source.IndexOf('{', start);
+        Assert.IsTrue(openingBrace >= 0, $"Method body not found: {signature}");
+        int depth = 0;
+        for (int index = openingBrace; index < source.Length; index++)
+        {
+            if (source[index] == '{')
+            {
+                depth++;
+            }
+            else if (source[index] == '}' && --depth == 0)
+            {
+                return source[start..(index + 1)];
+            }
+        }
+
+        Assert.Fail($"Method body was incomplete: {signature}");
+        return string.Empty;
+    }
+
+    private static string CompactCode(string source) =>
+        string.Concat(source.Where(character => !char.IsWhiteSpace(character)));
 }

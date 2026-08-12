@@ -471,6 +471,33 @@ public sealed class PreviewHtmlBuilderTests
             StringComparison.Ordinal));
         StringAssert.Contains(script, "viewport.classList.add('pointer-focused')");
         StringAssert.Contains(script, "viewport.classList.remove('pointer-focused')");
+        StringAssert.Contains(script, "viewport.addEventListener('blur'");
+        StringAssert.Contains(script, "window.addEventListener('blur'");
+    }
+
+    [TestMethod]
+    public void Build_OutsideCanvasSelectionUsesABoundedHostInteractionSurface()
+    {
+        string html = _builder.Build(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"/>",
+            300,
+            300,
+            BridgeToken);
+        string script = ExtractHostScript(html);
+
+        StringAssert.Contains(script, "const updateInteractionSurface =");
+        StringAssert.Contains(script, "maximumInteractionSurfaceDimension = 100000");
+        StringAssert.Contains(script, "const selectionShapes = selectionOverlay.querySelectorAll(");
+        StringAssert.Contains(script, "'.selection-accent'");
+        StringAssert.Contains(script, "stage.dataset.interactionSurfaceClamped");
+        StringAssert.Contains(
+            script,
+            "[item.x1 + item.deltaX, item.x2 + item.deltaX,");
+        StringAssert.Contains(script, "viewport.scrollLeft += imageRectAfter.left - imageRectBefore.left");
+        StringAssert.Contains(script, "viewport.scrollTop += imageRectAfter.top - imageRectBefore.top");
+        Assert.IsFalse(script.Contains(
+            "image.style.overflow = 'visible'",
+            StringComparison.Ordinal));
     }
 
     [TestMethod]

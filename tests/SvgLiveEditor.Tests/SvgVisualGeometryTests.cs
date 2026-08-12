@@ -82,6 +82,62 @@ public sealed class SvgVisualGeometryTests
     }
 
     [TestMethod]
+    public void PointerMapping_EditingSurfaceAcceptsEveryPasteboardDirection()
+    {
+        SvgVisualViewport viewport = new(
+            0,
+            0,
+            100,
+            100,
+            SvgPreserveAspectRatio.Default);
+        PreviewImageMetrics image = new(50, 50, 200, 200);
+        (SvgVisualPoint Pointer, SvgVisualPoint Expected)[] cases =
+        [
+            (new SvgVisualPoint(25, 25), new SvgVisualPoint(-12.5, -12.5)),
+            (new SvgVisualPoint(150, 25), new SvgVisualPoint(50, -12.5)),
+            (new SvgVisualPoint(275, 25), new SvgVisualPoint(112.5, -12.5)),
+            (new SvgVisualPoint(25, 150), new SvgVisualPoint(-12.5, 50)),
+            (new SvgVisualPoint(275, 150), new SvgVisualPoint(112.5, 50)),
+            (new SvgVisualPoint(25, 275), new SvgVisualPoint(-12.5, 112.5)),
+            (new SvgVisualPoint(150, 275), new SvgVisualPoint(50, 112.5)),
+            (new SvgVisualPoint(275, 275), new SvgVisualPoint(112.5, 112.5))
+        ];
+
+        foreach ((SvgVisualPoint pointer, SvgVisualPoint expected) in cases)
+        {
+            Assert.IsFalse(_coordinateMapper.TryMap(
+                viewport,
+                image,
+                pointer,
+                out _));
+            Assert.IsTrue(_coordinateMapper.TryMapEditingPoint(
+                viewport,
+                image,
+                pointer,
+                out SvgMappedPreviewPoint mapped));
+            Assert.AreEqual(expected.X, mapped.Point.X, 0.0001);
+            Assert.AreEqual(expected.Y, mapped.Point.Y, 0.0001);
+        }
+    }
+
+    [TestMethod]
+    public void PointerMapping_EditingSurfaceStillRejectsExtremeCoordinates()
+    {
+        SvgVisualViewport viewport = new(
+            0,
+            0,
+            100,
+            100,
+            SvgPreserveAspectRatio.Default);
+
+        Assert.IsFalse(_coordinateMapper.TryMapEditingPoint(
+            viewport,
+            new PreviewImageMetrics(0, 0, 0.000001, 100),
+            new SvgVisualPoint(100, 50),
+            out _));
+    }
+
+    [TestMethod]
     public void PointerMapping_RemainsAlignedAfterManualZoomPanAndResize()
     {
         SvgVisualViewport viewport = new(
@@ -271,6 +327,27 @@ public sealed class SvgVisualGeometryTests
         StringAssert.Contains(
             unsupported.UnsupportedReason,
             "canvas dimensions");
+    }
+
+    [TestMethod]
+    public void DerivedShapeEdgesBeyondTheGlobalLimitFailClosed()
+    {
+        const string source = """
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+              <rect id="rect" x="900000000" y="0" width="900000000" height="1" />
+              <circle id="circle" cx="900000000" cy="0" r="900000000" />
+              <ellipse id="ellipse" cx="-900000000" cy="0" rx="900000000" ry="1" />
+            </svg>
+            """;
+
+        SvgVisualDocument document = Build(source);
+
+        Assert.IsTrue(document.Elements.All(element => !element.IsMovable));
+        Assert.IsTrue(document.Elements.All(element => element.Geometry is null));
+        Assert.IsTrue(document.Elements.All(element =>
+            element.UnsupportedReason?.Contains(
+                "outside the supported range",
+                StringComparison.Ordinal) == true));
     }
 
     [TestMethod]

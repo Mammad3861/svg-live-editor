@@ -467,12 +467,13 @@ public sealed class SvgVisualGeometryIndexService
         }
 
         double expansion = ReadStrokeExpansion(element);
-        return new SvgVisualShapeGeometry(
+        SvgVisualShapeGeometry geometry = new(
             SvgVisualElementKind.Unsupported,
             bounds.Left - expansion,
             bounds.Top - expansion,
             bounds.Right + expansion,
             bounds.Bottom + expansion);
+        return IsBoundedGeometry(geometry) ? geometry : null;
     }
 
     private static double ReadStrokeExpansion(SvgElementNode element)
@@ -558,12 +559,18 @@ public sealed class SvgVisualGeometryIndexService
                     error = "The rectangle must have positive width and height.";
                     return null;
                 }
-                return new SvgVisualShapeGeometry(
+                SvgVisualShapeGeometry rectangle = new(
                     kind,
                     x,
                     y,
                     x + width,
                     y + height);
+                if (!IsBoundedGeometry(rectangle))
+                {
+                    error = "The rectangle geometry is outside the supported range.";
+                    return null;
+                }
+                return rectangle;
 
             case SvgVisualElementKind.Circle:
                 if (!TryCoordinate("cx", 0, out double circleX)
@@ -578,12 +585,18 @@ public sealed class SvgVisualGeometryIndexService
                     error = "The circle must have a positive radius.";
                     return null;
                 }
-                return new SvgVisualShapeGeometry(
+                SvgVisualShapeGeometry circle = new(
                     kind,
                     circleX - radius,
                     circleY - radius,
                     circleX + radius,
                     circleY + radius);
+                if (!IsBoundedGeometry(circle))
+                {
+                    error = "The circle geometry is outside the supported range.";
+                    return null;
+                }
+                return circle;
 
             case SvgVisualElementKind.Ellipse:
                 if (!TryCoordinate("cx", 0, out double ellipseX)
@@ -600,12 +613,18 @@ public sealed class SvgVisualGeometryIndexService
                         "The ellipse must have positive horizontal and vertical radii.";
                     return null;
                 }
-                return new SvgVisualShapeGeometry(
+                SvgVisualShapeGeometry ellipse = new(
                     kind,
                     ellipseX - radiusX,
                     ellipseY - radiusY,
                     ellipseX + radiusX,
                     ellipseY + radiusY);
+                if (!IsBoundedGeometry(ellipse))
+                {
+                    error = "The ellipse geometry is outside the supported range.";
+                    return null;
+                }
+                return ellipse;
 
             case SvgVisualElementKind.Line:
                 if (!TryCoordinate("x1", 0, out double x1)
@@ -616,7 +635,13 @@ public sealed class SvgVisualGeometryIndexService
                     error = coordinateError;
                     return null;
                 }
-                return new SvgVisualShapeGeometry(kind, x1, y1, x2, y2);
+                SvgVisualShapeGeometry line = new(kind, x1, y1, x2, y2);
+                if (!IsBoundedGeometry(line))
+                {
+                    error = "The line geometry is outside the supported range.";
+                    return null;
+                }
+                return line;
 
             case SvgVisualElementKind.Text:
                 error =
@@ -632,6 +657,16 @@ public sealed class SvgVisualGeometryIndexService
         SvgElementNode element,
         string name) =>
         !string.IsNullOrWhiteSpace(element.FindAttribute(name)?.RawValue);
+
+    private static bool IsBoundedGeometry(SvgVisualShapeGeometry geometry) =>
+        IsBoundedCoordinate(geometry.X1)
+        && IsBoundedCoordinate(geometry.Y1)
+        && IsBoundedCoordinate(geometry.X2)
+        && IsBoundedCoordinate(geometry.Y2);
+
+    private static bool IsBoundedCoordinate(double value) =>
+        double.IsFinite(value)
+        && Math.Abs(value) <= SvgVisualLengthParser.MaximumAbsoluteValue;
 
     private static SvgVisualElementKind ParseKind(string name) => name switch
     {

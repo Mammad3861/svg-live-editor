@@ -1,6 +1,7 @@
 using System.Text.Json;
 using SvgLiveEditor.Models;
 using SvgLiveEditor.Services;
+using SvgLiveEditor.ViewModels;
 
 namespace SvgLiveEditor.Tests;
 
@@ -164,7 +165,7 @@ public sealed class SvgObjectSnapServiceTests
             index,
             new SvgCanvasSizeReader().Read(source),
             source);
-        SvgLiveEditor.ViewModels.DocumentInspectorViewModel inspector = new();
+        DocumentInspectorViewModel inspector = new();
         inspector.Load(
             index,
             preferredSelection: null,
@@ -175,6 +176,64 @@ public sealed class SvgObjectSnapServiceTests
             index.Elements.Single(element => element.Id == "shown")));
         Assert.IsFalse(inspector.IsElementEffectivelyVisible(
             index.Elements.Single(element => element.Id == "hidden")));
+    }
+
+    [TestMethod]
+    public void HostPoliciesFilterLockedHiddenUnsafeAndIncompatibleCandidatesBeforeRanking()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 100\"><rect id=\"background\" x=\"0\" y=\"0\" width=\"200\" height=\"100\"/><rect id=\"moving\" x=\"10\" y=\"10\" width=\"10\" height=\"10\"/><rect id=\"locked\" x=\"31\" y=\"40\" width=\"10\" height=\"10\"/><rect id=\"hidden\" x=\"32\" y=\"50\" width=\"10\" height=\"10\" display=\"none\"/><rect id=\"unsafe\" x=\"33\" y=\"60\" width=\"10\" height=\"10\" transform=\"translate(1 0)\"/><rect id=\"invalid\" x=\"33\" y=\"70\" width=\"-1\" height=\"10\"/><rect id=\"eligible\" x=\"34\" y=\"80\" width=\"10\" height=\"10\"/><g id=\"other-parent\"><rect id=\"incompatible\" x=\"30\" y=\"30\" width=\"10\" height=\"10\"/></g></svg>";
+        SvgDocumentIndex index =
+            new SvgDocumentIndexService().Build(source).Document!;
+        SvgVisualDocument visual = new SvgVisualGeometryIndexService().Build(
+            index,
+            new SvgCanvasSizeReader().Read(source),
+            source);
+        SvgLiveEditor.ViewModels.DocumentInspectorViewModel inspector = new();
+        inspector.Load(
+            index,
+            preferredSelection: null,
+            source: source,
+            visualDocument: visual);
+        SvgLayerViewModel lockedLayer = inspector.LayerRoots.Single(layer =>
+            layer.Element.Id == "locked");
+        Assert.IsTrue(inspector.ToggleLayerLock(lockedLayer));
+
+        SvgVisualElement moving = ById(visual, "moving");
+        SvgElementNode parent = index.FindParent(moving.SourceElement)!;
+        SvgVisualElement[] hostCandidates = visual.Elements
+            .Where(element => ReferenceEquals(
+                    index.FindParent(element.SourceElement),
+                    parent)
+                && element.IsMovable
+                && element.Geometry is not null
+                && !inspector.IsElementEffectivelyLocked(element.SourceElement)
+                && inspector.IsElementEffectivelyVisible(element.SourceElement))
+            .ToArray();
+
+        Assert.IsFalse(hostCandidates.Any(element =>
+            element.SourceElement.Id is "locked" or "hidden" or "unsafe"
+                or "invalid" or "incompatible"));
+        Assert.IsTrue(hostCandidates.Any(element =>
+            element.SourceElement.Id == "moving"));
+        Assert.IsTrue(hostCandidates.Any(element =>
+            element.SourceElement.Id == "background"));
+        Assert.IsTrue(hostCandidates.Any(element =>
+            element.SourceElement.Id == "eligible"));
+
+        SvgSnapResult result = _service.Snap(
+            [moving],
+            hostCandidates,
+            visual.Viewport,
+            requestedDeltaX: 10,
+            requestedDeltaY: 0,
+            svgUnitsPerCssPixelX: 1,
+            svgUnitsPerCssPixelY: 1);
+
+        Assert.AreEqual(14, result.DeltaX);
+        Assert.AreEqual(34, result.Guides.Single(guide =>
+            guide.Orientation
+                == PreviewAlignmentGuideOrientation.Vertical).Position);
     }
 
     [TestMethod]

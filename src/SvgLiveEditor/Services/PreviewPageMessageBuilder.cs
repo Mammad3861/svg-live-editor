@@ -191,6 +191,18 @@ public sealed class PreviewPageMessageBuilder
             ValidateVisualCoordinate(value.Geometry.Y2, nameof(selections));
             ValidateVisualCoordinate(value.DeltaX, nameof(selections));
             ValidateVisualCoordinate(value.DeltaY, nameof(selections));
+            ValidateVisualCoordinate(
+                value.Geometry.X1 + value.DeltaX,
+                nameof(selections));
+            ValidateVisualCoordinate(
+                value.Geometry.Y1 + value.DeltaY,
+                nameof(selections));
+            ValidateVisualCoordinate(
+                value.Geometry.X2 + value.DeltaX,
+                nameof(selections));
+            ValidateVisualCoordinate(
+                value.Geometry.Y2 + value.DeltaY,
+                nameof(selections));
             ValidateHexToken(value.SelectionId, nameof(selections));
             ArgumentNullException.ThrowIfNull(value.ResizeHandles);
             if (value.ResizeHandles.Count > 8

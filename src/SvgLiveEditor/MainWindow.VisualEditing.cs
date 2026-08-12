@@ -237,7 +237,7 @@ public partial class MainWindow
             || !_visualResizeHandleService.IsAllowed(
                 element,
                 pointer.Handle)
-            || !_previewSvgCoordinateMapper.TryMap(
+            || !_previewSvgCoordinateMapper.TryMapEditingPoint(
                 visualDocument.Viewport,
                 pointer.Image,
                 pointer.ViewportPoint,
@@ -275,13 +275,22 @@ public partial class MainWindow
             || _visiblePreviewVisualDocument
                 is not SvgVisualDocument visualDocument
             || visualDocument.FindElement(gesture.ElementIdentity)
-                is not SvgVisualElement element
-            || !_previewSvgCoordinateMapper.TryMap(
+                is not SvgVisualElement element)
+        {
+            CancelVisualEditGesture("Visual resize cancelled");
+            return;
+        }
+        if (!_previewSvgCoordinateMapper.TryMapEditingPoint(
                 visualDocument.Viewport,
                 pointer.Image,
                 pointer.ViewportPoint,
-                out SvgMappedPreviewPoint mapped)
-            || !_visualResizeService.TryCalculate(
+                out SvgMappedPreviewPoint mapped))
+        {
+            CancelVisualEditGesture(
+                "The requested resize is outside the supported range.");
+            return;
+        }
+        if (!_visualResizeService.TryCalculate(
                 element,
                 gesture.Handle,
                 mapped.Point,
@@ -321,13 +330,22 @@ public partial class MainWindow
         if (_visiblePreviewVisualDocument
                 is not SvgVisualDocument visualDocument
             || visualDocument.FindElement(completed.ElementIdentity)
-                is not SvgVisualElement element
-            || !_previewSvgCoordinateMapper.TryMap(
+                is not SvgVisualElement element)
+        {
+            CancelVisualEditGesture("Visual resize cancelled");
+            return;
+        }
+        if (!_previewSvgCoordinateMapper.TryMapEditingPoint(
                 visualDocument.Viewport,
                 pointer.Image,
                 pointer.ViewportPoint,
-                out SvgMappedPreviewPoint mapped)
-            || !_visualResizeService.TryCalculate(
+                out SvgMappedPreviewPoint mapped))
+        {
+            CancelVisualEditGesture(
+                "The requested resize is outside the supported range.");
+            return;
+        }
+        if (!_visualResizeService.TryCalculate(
                 element,
                 completed.Handle,
                 mapped.Point,
@@ -499,14 +517,19 @@ public partial class MainWindow
     {
         if (!CanContinueVisualGesture(pointer, gesture)
             || _visiblePreviewVisualDocument
-                is not SvgVisualDocument visualDocument
-            || !_previewSvgCoordinateMapper.TryMap(
+                is not SvgVisualDocument visualDocument)
+        {
+            CancelVisualEditGesture();
+            return;
+        }
+        if (!_previewSvgCoordinateMapper.TryMapEditingPoint(
                 visualDocument.Viewport,
                 pointer.Image,
                 pointer.ViewportPoint,
                 out SvgMappedPreviewPoint mapped))
         {
-            CancelVisualEditGesture();
+            CancelVisualEditGesture(
+                "The requested movement is outside the supported range.");
             return;
         }
 
@@ -534,7 +557,10 @@ public partial class MainWindow
             mapped.SvgUnitsPerCssPixelY);
         double deltaX = snapped.DeltaX;
         double deltaY = snapped.DeltaY;
-        if (!IsSupportedVisualDelta(deltaX, deltaY))
+        if (!IsSupportedVisualMovement(
+                gesture.SelectionIdentities,
+                deltaX,
+                deltaY))
         {
             CancelVisualEditGesture(
                 "The requested movement is outside the supported range.");
@@ -569,43 +595,55 @@ public partial class MainWindow
         VisualEditGesture completed =
             _visualEditGesture ?? gesture;
         if (_visiblePreviewVisualDocument
-                is SvgVisualDocument visualDocument
-            && _previewSvgCoordinateMapper.TryMap(
+                is not SvgVisualDocument visualDocument
+            || !_previewSvgCoordinateMapper.TryMapEditingPoint(
                 visualDocument.Viewport,
                 pointer.Image,
                 pointer.ViewportPoint,
                 out SvgMappedPreviewPoint mapped))
         {
-            double clientDeltaX =
-                pointer.ViewportPoint.X
-                - completed.StartViewportPoint.X;
-            double clientDeltaY =
-                pointer.ViewportPoint.Y
-                - completed.StartViewportPoint.Y;
-            bool hasMoved = completed.HasMoved
-                || Math.Abs(clientDeltaX)
-                    >= SystemParameters.MinimumHorizontalDragDistance
-                || Math.Abs(clientDeltaY)
-                    >= SystemParameters.MinimumVerticalDragDistance;
-            if (hasMoved)
+            CancelVisualEditGesture(
+                "The requested movement is outside the supported range.");
+            return;
+        }
+        double clientDeltaX =
+            pointer.ViewportPoint.X
+            - completed.StartViewportPoint.X;
+        double clientDeltaY =
+            pointer.ViewportPoint.Y
+            - completed.StartViewportPoint.Y;
+        bool hasMoved = completed.HasMoved
+            || Math.Abs(clientDeltaX)
+                >= SystemParameters.MinimumHorizontalDragDistance
+            || Math.Abs(clientDeltaY)
+                >= SystemParameters.MinimumVerticalDragDistance;
+        if (hasMoved)
+        {
+            double requestedDeltaX =
+                mapped.Point.X - completed.StartSvgPoint.X;
+            double requestedDeltaY =
+                mapped.Point.Y - completed.StartSvgPoint.Y;
+            SvgSnapResult snapped = ResolveSnap(
+                completed,
+                requestedDeltaX,
+                requestedDeltaY,
+                mapped.SvgUnitsPerCssPixelX,
+                mapped.SvgUnitsPerCssPixelY);
+            if (!IsSupportedVisualMovement(
+                    completed.SelectionIdentities,
+                    snapped.DeltaX,
+                    snapped.DeltaY))
             {
-                double requestedDeltaX =
-                    mapped.Point.X - completed.StartSvgPoint.X;
-                double requestedDeltaY =
-                    mapped.Point.Y - completed.StartSvgPoint.Y;
-                SvgSnapResult snapped = ResolveSnap(
-                    completed,
-                    requestedDeltaX,
-                    requestedDeltaY,
-                    mapped.SvgUnitsPerCssPixelX,
-                    mapped.SvgUnitsPerCssPixelY);
-                completed = completed with
-                {
-                    DeltaX = snapped.DeltaX,
-                    DeltaY = snapped.DeltaY,
-                    HasMoved = true
-                };
+                CancelVisualEditGesture(
+                    "The requested movement is outside the supported range.");
+                return;
             }
+            completed = completed with
+            {
+                DeltaX = snapped.DeltaX,
+                DeltaY = snapped.DeltaY,
+                HasMoved = true
+            };
         }
         _visualEditGesture = null;
         _activeSnapGuides = [];
@@ -1604,6 +1642,31 @@ public partial class MainWindow
             && Math.Abs(deltaX) <= 1_000_000
             && Math.Abs(deltaY) <= 1_000_000;
     }
+
+    private bool IsSupportedVisualMovement(
+        IReadOnlyList<SvgElementIdentity> identities,
+        double deltaX,
+        double deltaY)
+    {
+        if (!IsSupportedVisualDelta(deltaX, deltaY)
+            || _visiblePreviewVisualDocument
+                is not SvgVisualDocument document)
+        {
+            return false;
+        }
+
+        return identities.All(identity =>
+            document.FindElement(identity)?.Geometry
+                is SvgVisualShapeGeometry geometry
+            && IsSupportedVisualCoordinate(geometry.X1 + deltaX)
+            && IsSupportedVisualCoordinate(geometry.Y1 + deltaY)
+            && IsSupportedVisualCoordinate(geometry.X2 + deltaX)
+            && IsSupportedVisualCoordinate(geometry.Y2 + deltaY));
+    }
+
+    private static bool IsSupportedVisualCoordinate(double value) =>
+        double.IsFinite(value)
+        && Math.Abs(value) <= SvgVisualLengthParser.MaximumAbsoluteValue;
 
     private sealed record VisualEditGesture(
         string GestureId,

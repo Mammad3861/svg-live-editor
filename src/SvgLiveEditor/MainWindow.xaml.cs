@@ -133,6 +133,7 @@ public partial class MainWindow : Window
         }
 
         InitializeComponent();
+        PreviewWebView.SetValue(FocusVisualStyleProperty, null);
         _previewContextMenu = CreatePreviewContextMenu();
         DataContext = _viewModel;
 

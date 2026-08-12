@@ -12,6 +12,35 @@ public sealed class PreviewSvgCoordinateMapper
         SvgVisualPoint viewportPoint,
         out SvgMappedPreviewPoint mappedPoint)
     {
+        return TryMapCore(
+            viewport,
+            image,
+            viewportPoint,
+            requireImageHit: true,
+            out mappedPoint);
+    }
+
+    public bool TryMapEditingPoint(
+        SvgVisualViewport viewport,
+        PreviewImageMetrics image,
+        SvgVisualPoint viewportPoint,
+        out SvgMappedPreviewPoint mappedPoint)
+    {
+        return TryMapCore(
+            viewport,
+            image,
+            viewportPoint,
+            requireImageHit: false,
+            out mappedPoint);
+    }
+
+    private static bool TryMapCore(
+        SvgVisualViewport viewport,
+        PreviewImageMetrics image,
+        SvgVisualPoint viewportPoint,
+        bool requireImageHit,
+        out SvgMappedPreviewPoint mappedPoint)
+    {
         mappedPoint = default;
         if (!IsPositiveFinite(image.Width)
             || !IsPositiveFinite(image.Height)
@@ -27,10 +56,11 @@ public sealed class PreviewSvgCoordinateMapper
 
         double localX = viewportPoint.X - image.Left;
         double localY = viewportPoint.Y - image.Top;
-        if (localX < 0
-            || localY < 0
-            || localX > image.Width
-            || localY > image.Height)
+        if (requireImageHit
+            && (localX < 0
+                || localY < 0
+                || localX > image.Width
+                || localY > image.Height))
         {
             return false;
         }
@@ -66,7 +96,8 @@ public sealed class PreviewSvgCoordinateMapper
             double contentHeight = viewport.Height * scale;
             double offsetX = (image.Width - contentWidth) * aspect.AlignX;
             double offsetY = (image.Height - contentHeight) * aspect.AlignY;
-            if (!aspect.IsSlice
+            if (requireImageHit
+                && !aspect.IsSlice
                 && (localX < offsetX
                     || localY < offsetY
                     || localX > offsetX + contentWidth
@@ -84,7 +115,11 @@ public sealed class PreviewSvgCoordinateMapper
 
         if (!double.IsFinite(userX)
             || !double.IsFinite(userY)
-            || !double.IsFinite(tolerance))
+            || !double.IsFinite(tolerance)
+            || Math.Abs(userX)
+                > SvgVisualLengthParser.MaximumAbsoluteValue
+            || Math.Abs(userY)
+                > SvgVisualLengthParser.MaximumAbsoluteValue)
         {
             return false;
         }

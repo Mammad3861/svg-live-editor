@@ -206,6 +206,22 @@ public sealed class PreviewVisualInteractionTests
                     0,
                     Gesture,
                     [])));
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>
+            builder.BuildVisualSelectionMessage(
+                Token,
+                7,
+                new PreviewVisualSelection(
+                    SvgVisualElementKind.Rect,
+                    new SvgVisualShapeGeometry(
+                        SvgVisualElementKind.Rect,
+                        999_999_999,
+                        0,
+                        1_000_000_000,
+                        1),
+                    2,
+                    0,
+                    Gesture,
+                    [])));
     }
 
     [TestMethod]

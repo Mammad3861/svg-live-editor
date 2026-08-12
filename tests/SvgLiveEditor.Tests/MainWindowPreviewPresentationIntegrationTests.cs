@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -564,8 +565,9 @@ public sealed class MainWindowPreviewPresentationIntegrationTests
         PixelEvidence screenPixels = AnalyzeScreenPixels(
             window.PreviewWebView);
         int naturalPresentationFrames = 0;
+        Stopwatch screenPresentationWait = Stopwatch.StartNew();
         while (!screenPixels.HasSubstantialArtwork
-               && naturalPresentationFrames < 8)
+               && screenPresentationWait.Elapsed < TimeSpan.FromSeconds(5))
         {
             await WaitForWpfRenderAsync();
             naturalPresentationFrames += 2;

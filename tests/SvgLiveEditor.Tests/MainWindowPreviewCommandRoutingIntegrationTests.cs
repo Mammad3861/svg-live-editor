@@ -65,6 +65,8 @@ public sealed class MainWindowPreviewCommandRoutingIntegrationTests
                 WindowStyle = WindowStyle.ToolWindow,
                 Topmost = false
             };
+            Assert.IsNull(window.PreviewWebView.GetValue(
+                FrameworkElement.FocusVisualStyleProperty));
             TaskCompletionSource<CoreWebView2> coreReady = new(
                 TaskCreationOptions.RunContinuationsAsynchronously);
             window.PreviewWebView.CoreWebView2InitializationCompleted +=

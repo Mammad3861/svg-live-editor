@@ -60,6 +60,49 @@ public sealed class SvgVisualMoveTests
     }
 
     [TestMethod]
+    public void MovementMayCrossEveryCanvasEdgeAndCorner()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><rect id=\"box\" x=\"10\" y=\"10\" width=\"80\" height=\"80\"/></svg>";
+        (double DeltaX, double DeltaY)[] cases =
+        [
+            (-20, 0),
+            (20, 0),
+            (0, -20),
+            (0, 20),
+            (-20, -20),
+            (20, -20),
+            (20, 20),
+            (-20, 20)
+        ];
+
+        foreach ((double deltaX, double deltaY) in cases)
+        {
+            string updated = Move(source, "box", deltaX, deltaY);
+            SvgVisualElement moved = Find(updated, "box");
+            Assert.IsTrue(moved.IsMovable, moved.UnsupportedReason);
+            Assert.AreEqual(10 + deltaX, moved.Geometry!.Bounds.Left, 0.0001);
+            Assert.AreEqual(10 + deltaY, moved.Geometry.Bounds.Top, 0.0001);
+        }
+    }
+
+    [TestMethod]
+    public void MovementRejectsAResultBeyondTheGlobalCoordinateLimit()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect id=\"box\" x=\"900000000\" y=\"0\" width=\"100000000\" height=\"1\"/></svg>";
+
+        SvgAttributeEditResult result = _moveService.CreateEdit(
+            source,
+            Find(source, "box"),
+            1,
+            0);
+
+        Assert.IsFalse(result.IsSuccess);
+        StringAssert.Contains(result.ErrorMessage, "outside the supported range");
+    }
+
+    [TestMethod]
     public void MissingDefaultPositionIsAddedOnlyOnChangedAxis()
     {
         const string source =

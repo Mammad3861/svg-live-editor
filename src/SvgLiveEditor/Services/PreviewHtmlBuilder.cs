@@ -46,6 +46,9 @@ public sealed class PreviewHtmlBuilder
           let viewportPostScheduled = false;
           let initialViewportApplied = false;
           let artworkHovered = false;
+          const interactionSurfacePadding = 24;
+          const resizeHandleAllowance = 5;
+          const maximumInteractionSurfaceDimension = 100000;
 
           const canPan = () =>
             viewport.scrollWidth > viewport.clientWidth ||
@@ -485,6 +488,63 @@ public sealed class PreviewHtmlBuilder
             refreshCursor();
           };
 
+          const updateInteractionSurface = (preserveImagePosition = true) => {
+            const imageRectBefore = image.getBoundingClientRect();
+            if (!Number.isFinite(imageRectBefore.width) ||
+                !Number.isFinite(imageRectBefore.height) ||
+                imageRectBefore.width <= 0 || imageRectBefore.height <= 0) {
+              return;
+            }
+
+            let horizontalOverhang = 0;
+            let verticalOverhang = 0;
+            const selectionShapes = selectionOverlay.querySelectorAll(
+              '.selection-accent');
+            selectionShapes
+              .forEach(shape => {
+                const shapeRect = shape.getBoundingClientRect();
+                if (![shapeRect.left, shapeRect.top,
+                      shapeRect.right, shapeRect.bottom]
+                    .every(Number.isFinite)) {
+                  return;
+                }
+                horizontalOverhang = Math.max(
+                  horizontalOverhang,
+                  imageRectBefore.left - shapeRect.left,
+                  shapeRect.right - imageRectBefore.right);
+                verticalOverhang = Math.max(
+                  verticalOverhang,
+                  imageRectBefore.top - shapeRect.top,
+                  shapeRect.bottom - imageRectBefore.bottom);
+              });
+
+            const desiredWidth = Math.min(
+              maximumInteractionSurfaceDimension,
+              Math.ceil(imageRectBefore.width +
+                (2 * (interactionSurfacePadding +
+                  (selectionShapes.length > 0 ? resizeHandleAllowance : 0) +
+                  Math.max(0, horizontalOverhang)))));
+            const desiredHeight = Math.min(
+              maximumInteractionSurfaceDimension,
+              Math.ceil(imageRectBefore.height +
+                (2 * (interactionSurfacePadding +
+                  (selectionShapes.length > 0 ? resizeHandleAllowance : 0) +
+                  Math.max(0, verticalOverhang)))));
+            stage.dataset.interactionSurfaceClamped =
+              desiredWidth >= maximumInteractionSurfaceDimension ||
+              desiredHeight >= maximumInteractionSurfaceDimension
+                ? 'true'
+                : 'false';
+            stage.style.width = `${desiredWidth}px`;
+            stage.style.height = `${desiredHeight}px`;
+
+            if (preserveImagePosition) {
+              const imageRectAfter = image.getBoundingClientRect();
+              viewport.scrollLeft += imageRectAfter.left - imageRectBefore.left;
+              viewport.scrollTop += imageRectAfter.top - imageRectBefore.top;
+            }
+          };
+
           const renderVisualSelection = message => {
             const primary = message.selections.find(item => item.isPrimary)
               || null;
@@ -497,6 +557,7 @@ public sealed class PreviewHtmlBuilder
             resizeHandleLayer.replaceChildren();
             activeVisualSelection = null;
             if (message.selections.length === 0) {
+              updateInteractionSurface();
               refreshCursor();
               return;
             }
@@ -572,6 +633,8 @@ public sealed class PreviewHtmlBuilder
               selectionOverlay.appendChild(line);
             }
 
+            updateInteractionSurface();
+
             activeVisualSelection = primary === null ? null : {
               selectionId: primary.selectionId,
               handles: primary.handles,
@@ -641,6 +704,10 @@ public sealed class PreviewHtmlBuilder
               Math.abs(item.deltaX) <= 1000000000 &&
             Number.isFinite(item.deltaY) &&
               Math.abs(item.deltaY) <= 1000000000 &&
+            [item.x1 + item.deltaX, item.x2 + item.deltaX,
+             item.y1 + item.deltaY, item.y2 + item.deltaY]
+              .every(value => Number.isFinite(value) &&
+                Math.abs(value) <= 1000000000) &&
             typeof item.selectionId === 'string' &&
             /^[0-9a-fA-F]{32}$/.test(item.selectionId) &&
             typeof item.isPrimary === 'boolean' &&
@@ -886,6 +953,7 @@ public sealed class PreviewHtmlBuilder
                 stage.style.width = `${message.renderedWidth + 48}px`;
                 stage.style.height = `${message.renderedHeight + 48}px`;
                 requestAnimationFrame(() => {
+                  updateInteractionSurface(false);
                   restoreViewportCenter(message.centerX, message.centerY);
                   positionResizeHandles();
                 });
@@ -1434,12 +1502,16 @@ public sealed class PreviewHtmlBuilder
           });
 
           window.addEventListener('blur', () => {
+            viewport.classList.remove('pointer-focused');
             spaceHeld = false;
             stopPan();
             stopDirectDrag();
             stopResizeGesture();
             stopVisualGesture();
             refreshCursor();
+          });
+          viewport.addEventListener('blur', () => {
+            viewport.classList.remove('pointer-focused');
           });
 
           const applyInitialViewport = () => {
