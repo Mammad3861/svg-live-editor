@@ -6,6 +6,7 @@ namespace SvgLiveEditor.ViewModels;
 public sealed class SvgLayerViewModel : ObservableObject
 {
     private bool _isSelected;
+    private bool _isMultiSelected;
     private bool _isExpanded;
     private bool _isDropBefore;
     private bool _isDropAfter;
@@ -36,6 +37,12 @@ public sealed class SvgLayerViewModel : ObservableObject
     public string OpaqueId => Item.OpaqueId;
 
     public string Label => Item.Label;
+
+    public string AutomationName => IsSelected
+        ? $"{Label}, primary selected"
+        : IsMultiSelected
+            ? $"{Label}, selected"
+            : Label;
 
     public string FriendlyName => Item.FriendlyName;
 
@@ -109,7 +116,13 @@ public sealed class SvgLayerViewModel : ObservableObject
             : "Visually editable artwork.";
 
     public string RowHelp =>
-        $"SVG element {TechnicalLabel}. {EditabilityHelp} {VisibilityHelp} {LockHelp}";
+        $"SVG element {TechnicalLabel}. "
+        + (IsSelected
+            ? "Primary selection item. "
+            : IsMultiSelected
+                ? "Included in the current multi-selection. "
+                : string.Empty)
+        + $"{EditabilityHelp} {VisibilityHelp} {LockHelp}";
 
     public bool IsSelected
     {
@@ -121,7 +134,24 @@ public sealed class SvgLayerViewModel : ObservableObject
                 _pendingSelectionOrigin = null;
             }
 
-            SetProperty(ref _isSelected, value);
+            if (SetProperty(ref _isSelected, value))
+            {
+                OnPropertyChanged(nameof(AutomationName));
+                OnPropertyChanged(nameof(RowHelp));
+            }
+        }
+    }
+
+    public bool IsMultiSelected
+    {
+        get => _isMultiSelected;
+        set
+        {
+            if (SetProperty(ref _isMultiSelected, value))
+            {
+                OnPropertyChanged(nameof(AutomationName));
+                OnPropertyChanged(nameof(RowHelp));
+            }
         }
     }
 

@@ -63,10 +63,17 @@ public sealed class UserPreferencesService
                 && autoSaveValue.ValueKind is JsonValueKind.True or JsonValueKind.False
                     ? autoSaveValue.GetBoolean()
                     : false;
+            bool snapToObjects = root.TryGetProperty(
+                    "snapToObjects",
+                    out JsonElement snapValue)
+                && snapValue.ValueKind is JsonValueKind.True or JsonValueKind.False
+                    ? snapValue.GetBoolean()
+                    : true;
             return new UserPreferences(wordWrap, ReadPreviewZoom(root))
             {
                 AutoSaveEnabled = autoSaveEnabled,
                 ReopenLastDocumentOnStartup = reopenLastDocument,
+                SnapToObjects = snapToObjects,
                 LastDocumentPath = string.IsNullOrWhiteSpace(lastDocumentPath)
                     ? null
                     : lastDocumentPath
@@ -97,6 +104,7 @@ public sealed class UserPreferencesService
                 wordWrap = preferences.WordWrap,
                 previewZoomMode = preferences.PreviewZoom.Mode.ToString(),
                 previewZoomPercent = preferences.PreviewZoom.ManualScale * 100,
+                snapToObjects = preferences.SnapToObjects,
                 autoSaveEnabled = preferences.AutoSaveEnabled,
                 reopenLastDocumentOnStartup =
                     preferences.ReopenLastDocumentOnStartup,

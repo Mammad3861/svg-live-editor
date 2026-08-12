@@ -30,6 +30,15 @@ public sealed class SvgVisualMoveService
             return SvgAttributeEditResult.Invalid(
                 "The requested movement is outside the supported range.");
         }
+        if (element.Geometry is not SvgVisualShapeGeometry geometry
+            || !IsBounded(geometry.X1 + deltaX)
+            || !IsBounded(geometry.Y1 + deltaY)
+            || !IsBounded(geometry.X2 + deltaX)
+            || !IsBounded(geometry.Y2 + deltaY))
+        {
+            return SvgAttributeEditResult.Invalid(
+                "The requested movement is outside the supported range.");
+        }
 
         SvgElementNode sourceElement = element.SourceElement;
         SourceSpan span = sourceElement.StartTagSpan;
@@ -71,9 +80,18 @@ public sealed class SvgVisualMoveService
                     $"Visual editing requires unitless or px {name} geometry.");
             }
 
+            double moved = original + delta;
+            if (!double.IsFinite(moved)
+                || Math.Abs(moved)
+                    > SvgVisualLengthParser.MaximumAbsoluteValue)
+            {
+                return SvgAttributeEditResult.Invalid(
+                    "The requested movement is outside the supported range.");
+            }
+
             string value = FormatMovedValue(
                 attribute?.RawValue,
-                original + delta,
+                moved,
                 suffix);
             if (attribute is null)
             {
@@ -217,6 +235,10 @@ public sealed class SvgVisualMoveService
         int separator = mantissa.IndexOf('.');
         return separator < 0 ? 0 : mantissa.Length - separator - 1;
     }
+
+    private static bool IsBounded(double value) =>
+        double.IsFinite(value)
+        && Math.Abs(value) <= SvgVisualLengthParser.MaximumAbsoluteValue;
 
     private static SvgAttributeEditResult Stale() =>
         SvgAttributeEditResult.Invalid(

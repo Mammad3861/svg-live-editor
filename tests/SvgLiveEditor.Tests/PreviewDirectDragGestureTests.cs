@@ -10,11 +10,23 @@ public sealed class PreviewDirectDragGestureTests
     private readonly PreviewPointerGestureArbiter _arbiter = new();
 
     [TestMethod]
-    public void AltPrimaryMouseDragOverArtwork_SelectsOutboundDrag()
+    public void CtrlPrimaryMouseDragOverArtwork_SelectsOutboundDrag()
     {
         Assert.AreEqual(
             PreviewPointerGestureAction.OutboundDrag,
             _arbiter.Resolve(CreateGesture()));
+    }
+
+    [TestMethod]
+    public void AltPrimaryMouseDrag_RemainsACompatibleOutboundDragAlias()
+    {
+        Assert.AreEqual(
+            PreviewPointerGestureAction.OutboundDrag,
+            _arbiter.Resolve(CreateGesture() with
+            {
+                ControlHeld = false,
+                AltHeld = true
+            }));
     }
 
     [TestMethod]
@@ -29,30 +41,27 @@ public sealed class PreviewDirectDragGestureTests
     }
 
     [TestMethod]
-    public void PanModeAndAlternatePanGesturesTakePriority()
+    public void PanModeSpaceAndMiddleDragTakePanPriority()
     {
         Assert.AreEqual(
             PreviewPointerGestureAction.Pan,
             _arbiter.Resolve(CreateGesture() with
             {
+                ControlHeld = false,
                 PanModeEnabled = true
             }));
         Assert.AreEqual(
             PreviewPointerGestureAction.Pan,
             _arbiter.Resolve(CreateGesture() with
             {
-                ControlHeld = true
-            }));
-        Assert.AreEqual(
-            PreviewPointerGestureAction.Pan,
-            _arbiter.Resolve(CreateGesture() with
-            {
+                ControlHeld = false,
                 SpaceHeld = true
             }));
         Assert.AreEqual(
             PreviewPointerGestureAction.Pan,
             _arbiter.Resolve(CreateGesture() with
             {
+                ControlHeld = false,
                 Button = 1
             }));
     }
@@ -68,10 +77,30 @@ public sealed class PreviewDirectDragGestureTests
             _arbiter.Resolve(CreateGesture() with { IsMouse = false }));
         Assert.AreEqual(
             PreviewPointerGestureAction.None,
-            _arbiter.Resolve(CreateGesture() with { ShiftHeld = true }));
+            _arbiter.Resolve(CreateGesture() with
+            {
+                ControlHeld = false,
+                ShiftHeld = true
+            }));
         Assert.AreEqual(
             PreviewPointerGestureAction.None,
-            _arbiter.Resolve(CreateGesture() with { AltHeld = false }));
+            _arbiter.Resolve(CreateGesture() with
+            {
+                ControlHeld = false,
+                AltHeld = false
+            }));
+        Assert.AreEqual(
+            PreviewPointerGestureAction.None,
+            _arbiter.Resolve(CreateGesture() with { AltHeld = true }));
+        Assert.AreEqual(
+            PreviewPointerGestureAction.None,
+            _arbiter.Resolve(CreateGesture() with { SpaceHeld = true }));
+        Assert.AreEqual(
+            PreviewPointerGestureAction.None,
+            _arbiter.Resolve(CreateGesture() with { PanModeEnabled = true }));
+        Assert.AreEqual(
+            PreviewPointerGestureAction.None,
+            _arbiter.Resolve(CreateGesture() with { Button = 1 }));
         Assert.AreEqual(
             PreviewPointerGestureAction.None,
             _arbiter.Resolve(CreateGesture() with { MetaHeld = true }));
@@ -248,9 +277,9 @@ public sealed class PreviewDirectDragGestureTests
             StartedOnArtwork: true,
             IsPrimary: true,
             IsMouse: true,
-            ControlHeld: false,
+            ControlHeld: true,
             ShiftHeld: false,
-            AltHeld: true,
+            AltHeld: false,
             MetaHeld: false,
             SpaceHeld: false,
             PanModeEnabled: false);

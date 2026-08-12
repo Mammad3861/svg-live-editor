@@ -46,6 +46,9 @@ public sealed class PreviewHtmlBuilder
           let viewportPostScheduled = false;
           let initialViewportApplied = false;
           let artworkHovered = false;
+          const interactionSurfacePadding = 24;
+          const resizeHandleAllowance = 5;
+          const maximumInteractionSurfaceDimension = 100000;
 
           const canPan = () =>
             viewport.scrollWidth > viewport.clientWidth ||
@@ -203,7 +206,8 @@ public sealed class PreviewHtmlBuilder
           const postAuthoringCommand = command => {
             if (bridge && Number.isSafeInteger(sourceRevision) &&
                 sourceRevision >= 0 &&
-                (command === 'delete' || command === 'duplicate')) {
+                (command === 'delete' || command === 'duplicate' ||
+                 command === 'group' || command === 'ungroup')) {
               bridge.postMessage({
                 type: 'authoringCommand',
                 token: bridgeToken,
@@ -396,33 +400,36 @@ public sealed class PreviewHtmlBuilder
             return underneath === image;
           };
 
+          const hasOutboundDragModifier = event =>
+            (event.ctrlKey && !event.altKey && !event.shiftKey && !event.metaKey) ||
+            (event.altKey && !event.ctrlKey && !event.shiftKey && !event.metaKey);
+
           const choosePointerAction = event => {
             if (event.button === 1) {
-              return 'pan';
+              return event.ctrlKey || event.shiftKey || event.altKey ||
+                event.metaKey || spaceHeld ? 'none' : 'pan';
             }
             if (event.button !== 0) {
               return 'none';
             }
-            if (spaceHeld || event.ctrlKey || panModeEnabled) {
-              return 'pan';
+            if (spaceHeld || panModeEnabled) {
+              return event.ctrlKey || event.shiftKey || event.altKey ||
+                event.metaKey ? 'none' : 'pan';
             }
             if (!event.isTrusted || !event.isPrimary ||
                 event.pointerType !== 'mouse') {
               return 'none';
             }
             const resizeHandle = getResizeHandle(event.target);
-            if (event.altKey && !event.shiftKey && !event.metaKey &&
+            if (hasOutboundDragModifier(event) &&
                 isArtworkUnderPointer(event)) {
               return 'drag';
             }
-            if (event.altKey || event.metaKey) {
+            if (event.ctrlKey || event.altKey || event.metaKey) {
               return 'none';
             }
             if (resizeHandle !== null) {
               return 'resize';
-            }
-            if (event.shiftKey) {
-              return 'none';
             }
             return 'visual';
           };
@@ -481,70 +488,160 @@ public sealed class PreviewHtmlBuilder
             refreshCursor();
           };
 
+          const updateInteractionSurface = (preserveImagePosition = true) => {
+            const imageRectBefore = image.getBoundingClientRect();
+            if (!Number.isFinite(imageRectBefore.width) ||
+                !Number.isFinite(imageRectBefore.height) ||
+                imageRectBefore.width <= 0 || imageRectBefore.height <= 0) {
+              return;
+            }
+
+            let horizontalOverhang = 0;
+            let verticalOverhang = 0;
+            const selectionShapes = selectionOverlay.querySelectorAll(
+              '.selection-accent');
+            selectionShapes
+              .forEach(shape => {
+                const shapeRect = shape.getBoundingClientRect();
+                if (![shapeRect.left, shapeRect.top,
+                      shapeRect.right, shapeRect.bottom]
+                    .every(Number.isFinite)) {
+                  return;
+                }
+                horizontalOverhang = Math.max(
+                  horizontalOverhang,
+                  imageRectBefore.left - shapeRect.left,
+                  shapeRect.right - imageRectBefore.right);
+                verticalOverhang = Math.max(
+                  verticalOverhang,
+                  imageRectBefore.top - shapeRect.top,
+                  shapeRect.bottom - imageRectBefore.bottom);
+              });
+
+            const desiredWidth = Math.min(
+              maximumInteractionSurfaceDimension,
+              Math.ceil(imageRectBefore.width +
+                (2 * (interactionSurfacePadding +
+                  (selectionShapes.length > 0 ? resizeHandleAllowance : 0) +
+                  Math.max(0, horizontalOverhang)))));
+            const desiredHeight = Math.min(
+              maximumInteractionSurfaceDimension,
+              Math.ceil(imageRectBefore.height +
+                (2 * (interactionSurfacePadding +
+                  (selectionShapes.length > 0 ? resizeHandleAllowance : 0) +
+                  Math.max(0, verticalOverhang)))));
+            stage.dataset.interactionSurfaceClamped =
+              desiredWidth >= maximumInteractionSurfaceDimension ||
+              desiredHeight >= maximumInteractionSurfaceDimension
+                ? 'true'
+                : 'false';
+            stage.style.width = `${desiredWidth}px`;
+            stage.style.height = `${desiredHeight}px`;
+
+            if (preserveImagePosition) {
+              const imageRectAfter = image.getBoundingClientRect();
+              viewport.scrollLeft += imageRectAfter.left - imageRectBefore.left;
+              viewport.scrollTop += imageRectAfter.top - imageRectBefore.top;
+            }
+          };
+
           const renderVisualSelection = message => {
+            const primary = message.selections.find(item => item.isPrimary)
+              || null;
             if (activeResizeGesture !== null &&
-                (!message.visible ||
-                 message.selectionId !== activeResizeGesture.selectionId)) {
+                (primary === null ||
+                 primary.selectionId !== activeResizeGesture.selectionId)) {
               stopResizeGesture();
             }
             selectionOverlay.replaceChildren();
             resizeHandleLayer.replaceChildren();
             activeVisualSelection = null;
-            if (!message.visible) {
+            if (message.selections.length === 0) {
+              updateInteractionSurface();
               refreshCursor();
               return;
             }
 
             const namespace = 'http://www.w3.org/2000/svg';
-            const deltaX = message.deltaX;
-            const deltaY = message.deltaY;
-            let shape;
-            if (message.kind === 'line') {
-              shape = document.createElementNS(namespace, 'line');
-              shape.setAttribute('x1', message.x1 + deltaX);
-              shape.setAttribute('y1', message.y1 + deltaY);
-              shape.setAttribute('x2', message.x2 + deltaX);
-              shape.setAttribute('y2', message.y2 + deltaY);
-            } else if (message.kind === 'ellipse' ||
-                       message.kind === 'circle') {
-              shape = document.createElementNS(namespace, 'ellipse');
-              shape.setAttribute(
-                'cx',
-                ((message.x1 + message.x2) / 2) + deltaX);
-              shape.setAttribute(
-                'cy',
-                ((message.y1 + message.y2) / 2) + deltaY);
-              shape.setAttribute(
-                'rx',
-                Math.abs(message.x2 - message.x1) / 2);
-              shape.setAttribute(
-                'ry',
-                Math.abs(message.y2 - message.y1) / 2);
-            } else {
-              shape = document.createElementNS(namespace, 'rect');
-              shape.setAttribute(
-                'x',
-                Math.min(message.x1, message.x2) + deltaX);
-              shape.setAttribute(
-                'y',
-                Math.min(message.y1, message.y2) + deltaY);
-              shape.setAttribute(
-                'width',
-                Math.abs(message.x2 - message.x1));
-              shape.setAttribute(
-                'height',
-                Math.abs(message.y2 - message.y1));
+            for (const item of message.selections) {
+              const deltaX = item.deltaX;
+              const deltaY = item.deltaY;
+              let shape;
+              if (item.kind === 'line') {
+                shape = document.createElementNS(namespace, 'line');
+                shape.setAttribute('x1', item.x1 + deltaX);
+                shape.setAttribute('y1', item.y1 + deltaY);
+                shape.setAttribute('x2', item.x2 + deltaX);
+                shape.setAttribute('y2', item.y2 + deltaY);
+              } else if (item.kind === 'ellipse' ||
+                         item.kind === 'circle') {
+                shape = document.createElementNS(namespace, 'ellipse');
+                shape.setAttribute(
+                  'cx',
+                  ((item.x1 + item.x2) / 2) + deltaX);
+                shape.setAttribute(
+                  'cy',
+                  ((item.y1 + item.y2) / 2) + deltaY);
+                shape.setAttribute(
+                  'rx',
+                  Math.abs(item.x2 - item.x1) / 2);
+                shape.setAttribute(
+                  'ry',
+                  Math.abs(item.y2 - item.y1) / 2);
+              } else {
+                shape = document.createElementNS(namespace, 'rect');
+                shape.setAttribute(
+                  'x',
+                  Math.min(item.x1, item.x2) + deltaX);
+                shape.setAttribute(
+                  'y',
+                  Math.min(item.y1, item.y2) + deltaY);
+                shape.setAttribute(
+                  'width',
+                  Math.abs(item.x2 - item.x1));
+                shape.setAttribute(
+                  'height',
+                  Math.abs(item.y2 - item.y1));
+              }
+              const underlay = shape.cloneNode(false);
+              underlay.classList.add(
+                'selection-shape',
+                'selection-underlay',
+                item.isPrimary ? 'primary' : 'secondary');
+              shape.classList.add(
+                'selection-shape',
+                'selection-accent',
+                item.isPrimary ? 'primary' : 'secondary');
+              selectionOverlay.appendChild(underlay);
+              selectionOverlay.appendChild(shape);
             }
-            shape.classList.add('selection-shape');
-            selectionOverlay.appendChild(shape);
 
-            activeVisualSelection = {
-              selectionId: message.selectionId,
-              handles: message.handles,
-              deltaX,
-              deltaY
+            for (const guide of message.guides) {
+              const line = document.createElementNS(namespace, 'line');
+              line.classList.add('snap-guide');
+              if (guide.orientation === 'vertical') {
+                line.setAttribute('x1', guide.position);
+                line.setAttribute('x2', guide.position);
+                line.setAttribute('y1', guide.start);
+                line.setAttribute('y2', guide.end);
+              } else {
+                line.setAttribute('x1', guide.start);
+                line.setAttribute('x2', guide.end);
+                line.setAttribute('y1', guide.position);
+                line.setAttribute('y2', guide.position);
+              }
+              selectionOverlay.appendChild(line);
+            }
+
+            updateInteractionSurface();
+
+            activeVisualSelection = primary === null ? null : {
+              selectionId: primary.selectionId,
+              handles: primary.handles,
+              deltaX: primary.deltaX,
+              deltaY: primary.deltaY
             };
-            for (const handleDefinition of message.handles) {
+            for (const handleDefinition of primary?.handles || []) {
               const handle = document.createElement('div');
               handle.className = 'resize-handle';
               handle.dataset.handle = handleDefinition.id;
@@ -593,6 +690,52 @@ public sealed class PreviewHtmlBuilder
                   : [];
             return handles.every(handle => allowed.includes(handle.id));
           };
+
+          const isValidVisualSelectionItem = item =>
+            item && typeof item === 'object' &&
+            Object.keys(item).length === 10 &&
+            ['rect', 'circle', 'ellipse', 'line', 'text']
+              .includes(item.kind) &&
+            Number.isFinite(item.x1) && Math.abs(item.x1) <= 1000000000 &&
+            Number.isFinite(item.y1) && Math.abs(item.y1) <= 1000000000 &&
+            Number.isFinite(item.x2) && Math.abs(item.x2) <= 1000000000 &&
+            Number.isFinite(item.y2) && Math.abs(item.y2) <= 1000000000 &&
+            Number.isFinite(item.deltaX) &&
+              Math.abs(item.deltaX) <= 1000000000 &&
+            Number.isFinite(item.deltaY) &&
+              Math.abs(item.deltaY) <= 1000000000 &&
+            [item.x1 + item.deltaX, item.x2 + item.deltaX,
+             item.y1 + item.deltaY, item.y2 + item.deltaY]
+              .every(value => Number.isFinite(value) &&
+                Math.abs(value) <= 1000000000) &&
+            typeof item.selectionId === 'string' &&
+            /^[0-9a-fA-F]{32}$/.test(item.selectionId) &&
+            typeof item.isPrimary === 'boolean' &&
+            Array.isArray(item.handles) && item.handles.length <= 8 &&
+            item.handles.every(handle =>
+              handle && typeof handle === 'object' &&
+              Object.keys(handle).length === 3 &&
+              typeof handle.id === 'string' &&
+              ['top-left', 'top', 'top-right', 'right',
+               'bottom-right', 'bottom', 'bottom-left', 'left',
+               'start', 'end'].includes(handle.id) &&
+              Number.isFinite(handle.x) && Math.abs(handle.x) <= 1000000000 &&
+              Number.isFinite(handle.y) && Math.abs(handle.y) <= 1000000000) &&
+            new Set(item.handles.map(handle => handle.id)).size ===
+              item.handles.length &&
+            areHandlesAllowedForKind(item.kind, item.handles);
+
+          const isValidAlignmentGuide = guide =>
+            guide && typeof guide === 'object' &&
+            Object.keys(guide).length === 4 &&
+            ['vertical', 'horizontal'].includes(guide.orientation) &&
+            Number.isFinite(guide.position) &&
+              Math.abs(guide.position) <= 1000000000 &&
+            Number.isFinite(guide.start) &&
+              Math.abs(guide.start) <= 1000000000 &&
+            Number.isFinite(guide.end) &&
+              Math.abs(guide.end) <= 1000000000 &&
+            guide.end >= guide.start;
 
           const isSafeFontFamily = value => {
             if (typeof value !== 'string' ||
@@ -810,6 +953,7 @@ public sealed class PreviewHtmlBuilder
                 stage.style.width = `${message.renderedWidth + 48}px`;
                 stage.style.height = `${message.renderedHeight + 48}px`;
                 requestAnimationFrame(() => {
+                  updateInteractionSurface(false);
                   restoreViewportCenter(message.centerX, message.centerY);
                   positionResizeHandles();
                 });
@@ -852,49 +996,25 @@ public sealed class PreviewHtmlBuilder
               }
 
               if (message.type === 'visualSelection' &&
-                  Object.keys(message).length === 13 &&
+                  Object.keys(message).length === 5 &&
                   Number.isSafeInteger(message.sourceRevision) &&
                   message.sourceRevision === sourceRevision &&
-                  typeof message.visible === 'boolean' &&
-                  ['none', 'rect', 'circle', 'ellipse', 'line', 'text']
-                    .includes(message.kind) &&
-                  Number.isFinite(message.x1) &&
-                  Math.abs(message.x1) <= 1000000000 &&
-                  Number.isFinite(message.y1) &&
-                  Math.abs(message.y1) <= 1000000000 &&
-                  Number.isFinite(message.x2) &&
-                  Math.abs(message.x2) <= 1000000000 &&
-                  Number.isFinite(message.y2) &&
-                  Math.abs(message.y2) <= 1000000000 &&
-                  Number.isFinite(message.deltaX) &&
-                  Math.abs(message.deltaX) <= 1000000000 &&
-                  Number.isFinite(message.deltaY) &&
-                  Math.abs(message.deltaY) <= 1000000000 &&
-                  typeof message.selectionId === 'string' &&
-                  Array.isArray(message.handles) &&
-                  message.handles.length <= 8 &&
-                  message.handles.every(handle =>
-                    handle && typeof handle === 'object' &&
-                    Object.keys(handle).length === 3 &&
-                    typeof handle.id === 'string' &&
-                    ['top-left', 'top', 'top-right', 'right',
-                     'bottom-right', 'bottom', 'bottom-left', 'left',
-                     'start', 'end'].includes(handle.id) &&
-                    Number.isFinite(handle.x) &&
-                    Math.abs(handle.x) <= 1000000000 &&
-                    Number.isFinite(handle.y) &&
-                    Math.abs(handle.y) <= 1000000000) &&
-                  new Set(message.handles.map(handle => handle.id)).size ===
-                    message.handles.length &&
-                  areHandlesAllowedForKind(message.kind, message.handles) &&
-                  ((message.visible && message.kind !== 'none' &&
-                    /^[0-9a-fA-F]{32}$/.test(message.selectionId)) ||
-                   (!message.visible && message.kind === 'none' &&
-                    message.selectionId === '' &&
-                    message.handles.length === 0 &&
-                    message.x1 === 0 && message.y1 === 0 &&
-                    message.x2 === 0 && message.y2 === 0 &&
-                    message.deltaX === 0 && message.deltaY === 0))) {
+                  Array.isArray(message.selections) &&
+                  message.selections.length <= 128 &&
+                  message.selections.every(isValidVisualSelectionItem) &&
+                  new Set(message.selections.map(item => item.selectionId))
+                    .size === message.selections.length &&
+                  (message.selections.length === 0 ||
+                   message.selections.filter(item => item.isPrimary).length === 1) &&
+                  (message.selections.length <= 1 ||
+                   message.selections.every(item => item.handles.length === 0)) &&
+                  Array.isArray(message.guides) &&
+                  message.guides.length <= 2 &&
+                  (message.selections.length > 0 ||
+                   message.guides.length === 0) &&
+                  message.guides.every(isValidAlignmentGuide) &&
+                  new Set(message.guides.map(item => item.orientation)).size ===
+                    message.guides.length) {
                 renderVisualSelection(message);
                 return;
               }
@@ -1038,6 +1158,7 @@ public sealed class PreviewHtmlBuilder
           });
 
           viewport.addEventListener('pointerdown', event => {
+            viewport.classList.add('pointer-focused');
             rememberPointer(event);
             const action = choosePointerAction(event);
             if (action === 'resize') {
@@ -1182,8 +1303,8 @@ public sealed class PreviewHtmlBuilder
                 event.pointerId === activeDirectDrag.pointerId) {
               if (!event.isTrusted ||
                   (event.buttons & 1) === 0 ||
-                  spaceHeld || event.ctrlKey || panModeEnabled ||
-                  event.shiftKey || !event.altKey || event.metaKey) {
+                  spaceHeld || panModeEnabled ||
+                  !hasOutboundDragModifier(event)) {
                 stopDirectDrag(event);
                 return;
               }
@@ -1295,6 +1416,7 @@ public sealed class PreviewHtmlBuilder
           });
           viewport.addEventListener('contextmenu', event => {
             event.preventDefault();
+            viewport.classList.add('pointer-focused');
             stopDirectDrag();
             stopResizeGesture();
             stopVisualGesture();
@@ -1304,11 +1426,17 @@ public sealed class PreviewHtmlBuilder
           });
 
           window.addEventListener('keydown', event => {
+            viewport.classList.remove('pointer-focused');
             if (event.code === 'KeyC' &&
                 event.ctrlKey && !event.shiftKey &&
                 !event.altKey && !event.metaKey) {
               event.preventDefault();
               postCopyCommand();
+            } else if (event.code === 'KeyG' &&
+                       event.ctrlKey && !event.altKey && !event.metaKey &&
+                       !event.repeat && !event.isComposing) {
+              event.preventDefault();
+              postAuthoringCommand(event.shiftKey ? 'ungroup' : 'group');
             } else if (event.code === 'KeyD' &&
                        event.ctrlKey && !event.shiftKey &&
                        !event.altKey && !event.metaKey &&
@@ -1374,12 +1502,16 @@ public sealed class PreviewHtmlBuilder
           });
 
           window.addEventListener('blur', () => {
+            viewport.classList.remove('pointer-focused');
             spaceHeld = false;
             stopPan();
             stopDirectDrag();
             stopResizeGesture();
             stopVisualGesture();
             refreshCursor();
+          });
+          viewport.addEventListener('blur', () => {
+            viewport.classList.remove('pointer-focused');
           });
 
           const applyInitialViewport = () => {
@@ -1678,7 +1810,12 @@ public sealed class PreviewHtmlBuilder
                   user-select: none;
                 }
                 .preview-viewport:focus-visible {
-                  box-shadow: inset 0 0 0 3px #2563eb;
+                  box-shadow:
+                    inset 0 0 0 1px #1d4ed8,
+                    inset 0 0 0 2px rgba(255, 255, 255, 0.9);
+                }
+                .preview-viewport.pointer-focused:focus {
+                  box-shadow: none;
                 }
                 .preview-viewport.can-pan.space-held,
                 .preview-viewport.can-pan.pan-mode {
@@ -1729,27 +1866,47 @@ public sealed class PreviewHtmlBuilder
                   z-index: 1;
                 }
                 .selection-shape {
-                  fill: transparent;
+                  fill: none;
+                  vector-effect: non-scaling-stroke;
+                  pointer-events: none;
+                }
+                .selection-underlay {
+                  stroke: #ffffff;
+                  stroke-width: 4;
+                  opacity: 0.96;
+                }
+                .selection-accent {
                   stroke: {{SelectionAccentColor}};
                   stroke-width: 1.5;
+                  transition: stroke 90ms ease, stroke-width 90ms ease;
+                }
+                .selection-shape.secondary {
+                  stroke-dasharray: 5 3;
+                }
+                .selection-accent.secondary {
+                  opacity: 0.9;
+                }
+                .snap-guide {
+                  fill: none;
+                  stroke: #db2777;
+                  stroke-width: 1;
+                  stroke-dasharray: 4 3;
                   vector-effect: non-scaling-stroke;
-                  transition: fill 90ms ease, stroke 90ms ease, stroke-width 90ms ease;
+                  pointer-events: none;
                 }
                 .preview-viewport.artwork-hovered
                     .selection-overlay[data-state="selected"]
-                    .selection-shape {
-                  fill: rgba(37, 99, 235, 0.055);
+                    .selection-accent {
                   stroke: {{SelectionAccentStrongColor}};
                 }
-                .selection-overlay[data-state="moving"] .selection-shape {
-                  fill: rgba(37, 99, 235, 0.09);
+                .selection-overlay[data-state="moving"] .selection-accent,
+                .selection-overlay[data-state="resizing"] .selection-accent {
                   stroke: {{SelectionAccentStrongColor}};
                   stroke-width: 2;
                 }
-                .selection-overlay[data-state="resizing"] .selection-shape {
-                  fill: rgba(37, 99, 235, 0.045);
-                  stroke: {{SelectionAccentStrongColor}};
-                  stroke-width: 2;
+                .selection-overlay[data-state="moving"] .selection-underlay,
+                .selection-overlay[data-state="resizing"] .selection-underlay {
+                  stroke-width: 5;
                 }
                 .resize-handle-layer {
                   position: absolute;
@@ -1798,6 +1955,23 @@ public sealed class PreviewHtmlBuilder
                 .resize-handle[data-handle="start"],
                 .resize-handle[data-handle="end"] {
                   cursor: move;
+                }
+                @media (forced-colors: active) {
+                  .preview-viewport:focus-visible {
+                    box-shadow: inset 0 0 0 1px Highlight;
+                  }
+                  .selection-underlay {
+                    stroke: Canvas;
+                  }
+                  .selection-accent,
+                  .snap-guide {
+                    stroke: Highlight;
+                  }
+                  .resize-handle {
+                    background: Canvas;
+                    border-color: Highlight;
+                    box-shadow: none;
+                  }
                 }
               </style>
             </head>

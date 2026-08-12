@@ -4,6 +4,27 @@ namespace SvgLiveEditor.Tests;
 public sealed class NativePreviewInputSurfaceTests
 {
     [TestMethod]
+    public void PreviewUsesTheTrustedPageForItsKeyboardFocusIndicator()
+    {
+        string main = ReadUi("MainWindow.xaml.cs");
+        int initialization = main.IndexOf(
+            "InitializeComponent();",
+            StringComparison.Ordinal);
+        int focusVisual = main.IndexOf(
+            "PreviewWebView.SetValue(FocusVisualStyleProperty, null);",
+            initialization,
+            StringComparison.Ordinal);
+        int contextMenu = main.IndexOf(
+            "_previewContextMenu = CreatePreviewContextMenu();",
+            focusVisual,
+            StringComparison.Ordinal);
+
+        Assert.IsTrue(initialization >= 0);
+        Assert.IsTrue(focusVisual > initialization);
+        Assert.IsTrue(contextMenu > focusVisual);
+    }
+
+    [TestMethod]
     public void MainWindowHookIsWindowLocalPreviewScopedAndRemovedOnClose()
     {
         string nativeInput = ReadUi("MainWindow.PreviewNativeInput.cs");

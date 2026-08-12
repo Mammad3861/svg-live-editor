@@ -365,6 +365,16 @@ public sealed class PreviewInteractionMessageParser
                 command = PreviewAuthoringCommand.Duplicate;
                 return true;
             }
+            if (commandText == "group")
+            {
+                command = PreviewAuthoringCommand.Group;
+                return true;
+            }
+            if (commandText == "ungroup")
+            {
+                command = PreviewAuthoringCommand.Ungroup;
+                return true;
+            }
 
             return false;
         }

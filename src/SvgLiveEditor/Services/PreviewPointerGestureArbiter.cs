@@ -9,7 +9,13 @@ public sealed class PreviewPointerGestureArbiter
     {
         if (input.Button == 1)
         {
-            return PreviewPointerGestureAction.Pan;
+            return input.ControlHeld
+                || input.ShiftHeld
+                || input.AltHeld
+                || input.MetaHeld
+                || input.SpaceHeld
+                    ? PreviewPointerGestureAction.None
+                    : PreviewPointerGestureAction.Pan;
         }
 
         if (input.Button != 0)
@@ -17,18 +23,24 @@ public sealed class PreviewPointerGestureArbiter
             return PreviewPointerGestureAction.None;
         }
 
-        if (input.PanModeEnabled
-            || input.ControlHeld
-            || input.SpaceHeld)
+        if (input.PanModeEnabled || input.SpaceHeld)
         {
-            return PreviewPointerGestureAction.Pan;
+            return input.ControlHeld
+                || input.ShiftHeld
+                || input.AltHeld
+                || input.MetaHeld
+                    ? PreviewPointerGestureAction.None
+                    : PreviewPointerGestureAction.Pan;
         }
 
+        bool hasOutboundDragModifier =
+            (input.ControlHeld && !input.AltHeld)
+            || (input.AltHeld && !input.ControlHeld);
         if (!input.StartedOnArtwork
             || !input.IsPrimary
             || !input.IsMouse
             || input.ShiftHeld
-            || !input.AltHeld
+            || !hasOutboundDragModifier
             || input.MetaHeld)
         {
             return PreviewPointerGestureAction.None;

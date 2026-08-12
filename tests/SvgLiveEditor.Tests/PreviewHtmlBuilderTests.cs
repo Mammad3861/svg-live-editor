@@ -71,13 +71,13 @@ public sealed class PreviewHtmlBuilderTests
         StringAssert.Contains(script.Groups[1].Value, "window.addEventListener(");
         StringAssert.Contains(script.Groups[1].Value, "{ capture: true, passive: false }");
         StringAssert.Contains(script.Groups[1].Value, "event.button === 1");
-        StringAssert.Contains(script.Groups[1].Value, "spaceHeld || event.ctrlKey || panModeEnabled");
+        StringAssert.Contains(script.Groups[1].Value, "spaceHeld || panModeEnabled");
         StringAssert.Contains(
             script.Groups[1].Value,
             "event.target === image");
         StringAssert.Contains(
             script.Groups[1].Value,
-            "event.altKey && !event.shiftKey");
+            "event.ctrlKey && !event.altKey && !event.shiftKey");
         StringAssert.Contains(
             script.Groups[1].Value,
             "return 'visual'");
@@ -287,7 +287,7 @@ public sealed class PreviewHtmlBuilderTests
         StringAssert.Contains(script, "!event.altKey && !event.metaKey");
         StringAssert.Contains(script, "postCopyCommand()");
         StringAssert.Contains(script, "if (event.ctrlKey)");
-        StringAssert.Contains(script, "spaceHeld || event.ctrlKey || panModeEnabled");
+        StringAssert.Contains(script, "spaceHeld || panModeEnabled");
     }
 
     [TestMethod]
@@ -303,15 +303,16 @@ public sealed class PreviewHtmlBuilderTests
         StringAssert.Contains(script, "const choosePointerAction = event =>");
         StringAssert.Contains(
             script,
-            "event.altKey && !event.shiftKey && !event.metaKey");
+            "event.ctrlKey && !event.altKey && !event.shiftKey && !event.metaKey");
         StringAssert.Contains(
             script,
-            "event.shiftKey || event.altKey || event.metaKey) {\n" +
-            "        stopVisualGesture(event);");
+            "spaceHeld || event.ctrlKey || panModeEnabled ||");
         StringAssert.Contains(
             script,
-            "event.shiftKey || !event.altKey || event.metaKey) {\n" +
-            "        stopDirectDrag(event);");
+            "event.shiftKey || event.altKey || event.metaKey) {");
+        StringAssert.Contains(
+            script,
+            "!hasOutboundDragModifier(event)) {");
         StringAssert.Contains(script, "event.target === image");
         StringAssert.Contains(script, "!event.isTrusted || !event.isPrimary");
         StringAssert.Contains(script, "event.pointerType !== 'mouse'");
@@ -322,6 +323,21 @@ public sealed class PreviewHtmlBuilderTests
         StringAssert.Contains(script, "postDirectDragSignal('cancel', stopped.gestureId)");
         StringAssert.Contains(script, "stopDirectDrag(event, false)");
         StringAssert.Contains(script, "viewport.addEventListener('dragstart', event => event.preventDefault())");
+        int directBranchStart = script.IndexOf(
+            "if (action === 'drag')",
+            StringComparison.Ordinal);
+        int directBranchEnd = script.IndexOf(
+            "if (action !== 'pan'",
+            directBranchStart,
+            StringComparison.Ordinal);
+        string directBranch = script[directBranchStart..directBranchEnd];
+        StringAssert.Contains(directBranch, "postDirectDragArm(gestureId, event)");
+        Assert.IsFalse(directBranch.Contains(
+            "postVisualPointer(",
+            StringComparison.Ordinal));
+        Assert.IsFalse(directBranch.Contains(
+            "postPanCommand(",
+            StringComparison.Ordinal));
         Assert.IsFalse(script.Contains(
             "dataTransfer.setData",
             StringComparison.Ordinal));
@@ -357,8 +373,9 @@ public sealed class PreviewHtmlBuilderTests
             _builder.Build(svg, 2000, 1000, BridgeToken));
 
         StringAssert.Contains(script, "if (event.button === 1)");
-        StringAssert.Contains(script, "spaceHeld || event.ctrlKey || panModeEnabled");
-        StringAssert.Contains(script, "return 'pan'");
+        StringAssert.Contains(script, "spaceHeld || panModeEnabled");
+        StringAssert.Contains(script, "event.metaKey || spaceHeld ? 'none' : 'pan'");
+        StringAssert.Contains(script, "event.metaKey ? 'none' : 'pan'");
         StringAssert.Contains(script, "if (action !== 'pan' || !canPan())");
         StringAssert.Contains(script, "viewport.setPointerCapture(activePointerId)");
         StringAssert.Contains(script, "activePanButton = event.button");
@@ -397,7 +414,7 @@ public sealed class PreviewHtmlBuilderTests
     }
 
     [TestMethod]
-    public void Build_UsesModernFixedPixelSelectionStatesAndWhiteHandles()
+    public void Build_UsesDualContrastPrimaryAndSecondarySelectionTreatment()
     {
         const string svg =
             "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"10\" height=\"10\"/></svg>";
@@ -410,6 +427,16 @@ public sealed class PreviewHtmlBuilderTests
             html,
             $"width: {PreviewHtmlBuilder.ResizeHandleSizeCssPixels}px");
         StringAssert.Contains(html, "stroke-width: 1.5");
+        StringAssert.Contains(html, ".selection-underlay");
+        StringAssert.Contains(html, "stroke: #ffffff");
+        StringAssert.Contains(html, "stroke-width: 4");
+        StringAssert.Contains(html, ".selection-accent.secondary");
+        StringAssert.Contains(html, "stroke-dasharray: 5 3");
+        StringAssert.Contains(html, "@media (forced-colors: active)");
+        StringAssert.Contains(html, "vector-effect: non-scaling-stroke");
+        Assert.IsFalse(html.Contains(
+            "fill: rgba(37, 99, 235",
+            StringComparison.Ordinal));
         StringAssert.Contains(html, "background: #ffffff");
         StringAssert.Contains(html, "box-shadow:");
         StringAssert.Contains(html, "width: 10px");
@@ -420,6 +447,57 @@ public sealed class PreviewHtmlBuilderTests
         StringAssert.Contains(script, "? 'resizing'");
         StringAssert.Contains(script, "? 'moving'");
         StringAssert.Contains(script, "handle.classList.toggle(");
+        StringAssert.Contains(script, "const underlay = shape.cloneNode(false)");
+        StringAssert.Contains(script, "'selection-underlay'");
+        StringAssert.Contains(script, "'selection-accent'");
+    }
+
+    [TestMethod]
+    public void Build_PreviewFocusIsSubtleKeyboardOnlyAndHighContrastAware()
+    {
+        string html = _builder.Build(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"/>",
+            300,
+            150,
+            BridgeToken);
+        string script = ExtractHostScript(html);
+
+        StringAssert.Contains(html, ".preview-viewport:focus-visible");
+        StringAssert.Contains(html, "inset 0 0 0 1px #1d4ed8");
+        StringAssert.Contains(html, ".preview-viewport.pointer-focused:focus");
+        StringAssert.Contains(html, "@media (forced-colors: active)");
+        Assert.IsFalse(html.Contains(
+            "inset 0 0 0 3px #2563eb",
+            StringComparison.Ordinal));
+        StringAssert.Contains(script, "viewport.classList.add('pointer-focused')");
+        StringAssert.Contains(script, "viewport.classList.remove('pointer-focused')");
+        StringAssert.Contains(script, "viewport.addEventListener('blur'");
+        StringAssert.Contains(script, "window.addEventListener('blur'");
+    }
+
+    [TestMethod]
+    public void Build_OutsideCanvasSelectionUsesABoundedHostInteractionSurface()
+    {
+        string html = _builder.Build(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"/>",
+            300,
+            300,
+            BridgeToken);
+        string script = ExtractHostScript(html);
+
+        StringAssert.Contains(script, "const updateInteractionSurface =");
+        StringAssert.Contains(script, "maximumInteractionSurfaceDimension = 100000");
+        StringAssert.Contains(script, "const selectionShapes = selectionOverlay.querySelectorAll(");
+        StringAssert.Contains(script, "'.selection-accent'");
+        StringAssert.Contains(script, "stage.dataset.interactionSurfaceClamped");
+        StringAssert.Contains(
+            script,
+            "[item.x1 + item.deltaX, item.x2 + item.deltaX,");
+        StringAssert.Contains(script, "viewport.scrollLeft += imageRectAfter.left - imageRectBefore.left");
+        StringAssert.Contains(script, "viewport.scrollTop += imageRectAfter.top - imageRectBefore.top");
+        Assert.IsFalse(script.Contains(
+            "image.style.overflow = 'visible'",
+            StringComparison.Ordinal));
     }
 
     [TestMethod]

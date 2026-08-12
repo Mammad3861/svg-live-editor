@@ -31,6 +31,7 @@ public sealed class DocumentInspectorViewModel : ObservableObject
     private string? _source;
     private SvgLayerPositionInfo? _layerPosition;
     private SvgVisualDocument? _visualDocument;
+    private int _multiSelectionCount;
 
     public ObservableCollection<SvgElementViewModel> Roots { get; } = [];
 
@@ -108,6 +109,14 @@ public sealed class DocumentInspectorViewModel : ObservableObject
         private set => SetProperty(ref _selectionAdvisory, value);
     }
 
+    public int MultiSelectionCount
+    {
+        get => _multiSelectionCount;
+        private set => SetProperty(ref _multiSelectionCount, value);
+    }
+
+    public bool HasMultipleSelection => MultiSelectionCount > 1;
+
     public SvgElementIdentity? CaptureSelectionIdentity() =>
         _selectedElement?.Element.Identity;
 
@@ -128,6 +137,19 @@ public sealed class DocumentInspectorViewModel : ObservableObject
     public void SetSelectionAdvisory(string? message)
     {
         SelectionAdvisory = message ?? string.Empty;
+    }
+
+    public void SetMultiSelectionCount(int count)
+    {
+        int bounded = Math.Clamp(count, 0, SvgMultiSelectionService.MaximumSelectionCount);
+        if (MultiSelectionCount != bounded)
+        {
+            MultiSelectionCount = bounded;
+            OnPropertyChanged(nameof(HasMultipleSelection));
+        }
+        SelectedElementSummary = bounded > 1 && _selectedElement is not null
+            ? $"{bounded} selected · primary {_selectedElement.Element.DisplayLabel}"
+            : _selectedElement?.Element.DisplayLabel ?? "No element selected";
     }
 
     public void RefreshLayerPresentation(SvgVisualDocument visualDocument)
@@ -194,6 +216,7 @@ public sealed class DocumentInspectorViewModel : ObservableObject
         StateMessage = message;
         SelectedElementSummary = "No element selected";
         SelectionAdvisory = string.Empty;
+        SetMultiSelectionCount(0);
         OnPropertyChanged(nameof(DocumentIndex));
         OnPropertyChanged(nameof(SelectedElement));
         OnPropertyChanged(nameof(SelectedLayer));
@@ -235,6 +258,12 @@ public sealed class DocumentInspectorViewModel : ObservableObject
         && _layerWorkspaceService.IsEffectivelyLocked(
             _documentIndex,
             element);
+
+    public bool IsElementEffectivelyVisible(SvgElementNode element) =>
+        _layerWorkspaceService.Workspace.ItemsByPath.TryGetValue(
+            element.StructuralPath,
+            out SvgLayerItem? item)
+        && item.Visibility.IsVisible;
 
     public bool ToggleLayerLock(SvgLayerViewModel layer)
     {
@@ -321,6 +350,7 @@ public sealed class DocumentInspectorViewModel : ObservableObject
         {
             HasSelection = false;
             SelectedElementSummary = "No element selected";
+            SetMultiSelectionCount(0);
         }
         else
         {
@@ -363,7 +393,9 @@ public sealed class DocumentInspectorViewModel : ObservableObject
                 }
             }
             HasSelection = true;
-            SelectedElementSummary = element.Element.DisplayLabel;
+            SelectedElementSummary = MultiSelectionCount > 1
+                ? $"{MultiSelectionCount} selected · primary {element.Element.DisplayLabel}"
+                : element.Element.DisplayLabel;
             SvgLayerPositionInfo layerPosition =
                 _layerOrderService.GetPositionInfo(
                     _documentIndex!,

@@ -110,15 +110,109 @@ public sealed class SvgLayersUxSurfaceTests
     {
         string visual = ReadUi("MainWindow.VisualEditing.cs");
         string inspector = ReadUi("MainWindow.Inspector.cs");
-
-        StringAssert.Contains(visual, "IsVisualElementLocked(element)");
-        StringAssert.Contains(visual, "IsVisualElementLocked(selectedElement)");
-        StringAssert.Contains(
+        string applyMovement = ExtractSection(
+            visual,
+            "private void ApplyVisualMovement(",
+            "private bool CanUseVisualEditing(");
+        string moveSelectionGuard = ExtractSection(
+            visual,
+            "private bool TryGetMovableSelection(",
+            "private SvgSnapResult ResolveSnap(");
+        string resizeStart = ExtractSection(
+            visual,
+            "private void BeginVisualResizeGesture(",
+            "private void UpdateVisualResizeGesture(");
+        string resizeCommit = ExtractSection(
+            visual,
+            "private void ApplyVisualResize(",
+            "private void BeginVisualEditGesture(");
+        string layerDrop = ExtractSection(
             inspector,
-            "_viewModel.Inspector.IsElementEffectivelyLocked);");
-        StringAssert.Contains(inspector, "IsElementEffectivelyLocked(opacity.Element)");
-        StringAssert.Contains(inspector, "IsElementEffectivelyLocked(property.Element)");
-        StringAssert.Contains(inspector, "IsElementEffectivelyLocked(element)");
+            "private bool CanDropLayer(",
+            "private void SetLayerDropTarget(");
+        string layerMove = ExtractSection(
+            inspector,
+            "private void ApplyLayerMove(",
+            "private void OnAddElementClick(");
+        string arrange = ExtractSection(
+            inspector,
+            "private SvgLayerOrderAvailability GetLayerOrderAvailability(",
+            "private static bool TryReadLayerOrderCommand(");
+        string group = ExtractSection(
+            inspector,
+            "private void GroupSelectedElements(",
+            "private void UngroupSelectedGroup(");
+        string ungroup = ExtractSection(
+            inspector,
+            "private void UngroupSelectedGroup(",
+            "private void ApplyVisualLayout(");
+        string layout = ExtractSection(
+            inspector,
+            "private void ApplyVisualLayout(",
+            "private void UpdateCompositionMenuItem(");
+        string opacity = ExtractSection(
+            inspector,
+            "private bool ApplyOpacity(",
+            "private sealed record OpacitySliderGesture(");
+        string property = ExtractSection(
+            inspector,
+            "private bool ApplyInspectorProperty(",
+            "private void RefreshSelectedTextWarnings(");
+        string nudge = ExtractSection(
+            visual,
+            "private void HandlePreviewVisualNudge(",
+            "private void ApplyVisualMovement(");
+        string dragCommit = ExtractSection(
+            visual,
+            "private void CompleteVisualEditGesture(",
+            "private void HandlePreviewVisualNudge(");
+
+        int guard = applyMovement.IndexOf(
+            "TryGetMovableSelection(",
+            StringComparison.Ordinal);
+        int mutation = applyMovement.IndexOf(
+            "_multiVisualMoveService.CreateEdit(",
+            StringComparison.Ordinal);
+        Assert.IsTrue(guard >= 0 && mutation > guard);
+        StringAssert.Contains(moveSelectionGuard, "foreach (SvgElementIdentity identity in identities)");
+        StringAssert.Contains(moveSelectionGuard, "if (IsVisualElementLocked(element))");
+        StringAssert.Contains(moveSelectionGuard, "return false;");
+        Assert.IsFalse(moveSelectionGuard.Contains(
+            "Where(element => !IsVisualElementLocked",
+            StringComparison.Ordinal));
+        StringAssert.Contains(resizeStart, "IsVisualElementLocked(element)");
+        StringAssert.Contains(resizeCommit, "IsVisualElementLocked(element)");
+        StringAssert.Contains(nudge, "ApplyVisualMovement(");
+        StringAssert.Contains(dragCommit, "ApplyVisualMovement(");
+        StringAssert.Contains(layerDrop, "_viewModel.Inspector.IsElementEffectivelyLocked");
+        StringAssert.Contains(layerMove, "_viewModel.Inspector.IsElementEffectivelyLocked");
+        StringAssert.Contains(arrange, "IsElementEffectivelyLocked(element)");
+        StringAssert.Contains(group, "_viewModel.Inspector.IsElementEffectivelyLocked");
+        StringAssert.Contains(ungroup, "_viewModel.Inspector.IsElementEffectivelyLocked");
+        StringAssert.Contains(layout, "_viewModel.Inspector.IsElementEffectivelyLocked");
+        StringAssert.Contains(opacity, "IsElementEffectivelyLocked(opacity.Element)");
+        StringAssert.Contains(property, "IsElementEffectivelyLocked(property.Element)");
+    }
+
+    [TestMethod]
+    public void FocusingAnAlreadySelectedLayerPreservesTheMultiSelection()
+    {
+        string inspector = ReadUi("MainWindow.Inspector.cs");
+        string handler = ExtractSection(
+            inspector,
+            "private void OnLayersTreePreviewMouseLeftButtonDown(",
+            "private void OnInspectorTreePreviewMouseRightButtonDown(");
+
+        StringAssert.Contains(handler, "EnsureCurrentVisualSelectionState()");
+        StringAssert.Contains(handler, "current.Identities.Count > 1");
+        StringAssert.Contains(
+            handler,
+            "current.Identities.Contains(layer.Element.Identity)");
+        StringAssert.Contains(
+            handler,
+            "current with { Primary = layer.Element.Identity }");
+        StringAssert.Contains(handler, "navigateSource: preserveMultiSelection");
+        StringAssert.Contains(handler, "_layerDragCandidate = layer");
     }
 
     private static string ReadUi(string fileName) => File.ReadAllText(

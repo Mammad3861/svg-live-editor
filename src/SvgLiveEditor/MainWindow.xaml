@@ -14,6 +14,7 @@
         Loaded="OnWindowLoaded"
         Closing="OnWindowClosing"
         Deactivated="OnWindowDeactivated"
+        GotKeyboardFocus="OnWindowGotKeyboardFocus"
         PreviewKeyDown="OnWindowPreviewKeyDown"
         PreviewDragEnter="OnWindowPreviewDragEnter"
         PreviewDragOver="OnWindowPreviewDragOver"
@@ -141,7 +142,7 @@
       <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
       <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}" />
       <Setter Property="Padding" Value="0" />
-      <Setter Property="AutomationProperties.Name" Value="{Binding Label}" />
+      <Setter Property="AutomationProperties.Name" Value="{Binding AutomationName}" />
       <Setter Property="AutomationProperties.HelpText" Value="{Binding RowHelp}" />
       <Setter Property="Template">
         <Setter.Value>
@@ -178,6 +179,17 @@
                         Property="BorderBrush"
                         Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
               </Trigger>
+              <DataTrigger Binding="{Binding IsMultiSelected}" Value="True">
+                <Setter TargetName="LayerHeaderBorder"
+                        Property="Background"
+                        Value="{DynamicResource {x:Static SystemColors.ControlLightBrushKey}}" />
+                <Setter TargetName="LayerHeaderBorder"
+                        Property="BorderBrush"
+                        Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+                <Setter TargetName="LayerHeaderBorder"
+                        Property="BorderThickness"
+                        Value="2" />
+              </DataTrigger>
               <Trigger Property="IsKeyboardFocusWithin" Value="True">
                 <Setter TargetName="LayerHeaderBorder"
                         Property="BorderBrush"
@@ -228,6 +240,17 @@
                 Tag="MoveToRoot"
                 Click="OnMoveElementToRootClick"
                 AutomationProperties.Name="Move selected element to front of SVG root" />
+      <Separator />
+      <MenuItem Header="_Group"
+                InputGestureText="Ctrl+G"
+                Tag="Group"
+                Click="OnCompositionCommandClick"
+                AutomationProperties.Name="Group selected sibling elements" />
+      <MenuItem Header="_Ungroup"
+                InputGestureText="Ctrl+Shift+G"
+                Tag="Ungroup"
+                Click="OnCompositionCommandClick"
+                AutomationProperties.Name="Ungroup selected neutral group" />
       <Separator />
       <MenuItem Header="Bring to Front" Tag="BringToFront" Click="OnArrangeClick" />
       <MenuItem Header="Bring Forward" Tag="BringForward" Click="OnArrangeClick" />
@@ -324,6 +347,31 @@
                   InputGestureText="Ctrl+Shift+["
                   Tag="SendToBack"
                   Click="OnArrangeClick" />
+        <Separator />
+        <MenuItem x:Name="GroupMenuItem"
+                  Header="_Group"
+                  InputGestureText="Ctrl+G"
+                  Tag="Group"
+                  Click="OnCompositionCommandClick" />
+        <MenuItem x:Name="UngroupMenuItem"
+                  Header="_Ungroup"
+                  InputGestureText="Ctrl+Shift+G"
+                  Tag="Ungroup"
+                  Click="OnCompositionCommandClick" />
+        <Separator />
+        <MenuItem Header="_Align">
+          <MenuItem x:Name="AlignLeftMenuItem" Header="Align _Left" Tag="AlignLeft" Click="OnCompositionCommandClick" />
+          <MenuItem x:Name="AlignHorizontalCentersMenuItem" Header="Align Horizontal _Centers" Tag="AlignHorizontalCenters" Click="OnCompositionCommandClick" />
+          <MenuItem x:Name="AlignRightMenuItem" Header="Align _Right" Tag="AlignRight" Click="OnCompositionCommandClick" />
+          <Separator />
+          <MenuItem x:Name="AlignTopMenuItem" Header="Align _Top" Tag="AlignTop" Click="OnCompositionCommandClick" />
+          <MenuItem x:Name="AlignVerticalCentersMenuItem" Header="Align _Vertical Centers" Tag="AlignVerticalCenters" Click="OnCompositionCommandClick" />
+          <MenuItem x:Name="AlignBottomMenuItem" Header="Align _Bottom" Tag="AlignBottom" Click="OnCompositionCommandClick" />
+        </MenuItem>
+        <MenuItem Header="_Distribute">
+          <MenuItem x:Name="DistributeHorizontallyMenuItem" Header="Distribute _Horizontally" Tag="DistributeHorizontally" Click="OnCompositionCommandClick" />
+          <MenuItem x:Name="DistributeVerticallyMenuItem" Header="Distribute _Vertically" Tag="DistributeVertically" Click="OnCompositionCommandClick" />
+        </MenuItem>
       </MenuItem>
       <MenuItem Header="_View">
         <MenuItem x:Name="WordWrapMenuItem"
@@ -332,6 +380,12 @@
                   IsCheckable="True"
                   IsChecked="True"
                   Click="OnWordWrapClick" />
+        <MenuItem x:Name="SnapToObjectsMenuItem"
+                  Header="_Snap to objects"
+                  IsCheckable="True"
+                  IsChecked="True"
+                  Click="OnSnapToObjectsClick"
+                  AutomationProperties.Name="Snap to objects" />
         <Separator />
         <MenuItem x:Name="ReopenLastDocumentMenuItem"
                   Header="_Reopen last document on startup"
@@ -1240,6 +1294,7 @@
                 AllowExternalDrop="False"
                 DefaultBackgroundColor="#FFF8FAFC"
                 PreviewKeyDown="OnPreviewWebViewPreviewKeyDown"
+                GotKeyboardFocus="OnPreviewWebViewGotKeyboardFocus"
                 ZoomFactorChanged="OnPreviewWebViewZoomFactorChanged"
                 LostKeyboardFocus="OnPreviewWebViewLostKeyboardFocus"
                 SizeChanged="OnPreviewWebViewSizeChanged" />

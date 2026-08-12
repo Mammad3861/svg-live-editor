@@ -34,6 +34,8 @@ public partial class MainWindow
     private readonly SvgElementDeleteService _svgElementDeleteService = new();
     private readonly SvgLayerRenameService _svgLayerRenameService = new();
     private readonly SvgLayerReparentService _svgLayerReparentService = new();
+    private readonly SvgGroupService _svgGroupService = new();
+    private readonly SvgLayoutService _svgLayoutService = new();
     private readonly DispatcherTimer _inspectorCaretTimer = new()
     {
         Interval = TimeSpan.FromMilliseconds(160)
@@ -274,6 +276,11 @@ public partial class MainWindow
         {
             NavigateToInspectorElement(structureElement, origin);
         }
+        if (origin == InspectorSelectionOrigin.ExplicitTreeNavigation
+            && Keyboard.Modifiers == ModifierKeys.None)
+        {
+            SetVisualSelectionIdentity(layer.Element.Identity);
+        }
         SynchronizeVisualSelectionFromInspector(
             announce: origin
                 == InspectorSelectionOrigin.ExplicitTreeNavigation);
@@ -342,9 +349,75 @@ public partial class MainWindow
             return;
         }
 
+        ModifierKeys modifiers = Keyboard.Modifiers;
+        if (modifiers is ModifierKeys.Control
+            or ModifierKeys.Shift
+            or (ModifierKeys.Control | ModifierKeys.Shift))
+        {
+            HandleLayerMultiSelection(layer, modifiers);
+            FindVisualAncestor<TreeViewItem>(originalSource)?.Focus();
+            e.Handled = true;
+            return;
+        }
+
+        SvgMultiSelectionState current = EnsureCurrentVisualSelectionState();
+        bool preserveMultiSelection = current.Identities.Count > 1
+            && current.Identities.Contains(layer.Element.Identity);
+        ApplyVisualSelectionState(
+            preserveMultiSelection
+                ? current with { Primary = layer.Element.Identity }
+                : _multiSelectionService.Replace(
+                    _sourceRevisionTracker.Current,
+                    layer.Element.Identity),
+            InspectorSelectionOrigin.ExplicitTreeNavigation,
+            navigateSource: preserveMultiSelection);
+
         _layerDragCandidate = layer;
         _layerDragStart = e.GetPosition(LayersTree);
         _layerDragSourceRevision = _sourceRevisionTracker.Current;
+    }
+
+    private void HandleLayerMultiSelection(
+        SvgLayerViewModel layer,
+        ModifierKeys modifiers)
+    {
+        SvgMultiSelectionState current = EnsureCurrentVisualSelectionState();
+        SvgMultiSelectionChange change;
+        if ((modifiers & ModifierKeys.Shift) != 0)
+        {
+            IReadOnlyList<SvgElementIdentity> siblings = layer.Parent is null
+                ? _viewModel.Inspector.LayerRoots
+                    .Select(item => item.Element.Identity)
+                    .ToArray()
+                : layer.Parent.Children
+                    .Select(item => item.Element.Identity)
+                    .ToArray();
+            change = _multiSelectionService.SelectRange(
+                current,
+                _sourceRevisionTracker.Current,
+                siblings,
+                layer.Element.Identity);
+        }
+        else
+        {
+            change = _multiSelectionService.Toggle(
+                current,
+                _sourceRevisionTracker.Current,
+                layer.Element.Identity);
+        }
+
+        if (!change.IsSuccess)
+        {
+            _viewModel.SetOperationStatus(
+                change.ErrorMessage ?? "The layer selection was rejected.");
+            return;
+        }
+        ApplyVisualSelectionState(
+            change.State,
+            InspectorSelectionOrigin.ExplicitTreeNavigation,
+            navigateSource: true);
+        RefreshAuthoringControls();
+        _viewModel.SetOperationStatus(GetVisualSelectionLabel());
     }
 
     private void OnLayersTreePreviewMouseMove(
@@ -1086,6 +1159,23 @@ public partial class MainWindow
                 selected,
                 _viewModel.Inspector.IsElementEffectivelyLocked)
             : unavailable;
+        SvgElementNode[] selectedNodes = isCurrent
+            ? GetSelectedElementNodes(document!)
+            : [];
+        SvgAuthoringAvailability group = isCurrent
+            ? _svgGroupService.GetGroupAvailability(
+                source,
+                document!,
+                selectedNodes,
+                _viewModel.Inspector.IsElementEffectivelyLocked)
+            : unavailable;
+        SvgAuthoringAvailability ungroup = isCurrent
+            ? _svgGroupService.GetUngroupAvailability(
+                source,
+                document!,
+                selectedNodes.Length == 1 ? selectedNodes[0] : null,
+                _viewModel.Inspector.IsElementEffectivelyLocked)
+            : unavailable;
 
         foreach (MenuItem item in EnumerateMenuItems(items))
         {
@@ -1125,6 +1215,8 @@ public partial class MainWindow
                 "Delete" => delete,
                 "MoveToRoot" => moveRoot,
                 "Rename" => rename,
+                "Group" => group,
+                "Ungroup" => ungroup,
                 _ => null
             };
             if (availability is null)
@@ -1466,6 +1558,39 @@ public partial class MainWindow
         return false;
     }
 
+    private bool TryHandleCompositionShortcut(
+        ModifierKeys modifiers,
+        Key pressedKey,
+        bool previewKeyRoute = false)
+    {
+        bool compositionFocus = LayersTree.IsKeyboardFocusWithin
+            || InspectorTree.IsKeyboardFocusWithin
+            || InspectorPropertiesPanel.IsKeyboardFocusWithin
+            || previewKeyRoute
+            || HasPreviewKeyboardFocus()
+            || IsActive;
+        SvgLayoutShortcutAction action = SvgLayoutShortcutRouter.Resolve(
+            modifiers,
+            pressedKey,
+            compositionFocus,
+            previewKeyRoute || HasPreviewKeyboardFocus()
+                ? false
+                : IsEditableControlFocused(),
+            _isEditorTextCompositionActive
+                || _isInspectorTextCompositionActive);
+        if (action == SvgLayoutShortcutAction.Group)
+        {
+            GroupSelectedElements();
+            return true;
+        }
+        if (action == SvgLayoutShortcutAction.Ungroup)
+        {
+            UngroupSelectedGroup();
+            return true;
+        }
+        return false;
+    }
+
     private void OnInspectorTreePreviewMouseRightButtonDown(
         object sender,
         MouseButtonEventArgs e)
@@ -1528,6 +1653,24 @@ public partial class MainWindow
         UpdateArrangeMenuItem(BringForwardMenuItem, SvgLayerOrderCommand.BringForward);
         UpdateArrangeMenuItem(SendBackwardMenuItem, SvgLayerOrderCommand.SendBackward);
         UpdateArrangeMenuItem(SendToBackMenuItem, SvgLayerOrderCommand.SendToBack);
+        UpdateCompositionMenuItem(GroupMenuItem, "Group");
+        UpdateCompositionMenuItem(UngroupMenuItem, "Ungroup");
+        UpdateCompositionMenuItem(AlignLeftMenuItem, "AlignLeft");
+        UpdateCompositionMenuItem(
+            AlignHorizontalCentersMenuItem,
+            "AlignHorizontalCenters");
+        UpdateCompositionMenuItem(AlignRightMenuItem, "AlignRight");
+        UpdateCompositionMenuItem(AlignTopMenuItem, "AlignTop");
+        UpdateCompositionMenuItem(
+            AlignVerticalCentersMenuItem,
+            "AlignVerticalCenters");
+        UpdateCompositionMenuItem(AlignBottomMenuItem, "AlignBottom");
+        UpdateCompositionMenuItem(
+            DistributeHorizontallyMenuItem,
+            "DistributeHorizontally");
+        UpdateCompositionMenuItem(
+            DistributeVerticallyMenuItem,
+            "DistributeVertically");
     }
 
     private void OnInspectorArrangeContextMenuOpening(
@@ -1557,6 +1700,257 @@ public partial class MainWindow
             ApplyLayerOrder(command);
         }
     }
+
+    private void OnCompositionCommandClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: string command })
+        {
+            return;
+        }
+
+        if (command.Equals("Group", StringComparison.Ordinal))
+        {
+            GroupSelectedElements();
+        }
+        else if (command.Equals("Ungroup", StringComparison.Ordinal))
+        {
+            UngroupSelectedGroup();
+        }
+        else if (Enum.TryParse(
+            command,
+            ignoreCase: false,
+            out SvgLayoutCommand layoutCommand))
+        {
+            ApplyVisualLayout(layoutCommand);
+        }
+    }
+
+    private void GroupSelectedElements()
+    {
+        if (!TryGetAuthoringContext(
+                out SvgDocumentIndex document,
+                out _,
+                out string source,
+                out long revision,
+                "Group"))
+        {
+            return;
+        }
+
+        SvgAuthoringEditResult result = _svgGroupService.CreateGroupEdit(
+            source,
+            document,
+            GetSelectedElementNodes(document),
+            _viewModel.Inspector.IsElementEffectivelyLocked);
+        ApplyAuthoringEdit(result, source, revision, "Elements grouped");
+    }
+
+    private void UngroupSelectedGroup()
+    {
+        if (!TryGetAuthoringContext(
+                out SvgDocumentIndex document,
+                out _,
+                out string source,
+                out long revision,
+                "Ungroup"))
+        {
+            return;
+        }
+
+        SvgElementNode[] selected = GetSelectedElementNodes(document);
+        SvgAuthoringEditResult result = _svgGroupService.CreateUngroupEdit(
+            source,
+            document,
+            selected.Length == 1 ? selected[0] : null,
+            _viewModel.Inspector.IsElementEffectivelyLocked);
+        ApplyAuthoringEdit(result, source, revision, "Group removed");
+    }
+
+    private void ApplyVisualLayout(SvgLayoutCommand command)
+    {
+        if (!TryGetAuthoringContext(
+                out SvgDocumentIndex document,
+                out _,
+                out string source,
+                out long revision,
+                "Layout"))
+        {
+            return;
+        }
+        SvgVisualElement[] elements = GetSelectedVisualElements();
+        SvgAttributeEditResult result = _svgLayoutService.CreateEdit(
+            source,
+            document,
+            elements,
+            command,
+            _viewModel.Inspector.IsElementEffectivelyLocked);
+        if (!result.IsSuccess)
+        {
+            _viewModel.SetOperationStatus(
+                result.ErrorMessage ?? "The layout command was rejected.");
+            return;
+        }
+        if (result.Edit is null)
+        {
+            _viewModel.SetOperationStatus("The selected elements already satisfy that layout.");
+            return;
+        }
+        if (!_sourceRevisionTracker.IsCurrent(revision)
+            || !SourceEditor.Text.Equals(source, StringComparison.Ordinal))
+        {
+            _viewModel.SetOperationStatus(
+                "The source changed; select the elements again.");
+            return;
+        }
+
+        CancelOpacitySliderGesture();
+        CancelVisualEditGesture();
+        _documentEditService.Apply(SourceEditor.Document, result.Edit);
+        _previewDebouncer.Cancel();
+        string updatedSource = SourceEditor.Text;
+        long updatedRevision = _sourceRevisionTracker.Current;
+        SvgDocumentIndexResult rebuilt =
+            _documentIndexService.Build(updatedSource);
+        ApplyValidationResult(updatedSource, updatedRevision, rebuilt);
+        _viewModel.SetOperationStatus(GetLayoutStatus(command));
+    }
+
+    private void UpdateCompositionMenuItem(MenuItem item, string command)
+    {
+        SvgAuthoringAvailability availability =
+            GetCompositionAvailability(command);
+        item.IsEnabled = availability.CanExecute;
+        string help = availability.CanExecute
+            ? GetCompositionHelp(command)
+            : availability.UnavailableReason
+                ?? "The command is unavailable.";
+        item.ToolTip = help;
+        AutomationProperties.SetHelpText(
+            item,
+            help);
+    }
+
+    private SvgAuthoringAvailability GetCompositionAvailability(string command)
+    {
+        SvgDocumentIndex? document = _viewModel.Inspector.DocumentIndex;
+        if (document is null
+            || !_inspectorSourceGuard.CanUseIndex(
+                _isInspectorIndexCurrent,
+                _inspectorSourceRevision,
+                _sourceRevisionTracker.Current,
+                _isEditorTextCompositionActive))
+        {
+            return new SvgAuthoringAvailability(
+                false,
+                "The current SVG must be valid, indexed, and current.");
+        }
+
+        SvgElementNode[] nodes = GetSelectedElementNodes(document);
+        if (command.Equals("Group", StringComparison.Ordinal))
+        {
+            return _svgGroupService.GetGroupAvailability(
+                SourceEditor.Text,
+                document,
+                nodes,
+                _viewModel.Inspector.IsElementEffectivelyLocked);
+        }
+        if (command.Equals("Ungroup", StringComparison.Ordinal))
+        {
+            return _svgGroupService.GetUngroupAvailability(
+                SourceEditor.Text,
+                document,
+                nodes.Length == 1 ? nodes[0] : null,
+                _viewModel.Inspector.IsElementEffectivelyLocked);
+        }
+        if (Enum.TryParse(
+            command,
+            ignoreCase: false,
+            out SvgLayoutCommand layoutCommand))
+        {
+            return _svgLayoutService.GetAvailability(
+                document,
+                GetSelectedVisualElements(),
+                layoutCommand,
+                _viewModel.Inspector.IsElementEffectivelyLocked);
+        }
+        return new SvgAuthoringAvailability(false, "Unknown composition command.");
+    }
+
+    private SvgElementNode[] GetSelectedElementNodes(
+        SvgDocumentIndex document)
+    {
+        SvgMultiSelectionState state = EnsureCurrentVisualSelectionState();
+        SvgElementNode[] nodes = state.Identities
+            .Select(document.FindBestMatch)
+            .Where(node => node is not null)
+            .Cast<SvgElementNode>()
+            .Distinct()
+            .ToArray();
+        return nodes.Length == state.Identities.Count
+            ? nodes
+            : [];
+    }
+
+    private SvgVisualElement[] GetSelectedVisualElements()
+    {
+        if (_lastValidVisualSourceRevision
+                != _sourceRevisionTracker.Current
+            || _lastValidVisualDocument is not SvgVisualDocument document)
+        {
+            return [];
+        }
+        SvgMultiSelectionState state = EnsureCurrentVisualSelectionState();
+        SvgVisualElement[] elements = state.Identities
+            .Select(document.FindElement)
+            .Where(element => element is not null)
+            .Cast<SvgVisualElement>()
+            .ToArray();
+        return elements.Length == state.Identities.Count
+            && elements.Select(element => element.SourceElement.Identity)
+                .Distinct()
+                .Count() == elements.Length
+                    ? elements
+                    : [];
+    }
+
+    private static string GetLayoutStatus(SvgLayoutCommand command) =>
+        command switch
+        {
+            SvgLayoutCommand.AlignLeft => "Elements aligned left",
+            SvgLayoutCommand.AlignHorizontalCenters =>
+                "Element horizontal centers aligned",
+            SvgLayoutCommand.AlignRight => "Elements aligned right",
+            SvgLayoutCommand.AlignTop => "Elements aligned top",
+            SvgLayoutCommand.AlignVerticalCenters =>
+                "Element vertical centers aligned",
+            SvgLayoutCommand.AlignBottom => "Elements aligned bottom",
+            SvgLayoutCommand.DistributeHorizontally =>
+                "Elements distributed with equal horizontal gaps",
+            SvgLayoutCommand.DistributeVertically =>
+                "Elements distributed with equal vertical gaps",
+            _ => "Layout applied"
+        };
+
+    private static string GetCompositionHelp(string command) => command switch
+    {
+        "Group" =>
+            "Wrap 2–128 contiguous siblings in one neutral group without changing their bytes or paint order.",
+        "Ungroup" =>
+            "Remove one non-empty group only when its wrapper has no attributes or group-targeting animation.",
+        "AlignLeft" => "Align validated visual left bounds to the selection's left edge.",
+        "AlignHorizontalCenters" =>
+            "Align visual horizontal centers to the center of the combined selection bounds.",
+        "AlignRight" => "Align validated visual right bounds to the selection's right edge.",
+        "AlignTop" => "Align validated visual top bounds to the selection's top edge.",
+        "AlignVerticalCenters" =>
+            "Align visual vertical centers to the center of the combined selection bounds.",
+        "AlignBottom" => "Align validated visual bottom bounds to the selection's bottom edge.",
+        "DistributeHorizontally" =>
+            "Keep the leftmost and rightmost objects fixed and make horizontal visual gaps equal.",
+        "DistributeVertically" =>
+            "Keep the topmost and bottommost objects fixed and make vertical visual gaps equal.",
+        _ => "Apply the selected composition command."
+    };
 
     private void ApplyLayerOrder(SvgLayerOrderCommand command)
     {

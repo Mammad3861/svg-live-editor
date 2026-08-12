@@ -76,6 +76,42 @@ public sealed class SvgVisualResizeTests
     }
 
     [TestMethod]
+    public void RectangleResizeMayCrossEveryCanvasEdgeAndCorner()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><rect id=\"target\" x=\"20\" y=\"20\" width=\"60\" height=\"60\"/></svg>";
+        SvgVisualElement element = BuildElement(source);
+        (SvgResizeHandle Handle, SvgVisualPoint Pointer)[] cases =
+        [
+            (SvgResizeHandle.Left, new SvgVisualPoint(-10, 50)),
+            (SvgResizeHandle.Right, new SvgVisualPoint(110, 50)),
+            (SvgResizeHandle.Top, new SvgVisualPoint(50, -10)),
+            (SvgResizeHandle.Bottom, new SvgVisualPoint(50, 110)),
+            (SvgResizeHandle.TopLeft, new SvgVisualPoint(-10, -10)),
+            (SvgResizeHandle.TopRight, new SvgVisualPoint(110, -10)),
+            (SvgResizeHandle.BottomRight, new SvgVisualPoint(110, 110)),
+            (SvgResizeHandle.BottomLeft, new SvgVisualPoint(-10, 110))
+        ];
+
+        foreach ((SvgResizeHandle handle, SvgVisualPoint pointer) in cases)
+        {
+            Assert.IsTrue(_resizeService.TryCalculate(
+                element,
+                handle,
+                pointer,
+                preserveAspectRatio: false,
+                out SvgVisualShapeGeometry resized,
+                out string? error), error);
+            SvgAttributeEditResult edit =
+                _resizeService.CreateEdit(source, element, resized);
+            Assert.IsTrue(edit.IsSuccess, edit.ErrorMessage);
+            Assert.IsNotNull(edit.Edit);
+            SvgVisualElement updated = BuildElement(edit.Edit.Apply(source));
+            Assert.IsTrue(updated.IsResizable, updated.UnsupportedReason);
+        }
+    }
+
+    [TestMethod]
     public void ShiftCornerPreservesRectangleAspectRatio()
     {
         SvgVisualElement element = BuildElement(SourceFor("rect"));
