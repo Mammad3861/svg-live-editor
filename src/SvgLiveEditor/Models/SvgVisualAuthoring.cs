@@ -26,20 +26,23 @@ public sealed record SvgAuthoringEditResult(
     SvgElementIdentity? PreferredSelection,
     string? ErrorMessage,
     bool RequiresConfirmation = false,
-    string? ConfirmationMessage = null)
+    string? ConfirmationMessage = null,
+    IReadOnlyList<SvgElementIdentity>? PreferredSelections = null)
 {
     public static SvgAuthoringEditResult Success(
         SourceTextEdit edit,
         SvgElementIdentity preferredSelection,
         bool requiresConfirmation = false,
-        string? confirmationMessage = null) =>
+        string? confirmationMessage = null,
+        IReadOnlyList<SvgElementIdentity>? preferredSelections = null) =>
         new(
             true,
             edit,
             preferredSelection,
             null,
             requiresConfirmation,
-            confirmationMessage);
+            confirmationMessage,
+            preferredSelections);
 
     public static SvgAuthoringEditResult Invalid(string message) =>
         new(false, null, null, message);

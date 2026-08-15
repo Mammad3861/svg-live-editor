@@ -102,7 +102,12 @@ public sealed class SvgLayoutServiceTests
             elements,
             SvgLayoutCommand.AlignTop);
         Assert.IsFalse(crossParent.IsSuccess);
-
+        Assert.IsNull(crossParent.Edit);
+        Assert.AreEqual(
+            "The selected elements must share a compatible parent coordinate system.",
+            crossParent.ErrorMessage);
+        TextDocument unchanged = new(source);
+        Assert.IsFalse(unchanged.UndoStack.CanUndo);
     }
 
     [TestMethod]
@@ -122,7 +127,30 @@ public sealed class SvgLayoutServiceTests
 
         Assert.IsFalse(result.IsSuccess);
         Assert.IsNull(result.Edit);
-        StringAssert.Contains(result.ErrorMessage!, "unlocked");
+        Assert.AreEqual(
+            "The selection contains a locked element or locked ancestor.",
+            result.ErrorMessage);
+    }
+
+    [TestMethod]
+    public void OneHiddenMemberRejectsTheCompleteLayout()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect id=\"shown\" x=\"0\" y=\"0\" width=\"10\" height=\"10\"/><rect id=\"hidden\" x=\"30\" y=\"20\" width=\"10\" height=\"10\"/></svg>";
+        (SvgDocumentIndex document, SvgVisualElement[] elements) = Build(source);
+
+        SvgAttributeEditResult result = _service.CreateEdit(
+            source,
+            document,
+            elements,
+            SvgLayoutCommand.AlignTop,
+            isEffectivelyLocked: null,
+            isEffectivelyVisible: element => element.Id != "hidden");
+
+        Assert.IsNull(result.Edit);
+        Assert.AreEqual(
+            "The selection contains a hidden element.",
+            result.ErrorMessage);
     }
 
     [TestMethod]

@@ -69,4 +69,104 @@ public sealed class AvalonEditDocumentEditServiceTests
         document.UndoStack.Redo();
         Assert.AreEqual(expected, document.Text);
     }
+
+    [TestMethod]
+    public void GroupAndUngroupUndoRedoRestoreExactSourceAndLogicalSelection()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect id=\"a\"/><text id=\"b\">سلام</text></svg>";
+        SvgDocumentIndex beforeDocument =
+            new SvgDocumentIndexService().Build(source).Document!;
+        SvgElementNode[] children = beforeDocument.Roots.Single().Children.ToArray();
+        SvgMultiSelectionState beforeSelection = new(
+            1,
+            children.Select(child => child.Identity).ToArray(),
+            children[1].Identity,
+            children[0].Identity);
+        SvgAuthoringEditResult grouped = new SvgGroupService().CreateGroupEdit(
+            source,
+            beforeDocument,
+            children);
+        string groupedSource = grouped.Edit!.Apply(source);
+        SvgMultiSelectionState groupedSelection = new(
+            2,
+            grouped.PreferredSelections!,
+            grouped.PreferredSelection,
+            grouped.PreferredSelection);
+        AssertSelectionUndoRoundTrip(
+            source,
+            groupedSource,
+            grouped.Edit,
+            beforeSelection,
+            groupedSelection);
+
+        SvgDocumentIndex groupedDocument =
+            new SvgDocumentIndexService().Build(groupedSource).Document!;
+        SvgAuthoringEditResult ungrouped = new SvgGroupService().CreateUngroupEdit(
+            groupedSource,
+            groupedDocument,
+            groupedDocument.Elements.Single(element => element.Name == "g"));
+        SvgMultiSelectionState ungroupedSelection = new(
+            3,
+            ungrouped.PreferredSelections!,
+            ungrouped.PreferredSelection,
+            ungrouped.PreferredSelection);
+        AssertSelectionUndoRoundTrip(
+            groupedSource,
+            source,
+            ungrouped.Edit!,
+            groupedSelection,
+            ungroupedSelection);
+    }
+
+    [TestMethod]
+    public void SelectionRestoreTargetRejectsTheWrongSourceAndMalformedDigest()
+    {
+        SvgMultiSelectionState selection = SvgMultiSelectionState.Empty(1);
+        SvgSelectionRestoreTarget target =
+            SvgSelectionRestoreTarget.Create(selection, "سلام");
+        SvgSelectionRestoreTarget malformed = new(selection, 4, "not-a-hash");
+
+        Assert.IsTrue(target.Matches("سلام"));
+        Assert.IsFalse(target.Matches("سلوم"));
+        Assert.IsFalse(malformed.Matches("سلام"));
+    }
+
+    private static void AssertSelectionUndoRoundTrip(
+        string beforeSource,
+        string afterSource,
+        SourceTextEdit edit,
+        SvgMultiSelectionState beforeSelection,
+        SvgMultiSelectionState afterSelection)
+    {
+        TextDocument document = new(beforeSource);
+        SvgSelectionRestoreTarget? restored = null;
+        SvgSelectionUndoOperation selectionUndo = new(
+            SvgSelectionRestoreTarget.Create(beforeSelection, beforeSource),
+            SvgSelectionRestoreTarget.Create(afterSelection, afterSource),
+            target => restored = target);
+        new AvalonEditDocumentEditService().Apply(
+            document,
+            edit,
+            selectionUndo);
+
+        Assert.AreEqual(afterSource, document.Text);
+        document.UndoStack.Undo();
+        Assert.AreEqual(beforeSource, document.Text);
+        Assert.IsNotNull(restored);
+        Assert.IsTrue(restored.Matches(document.Text));
+        CollectionAssert.AreEqual(
+            beforeSelection.Identities.ToArray(),
+            restored.Selection.Identities.ToArray());
+        Assert.IsFalse(document.UndoStack.CanUndo);
+
+        restored = null;
+        document.UndoStack.Redo();
+        Assert.AreEqual(afterSource, document.Text);
+        Assert.IsNotNull(restored);
+        Assert.IsTrue(restored.Matches(document.Text));
+        CollectionAssert.AreEqual(
+            afterSelection.Identities.ToArray(),
+            restored.Selection.Identities.ToArray());
+    }
 }

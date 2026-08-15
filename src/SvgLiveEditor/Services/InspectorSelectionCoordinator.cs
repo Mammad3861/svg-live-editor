@@ -22,7 +22,7 @@ public sealed class InspectorSelectionCoordinator
             || indexRevision != sourceRevision
             || isEditorTextCompositionActive
             || span.Start < 0
-            || span.Length <= 0
+            || span.Length < 0
             || span.Start > documentLength
             || span.Length > documentLength - span.Start)
         {

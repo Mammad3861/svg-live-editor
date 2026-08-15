@@ -25,6 +25,25 @@ public sealed class SvgMultiSelectionService
         return SvgMultiSelectionState.Empty(sourceRevision);
     }
 
+    public SvgMultiSelectionChange FocusOrReplace(
+        SvgMultiSelectionState current,
+        long expectedSourceRevision,
+        SvgElementIdentity identity)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        ArgumentNullException.ThrowIfNull(identity);
+        if (!IsCurrent(current, expectedSourceRevision))
+        {
+            return SvgMultiSelectionChange.Invalid(
+                current,
+                "The source changed; start the selection again.");
+        }
+        return SvgMultiSelectionChange.Success(
+            current.Identities.Contains(identity)
+                ? current with { Primary = identity }
+                : Replace(expectedSourceRevision, identity));
+    }
+
     public SvgMultiSelectionChange Toggle(
         SvgMultiSelectionState current,
         long expectedSourceRevision,
@@ -96,7 +115,6 @@ public sealed class SvgMultiSelectionService
                 "Select an anchor layer before extending a range.");
         }
         if (orderedSiblings.Count == 0
-            || orderedSiblings.Count > MaximumSelectionCount
             || orderedSiblings.Distinct().Count() != orderedSiblings.Count)
         {
             return SvgMultiSelectionChange.Invalid(
@@ -115,6 +133,12 @@ public sealed class SvgMultiSelectionService
 
         int start = Math.Min(anchorIndex, targetIndex);
         int count = Math.Abs(targetIndex - anchorIndex) + 1;
+        if (count > MaximumSelectionCount)
+        {
+            return SvgMultiSelectionChange.Invalid(
+                current,
+                $"At most {MaximumSelectionCount} elements can be selected.");
+        }
         SvgElementIdentity[] range = orderedSiblings
             .Skip(start)
             .Take(count)
@@ -167,6 +191,49 @@ public sealed class SvgMultiSelectionService
             newSourceRevision,
             identities,
             primary,
+            anchor);
+    }
+
+    public SvgMultiSelectionState ReconcileReplacingPrimary(
+        SvgMultiSelectionState current,
+        long newSourceRevision,
+        SvgDocumentIndex document,
+        SvgElementIdentity replacementPrimary)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(replacementPrimary);
+        ValidateRevision(newSourceRevision);
+        if (current.Identities.Count > MaximumSelectionCount
+            || document.FindBestMatch(replacementPrimary)
+                is not SvgElementNode replacement)
+        {
+            return SvgMultiSelectionState.Empty(newSourceRevision);
+        }
+
+        List<SvgElementIdentity> identities = [];
+        foreach (SvgElementIdentity identity in current.Identities)
+        {
+            SvgElementIdentity? mapped = identity == current.Primary
+                ? replacement.Identity
+                : document.FindBestMatch(identity)?.Identity;
+            if (mapped is not null && !identities.Contains(mapped))
+            {
+                identities.Add(mapped);
+            }
+        }
+        if (!identities.Contains(replacement.Identity))
+        {
+            identities.Add(replacement.Identity);
+        }
+        SvgElementIdentity? anchor = current.Anchor == current.Primary
+            ? replacement.Identity
+            : ReconcileIdentity(current.Anchor, document, identities);
+        anchor ??= replacement.Identity;
+        return new SvgMultiSelectionState(
+            newSourceRevision,
+            identities,
+            replacement.Identity,
             anchor);
     }
 

@@ -848,12 +848,24 @@
                   <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
                   <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}" />
                   <Setter Property="Padding" Value="2" />
-                  <Setter Property="AutomationProperties.Name" Value="{Binding Label}" />
+                  <Setter Property="AutomationProperties.Name" Value="{Binding AutomationName}" />
+                  <Setter Property="AutomationProperties.HelpText" Value="{Binding RowHelp}" />
+                  <Style.Triggers>
+                    <DataTrigger Binding="{Binding IsMultiSelected}" Value="True">
+                      <Setter Property="Background"
+                              Value="{DynamicResource {x:Static SystemColors.ControlLightBrushKey}}" />
+                      <Setter Property="BorderBrush"
+                              Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+                      <Setter Property="BorderThickness" Value="1" />
+                    </DataTrigger>
+                  </Style.Triggers>
                 </Style>
               </TreeView.ItemContainerStyle>
               <TreeView.ItemTemplate>
                 <HierarchicalDataTemplate ItemsSource="{Binding Children}">
-                  <TextBlock Text="{Binding Label}" Foreground="#0F172A" />
+                  <TextBlock Text="{Binding Label}"
+                             Foreground="#0F172A"
+                             ToolTip="{Binding RowHelp}" />
                 </HierarchicalDataTemplate>
               </TreeView.ItemTemplate>
             </TreeView>

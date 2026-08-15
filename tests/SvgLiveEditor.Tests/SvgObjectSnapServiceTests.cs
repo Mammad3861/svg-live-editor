@@ -15,7 +15,7 @@ public sealed class SvgObjectSnapServiceTests
     public void EdgeCenterAndCanvasTargetsSnapPerAxis()
     {
         const string source =
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 100\"><rect id=\"moving\" x=\"10\" y=\"10\" width=\"20\" height=\"20\"/><rect id=\"target\" x=\"40\" y=\"50\" width=\"20\" height=\"20\"/></svg>";
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 100\"><rect id=\"moving\" x=\"10\" y=\"10\" width=\"20\" height=\"20\"/><rect id=\"target\" x=\"40\" y=\"25\" width=\"20\" height=\"20\"/></svg>";
         SvgVisualDocument document = Build(source);
         SvgVisualElement moving = ById(document, "moving");
         SvgVisualElement target = ById(document, "target");
@@ -100,7 +100,7 @@ public sealed class SvgObjectSnapServiceTests
     public void NearestCorrectionWinsAndUnrelatedTiesAreSuppressed()
     {
         const string nearestSource =
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 100\"><rect id=\"moving\" x=\"0\" y=\"20\" width=\"10\" height=\"10\"/><rect id=\"near\" x=\"23\" y=\"60\" width=\"10\" height=\"10\"/><rect id=\"far\" x=\"24\" y=\"80\" width=\"10\" height=\"10\"/></svg>";
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 100\"><rect id=\"moving\" x=\"0\" y=\"20\" width=\"10\" height=\"10\"/><rect id=\"near\" x=\"23\" y=\"20\" width=\"10\" height=\"10\"/><rect id=\"far\" x=\"24\" y=\"20\" width=\"10\" height=\"10\"/></svg>";
         SvgVisualDocument nearestDocument = Build(nearestSource);
         SvgSnapResult nearest = _service.Snap(
             [ById(nearestDocument, "moving")],
@@ -116,7 +116,7 @@ public sealed class SvgObjectSnapServiceTests
                 == PreviewAlignmentGuideOrientation.Vertical).Position);
 
         const string tiedSource =
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><rect id=\"moving\" x=\"30\" y=\"20\" width=\"10\" height=\"10\"/><rect id=\"left\" x=\"24\" y=\"60\" width=\"3\" height=\"3\"/><rect id=\"right\" x=\"43\" y=\"80\" width=\"3\" height=\"3\"/></svg>";
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><rect id=\"moving\" x=\"30\" y=\"20\" width=\"10\" height=\"10\"/><rect id=\"left\" x=\"24\" y=\"20\" width=\"3\" height=\"3\"/><rect id=\"right\" x=\"43\" y=\"20\" width=\"3\" height=\"3\"/></svg>";
         SvgVisualDocument tiedDocument = Build(tiedSource);
         SvgSnapResult tied = _service.Snap(
             [ById(tiedDocument, "moving")],
@@ -155,6 +155,213 @@ public sealed class SvgObjectSnapServiceTests
     }
 
     [TestMethod]
+    [DataRow("Fit", 1.25d, 1.25d)]
+    [DataRow("50%", 2d, 2d)]
+    [DataRow("75%", 1.3333333333333333d, 1.3333333333333333d)]
+    [DataRow("100%", 1d, 1d)]
+    [DataRow("200%", 0.5d, 0.5d)]
+    public void DistantAxisAlignedTargetIsRejectedAtEveryZoomScale(
+        string zoomMode,
+        double svgUnitsPerCssPixelX,
+        double svgUnitsPerCssPixelY)
+    {
+        _ = zoomMode;
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 300 200\"><rect id=\"moving\" x=\"10\" y=\"10\" width=\"20\" height=\"20\"/><rect id=\"vertically-distant\" x=\"40\" y=\"150\" width=\"20\" height=\"20\"/><rect id=\"horizontally-distant\" x=\"250\" y=\"40\" width=\"20\" height=\"20\"/></svg>";
+        SvgVisualDocument document = Build(source);
+
+        SvgSnapResult horizontalResult = _service.Snap(
+            [ById(document, "moving")],
+            [ById(document, "vertically-distant")],
+            document.Viewport,
+            requestedDeltaX: 8,
+            requestedDeltaY: 0,
+            svgUnitsPerCssPixelX,
+            svgUnitsPerCssPixelY);
+        SvgSnapResult verticalResult = _service.Snap(
+            [ById(document, "moving")],
+            [ById(document, "horizontally-distant")],
+            document.Viewport,
+            requestedDeltaX: 0,
+            requestedDeltaY: 8,
+            svgUnitsPerCssPixelX,
+            svgUnitsPerCssPixelY);
+
+        Assert.AreEqual(8, horizontalResult.DeltaX);
+        Assert.AreEqual(0, horizontalResult.Guides.Count);
+        Assert.AreEqual(8, verticalResult.DeltaY);
+        Assert.AreEqual(0, verticalResult.Guides.Count);
+    }
+
+    [TestMethod]
+    [DataRow("Fit", 1.25d)]
+    [DataRow("50%", 2d)]
+    [DataRow("75%", 1.3333333333333333d)]
+    [DataRow("100%", 1d)]
+    [DataRow("200%", 0.5d)]
+    public void EquivalentCssSpaceGeometrySnapsAtEveryZoomScale(
+        string zoomMode,
+        double svgUnitsPerCssPixel)
+    {
+        _ = zoomMode;
+        double size = 10 * svgUnitsPerCssPixel;
+        double targetX = 20 * svgUnitsPerCssPixel;
+        double targetY = 20 * svgUnitsPerCssPixel;
+        string source = FormattableString.Invariant(
+            $"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {200 * svgUnitsPerCssPixel} {100 * svgUnitsPerCssPixel}\"><rect id=\"moving\" x=\"0\" y=\"0\" width=\"{size}\" height=\"{size}\"/><rect id=\"target\" x=\"{targetX}\" y=\"{targetY}\" width=\"{size}\" height=\"{size}\"/></svg>");
+        SvgVisualDocument document = Build(source);
+
+        SvgSnapResult result = _service.Snap(
+            [ById(document, "moving")],
+            [ById(document, "target")],
+            document.Viewport,
+            requestedDeltaX: 8 * svgUnitsPerCssPixel,
+            requestedDeltaY: 0,
+            svgUnitsPerCssPixel,
+            svgUnitsPerCssPixel);
+
+        Assert.AreEqual(
+            10 * svgUnitsPerCssPixel,
+            result.DeltaX,
+            0.0000001);
+        Assert.AreEqual(1, result.Guides.Count);
+        Assert.AreEqual(
+            PreviewAlignmentGuideOrientation.Vertical,
+            result.Guides[0].Orientation);
+    }
+
+    [TestMethod]
+    public void OrthogonalAllowanceIncludesTwelveCssPixelsAndRejectsBeyondIt()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 120\"><rect id=\"moving\" x=\"10\" y=\"10\" width=\"20\" height=\"20\"/><rect id=\"boundary\" x=\"40\" y=\"54\" width=\"20\" height=\"20\"/><rect id=\"outside\" x=\"40\" y=\"54.02\" width=\"20\" height=\"20\"/></svg>";
+        SvgVisualDocument document = Build(source);
+
+        SvgSnapResult boundary = _service.Snap(
+            [ById(document, "moving")],
+            [ById(document, "boundary")],
+            document.Viewport,
+            requestedDeltaX: 9,
+            requestedDeltaY: 0,
+            svgUnitsPerCssPixelX: 0.5,
+            svgUnitsPerCssPixelY: 2);
+        SvgSnapResult outside = _service.Snap(
+            [ById(document, "moving")],
+            [ById(document, "outside")],
+            document.Viewport,
+            requestedDeltaX: 9,
+            requestedDeltaY: 0,
+            svgUnitsPerCssPixelX: 0.5,
+            svgUnitsPerCssPixelY: 2);
+
+        Assert.AreEqual(10, boundary.DeltaX);
+        Assert.AreEqual(1, boundary.Guides.Count);
+        Assert.AreEqual(9, outside.DeltaX);
+        Assert.AreEqual(0, outside.Guides.Count);
+    }
+
+    [TestMethod]
+    public void OrthogonallyNearTargetUsesIndependentAxisScale()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 100\"><rect id=\"moving\" x=\"10\" y=\"10\" width=\"20\" height=\"20\"/><rect id=\"near\" x=\"40\" y=\"50\" width=\"20\" height=\"20\"/></svg>";
+        SvgVisualDocument document = Build(source);
+
+        SvgSnapResult result = _service.Snap(
+            [ById(document, "moving")],
+            [ById(document, "near")],
+            document.Viewport,
+            requestedDeltaX: 9,
+            requestedDeltaY: 0,
+            svgUnitsPerCssPixelX: 0.5,
+            svgUnitsPerCssPixelY: 2);
+
+        Assert.AreEqual(10, result.DeltaX);
+        Assert.AreEqual(
+            40,
+            result.Guides.Single(guide =>
+                guide.Orientation
+                    == PreviewAlignmentGuideOrientation.Vertical).Position);
+    }
+
+    [TestMethod]
+    public void AlreadyAlignedAxisDoesNotEmitAnUnappliedGuide()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><rect id=\"moving\" x=\"0\" y=\"10\" width=\"10\" height=\"10\"/><rect id=\"target\" x=\"30\" y=\"10\" width=\"10\" height=\"10\"/></svg>";
+        SvgVisualDocument document = Build(source);
+
+        SvgSnapResult result = _service.Snap(
+            [ById(document, "moving")],
+            [ById(document, "target")],
+            document.Viewport,
+            requestedDeltaX: 20,
+            requestedDeltaY: 0,
+            svgUnitsPerCssPixelX: 1,
+            svgUnitsPerCssPixelY: 1);
+
+        Assert.AreEqual(20, result.DeltaX);
+        Assert.AreEqual(0, result.Guides.Count);
+    }
+
+    [TestMethod]
+    public void SubHundredthCssCorrectionAndDisabledSnappingEmitNoGuides()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><rect id=\"moving\" x=\"0\" y=\"10\" width=\"10\" height=\"10\"/><rect id=\"target\" x=\"30.009\" y=\"10\" width=\"10\" height=\"10\"/></svg>";
+        SvgVisualDocument document = Build(source);
+        SvgVisualElement moving = ById(document, "moving");
+        SvgVisualElement target = ById(document, "target");
+
+        SvgSnapResult subPixel = _service.Snap(
+            [moving],
+            [target],
+            document.Viewport,
+            requestedDeltaX: 20,
+            requestedDeltaY: 0,
+            svgUnitsPerCssPixelX: 1,
+            svgUnitsPerCssPixelY: 1);
+        SvgSnapResult disabled = _service.Snap(
+            [moving],
+            [target],
+            document.Viewport,
+            requestedDeltaX: 18,
+            requestedDeltaY: 0,
+            svgUnitsPerCssPixelX: 1,
+            svgUnitsPerCssPixelY: 1,
+            isEnabled: false);
+
+        Assert.AreEqual(20, subPixel.DeltaX);
+        Assert.AreEqual(0, subPixel.Guides.Count);
+        Assert.AreEqual(18, disabled.DeltaX);
+        Assert.AreEqual(0, disabled.Guides.Count);
+    }
+
+    [TestMethod]
+    public void AppliedCorrectionsEmitAtMostOneGuidePerAxis()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><rect id=\"moving\" x=\"10\" y=\"10\" width=\"20\" height=\"20\"/><rect id=\"target\" x=\"40\" y=\"40\" width=\"20\" height=\"20\"/></svg>";
+        SvgVisualDocument document = Build(source);
+
+        SvgSnapResult result = _service.Snap(
+            [ById(document, "moving")],
+            [ById(document, "target")],
+            document.Viewport,
+            requestedDeltaX: 9,
+            requestedDeltaY: 9,
+            svgUnitsPerCssPixelX: 1,
+            svgUnitsPerCssPixelY: 1);
+
+        Assert.AreEqual(10, result.DeltaX);
+        Assert.AreEqual(10, result.DeltaY);
+        Assert.AreEqual(2, result.Guides.Count);
+        Assert.IsTrue(result.Guides
+            .GroupBy(guide => guide.Orientation)
+            .All(group => group.Count() == 1));
+    }
+
+    [TestMethod]
     public void InspectorVisibilityPolicyIdentifiesHiddenSnapCandidates()
     {
         const string source =
@@ -182,7 +389,7 @@ public sealed class SvgObjectSnapServiceTests
     public void HostPoliciesFilterLockedHiddenUnsafeAndIncompatibleCandidatesBeforeRanking()
     {
         const string source =
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 100\"><rect id=\"background\" x=\"0\" y=\"0\" width=\"200\" height=\"100\"/><rect id=\"moving\" x=\"10\" y=\"10\" width=\"10\" height=\"10\"/><rect id=\"locked\" x=\"31\" y=\"40\" width=\"10\" height=\"10\"/><rect id=\"hidden\" x=\"32\" y=\"50\" width=\"10\" height=\"10\" display=\"none\"/><rect id=\"unsafe\" x=\"33\" y=\"60\" width=\"10\" height=\"10\" transform=\"translate(1 0)\"/><rect id=\"invalid\" x=\"33\" y=\"70\" width=\"-1\" height=\"10\"/><rect id=\"eligible\" x=\"34\" y=\"80\" width=\"10\" height=\"10\"/><g id=\"other-parent\"><rect id=\"incompatible\" x=\"30\" y=\"30\" width=\"10\" height=\"10\"/></g></svg>";
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 100\"><rect id=\"background\" x=\"0\" y=\"0\" width=\"200\" height=\"100\"/><rect id=\"moving\" x=\"10\" y=\"10\" width=\"10\" height=\"10\"/><rect id=\"locked\" x=\"31\" y=\"40\" width=\"10\" height=\"10\"/><rect id=\"hidden\" x=\"32\" y=\"50\" width=\"10\" height=\"10\" display=\"none\"/><rect id=\"unsafe\" x=\"33\" y=\"60\" width=\"10\" height=\"10\" transform=\"translate(1 0)\"/><rect id=\"invalid\" x=\"33\" y=\"70\" width=\"-1\" height=\"10\"/><rect id=\"eligible\" x=\"34\" y=\"10\" width=\"10\" height=\"10\"/><g id=\"other-parent\"><rect id=\"incompatible\" x=\"30\" y=\"30\" width=\"10\" height=\"10\"/></g></svg>";
         SvgDocumentIndex index =
             new SvgDocumentIndexService().Build(source).Document!;
         SvgVisualDocument visual = new SvgVisualGeometryIndexService().Build(

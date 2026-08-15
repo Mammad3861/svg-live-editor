@@ -20,9 +20,11 @@ public sealed class SvgVisualAuthoringUxSurfaceTests
         StringAssert.Contains(
             xaml,
             "<Setter Property=\"AutomationProperties.Name\" Value=\"{Binding AutomationName}\" />");
-        StringAssert.Contains(
-            xaml,
-            "<Setter Property=\"AutomationProperties.Name\" Value=\"{Binding Label}\" />");
+        Assert.AreEqual(
+            2,
+            xaml.Split(
+                "<Setter Property=\"AutomationProperties.Name\" Value=\"{Binding AutomationName}\" />",
+                StringSplitOptions.None).Length - 1);
         Assert.AreEqual(
             2,
             xaml.Split(
@@ -114,7 +116,7 @@ public sealed class SvgVisualAuthoringUxSurfaceTests
         StringAssert.Contains(main, "TryHandleAuthoringShortcut(modifiers, pressedKey)");
         StringAssert.Contains(main, "TryParseAuthoringCommand(");
         StringAssert.Contains(main, "_viewModel.Inspector.SelectedElement is null");
-        StringAssert.Contains(inspector, "_documentEditService.Apply(SourceEditor.Document, result.Edit)");
+        StringAssert.Contains(inspector, "ApplyDocumentEditWithSelection(");
         StringAssert.Contains(inspector, "TryHandleInspectorUndoShortcut");
     }
 

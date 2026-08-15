@@ -5,7 +5,11 @@ namespace SvgLiveEditor.Services;
 public sealed class SvgObjectSnapService
 {
     public const double ThresholdCssPixels = 4;
+    // Three snap thresholds allow a small visual gutter while excluding
+    // canvas-distant objects that merely share an axis coordinate.
+    public const double OrthogonalProximityCssPixels = 12;
     private const double AmbiguityToleranceCssPixels = 0.25;
+    private const double MinimumAppliedCorrectionCssPixels = 0.01;
 
     public SvgSnapResult Snap(
         IReadOnlyList<SvgVisualElement> moving,
@@ -14,11 +18,13 @@ public sealed class SvgObjectSnapService
         double requestedDeltaX,
         double requestedDeltaY,
         double svgUnitsPerCssPixelX,
-        double svgUnitsPerCssPixelY)
+        double svgUnitsPerCssPixelY,
+        bool isEnabled = true)
     {
         ArgumentNullException.ThrowIfNull(moving);
         ArgumentNullException.ThrowIfNull(siblingTargets);
-        if (moving.Count == 0
+        if (!isEnabled
+            || moving.Count == 0
             || moving.Count > SvgMultiSelectionService.MaximumSelectionCount
             || moving.Any(item => item.Geometry is null)
             || !IsPositiveFinite(svgUnitsPerCssPixelX)
@@ -29,8 +35,12 @@ public sealed class SvgObjectSnapService
             return new SvgSnapResult(requestedDeltaX, requestedDeltaY, []);
         }
 
-        SvgVisualBounds movingBounds = Union(moving.Select(item =>
+        SvgVisualBounds originalMovingBounds = Union(moving.Select(item =>
             item.Geometry!.Bounds));
+        SvgVisualBounds movingBounds = Translate(
+            originalMovingBounds,
+            requestedDeltaX,
+            requestedDeltaY);
         HashSet<SvgElementIdentity> movingIds = moving
             .Select(item => item.SourceElement.Identity)
             .ToHashSet();
@@ -40,27 +50,43 @@ public sealed class SvgObjectSnapService
                 && !CoversCanvas(item.Geometry.Bounds, viewport))
             .Select(item => item.Geometry!.Bounds)
             .ToArray();
-        double[] xTargets = targets.SelectMany(AxisX)
+        double[] xTargets = targets
+            .Where(target => OrthogonalGap(
+                    movingBounds.Top,
+                    movingBounds.Bottom,
+                    target.Top,
+                    target.Bottom)
+                <= OrthogonalProximityCssPixels * svgUnitsPerCssPixelY)
+            .SelectMany(AxisX)
             .Append(viewport.MinX + (viewport.Width / 2))
             .Distinct()
             .ToArray();
-        double[] yTargets = targets.SelectMany(AxisY)
+        double[] yTargets = targets
+            .Where(target => OrthogonalGap(
+                    movingBounds.Left,
+                    movingBounds.Right,
+                    target.Left,
+                    target.Right)
+                <= OrthogonalProximityCssPixels * svgUnitsPerCssPixelX)
+            .SelectMany(AxisY)
             .Append(viewport.MinY + (viewport.Height / 2))
             .Distinct()
             .ToArray();
 
         (double Delta, double? Target) x = FindBest(
-            AxisX(movingBounds).Select(value => value + requestedDeltaX),
+            AxisX(movingBounds),
             xTargets,
             requestedDeltaX,
             ThresholdCssPixels * svgUnitsPerCssPixelX,
-            AmbiguityToleranceCssPixels * svgUnitsPerCssPixelX);
+            AmbiguityToleranceCssPixels * svgUnitsPerCssPixelX,
+            MinimumAppliedCorrectionCssPixels * svgUnitsPerCssPixelX);
         (double Delta, double? Target) y = FindBest(
-            AxisY(movingBounds).Select(value => value + requestedDeltaY),
+            AxisY(movingBounds),
             yTargets,
             requestedDeltaY,
             ThresholdCssPixels * svgUnitsPerCssPixelY,
-            AmbiguityToleranceCssPixels * svgUnitsPerCssPixelY);
+            AmbiguityToleranceCssPixels * svgUnitsPerCssPixelY,
+            MinimumAppliedCorrectionCssPixels * svgUnitsPerCssPixelY);
         List<PreviewAlignmentGuide> guides = [];
         if (x.Target is double vertical)
         {
@@ -86,7 +112,8 @@ public sealed class SvgObjectSnapService
         IReadOnlyList<double> targets,
         double requestedDelta,
         double threshold,
-        double ambiguityTolerance)
+        double ambiguityTolerance,
+        double minimumAppliedCorrection)
     {
         List<(double Distance, double Adjustment, double Target)> candidates = [];
         foreach (double point in movingPoints)
@@ -107,6 +134,13 @@ public sealed class SvgObjectSnapService
         }
 
         double bestDistance = candidates.Min(candidate => candidate.Distance);
+        if (bestDistance <= minimumAppliedCorrection)
+        {
+            // An already aligned axis needs no correction and therefore no
+            // transient guide. This also prevents a worse secondary target
+            // from pulling an exact alignment away from its current value.
+            return (requestedDelta, null);
+        }
         (double Distance, double Adjustment, double Target)[] tied = candidates
             .Where(candidate => Math.Abs(candidate.Distance - bestDistance)
                 <= ambiguityTolerance)
@@ -138,6 +172,31 @@ public sealed class SvgObjectSnapService
 
     private static double[] AxisY(SvgVisualBounds bounds) =>
         [bounds.Top, (bounds.Top + bounds.Bottom) / 2, bounds.Bottom];
+
+    private static SvgVisualBounds Translate(
+        SvgVisualBounds bounds,
+        double deltaX,
+        double deltaY) => new(
+            bounds.Left + deltaX,
+            bounds.Top + deltaY,
+            bounds.Right + deltaX,
+            bounds.Bottom + deltaY);
+
+    private static double OrthogonalGap(
+        double firstStart,
+        double firstEnd,
+        double secondStart,
+        double secondEnd)
+    {
+        if (firstEnd >= secondStart && secondEnd >= firstStart)
+        {
+            return 0;
+        }
+
+        return firstEnd < secondStart
+            ? secondStart - firstEnd
+            : firstStart - secondEnd;
+    }
 
     private static SvgVisualBounds Union(IEnumerable<SvgVisualBounds> bounds)
     {
