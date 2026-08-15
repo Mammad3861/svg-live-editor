@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace SvgLiveEditor.Tests;
 
 [TestClass]
@@ -160,10 +162,8 @@ public sealed class RepositoryRoadmapTests
         string englishReadme = ReadRepositoryDocument("README.md");
         string persianReadme = ReadRepositoryDocument("README.fa.md");
 
-        StringAssert.Contains(englishReadme, "[official roadmap](docs/roadmap.md)");
-        StringAssert.Contains(
-            persianReadme,
-            "[نقشهٔ راه رسمی](docs/roadmap.fa.md)");
+        AssertMarkdownLinkTargetsDocument(englishReadme, "docs/roadmap.md");
+        AssertMarkdownLinkTargetsDocument(persianReadme, "docs/roadmap.fa.md");
     }
 
     [TestMethod]
@@ -172,41 +172,127 @@ public sealed class RepositoryRoadmapTests
         string english = ReadRepositoryDocument("README.md");
         string persian = ReadRepositoryDocument("README.fa.md");
         string security = ReadDocument("security-model.md");
+        string normalizedEnglish = NormalizeDocumentationText(english);
+        string normalizedPersian = NormalizeDocumentationText(persian);
 
-        foreach (string phrase in new[]
-                 {
-                     "Version 0.10.0 Stage 1 implements bounded multi-selection",
-                     "atomic multi-object movement/nudge",
-                     "conservative Group/Ungroup",
-                     "equal-gap distribution",
-                     "optional object/canvas-center snapping",
-                     "within 4 CSS pixels",
-                     "Use `Ctrl`+left-drag",
-                     "explicit before/after/inside cross-parent operation",
-                     "session-only",
-                     "Stage 0 latest-wins mounted preview",
-                     "Unsafe or ambiguous operations fail closed"
-                 })
-        {
-            StringAssert.Contains(english, phrase);
-        }
-        foreach (string phrase in new[]
-                 {
-                     "مرحلهٔ ۱ نسخهٔ ۰٫۱۰٫۰ انتخاب چندگانهٔ محدود",
-                     "حرکت/Nudge اتمی چند شیء",
-                     "Group/Ungroup محافظه‌کارانه",
-                     "توزیع با فاصلهٔ برابر",
-                     "snapping اختیاری شیء/مرکز canvas",
-                     "آستانهٔ ۴ پیکسل CSS",
-                     "با `Ctrl` همراه کشیدن چپ",
-                     "مسیر صریح before/after/inside برای تغییر والد",
-                     "قفل فقط در نشست جاری",
-                     "پایهٔ latest-wins و source-authoritative مرحلهٔ ۰",
-                     "عملیات ناامن یا مبهم fail closed است"
-                 })
-        {
-            StringAssert.Contains(persian, phrase);
-        }
+        AssertSemanticContract(
+            normalizedEnglish,
+            "English v0.10.0 Stage 1 bounded selection",
+            "Version 0.10.0",
+            "Stage 1",
+            "bounded multi-selection",
+            "128");
+        AssertSemanticContract(
+            normalizedEnglish,
+            "English atomic multi-object Move/Nudge",
+            "atomic multi-object movement/nudge",
+            "no safe subset",
+            "one Undo unit");
+        AssertSemanticContract(
+            normalizedEnglish,
+            "English Group/Ungroup boundary",
+            "Group/Ungroup",
+            "2–128",
+            "contiguous siblings");
+        AssertSemanticContract(
+            normalizedEnglish,
+            "English equal-gap distribution",
+            "equal-gap distribution",
+            "visual gaps equal");
+        AssertSemanticContract(
+            normalizedEnglish,
+            "English optional four-pixel snapping",
+            "optional object/canvas-center snapping",
+            "4 CSS pixels");
+        AssertSemanticContract(
+            normalizedEnglish,
+            "English Ctrl+left-drag PNG gesture",
+            "Ctrl+left-drag",
+            "PNG");
+        AssertSemanticContract(
+            normalizedEnglish,
+            "English explicit cross-parent placement",
+            "before/after/inside",
+            "cross-parent");
+        AssertSemanticContract(
+            normalizedEnglish,
+            "English session-only locks",
+            "session-only",
+            "Source editing remains available");
+        AssertSemanticContract(
+            normalizedEnglish,
+            "English Stage 0 latest-wins source authority",
+            "Stage 0",
+            "latest-wins",
+            "source-authoritative");
+        AssertSemanticContract(
+            normalizedEnglish,
+            "English fail-closed handling",
+            "Unsafe or ambiguous operations",
+            "fail closed");
+
+        AssertSemanticContract(
+            normalizedPersian,
+            "Persian v0.10.0 Stage 1 bounded selection",
+            "0.10.0",
+            "مرحلهٔ اول",
+            "انتخاب چندگانهٔ محدود",
+            "حداکثر ۱۲۸");
+        AssertSemanticContract(
+            normalizedPersian,
+            "Persian atomic multi-object Move/Nudge",
+            "حرکت گروهی",
+            "Nudge",
+            "کل عملیات رد می‌شود",
+            "هیچ زیرمجموعه‌ای");
+        AssertSemanticContract(
+            normalizedPersian,
+            "Persian Group/Ungroup boundary",
+            "Group/Ungroup",
+            "۲ تا ۱۲۸",
+            "پیوسته و هم‌والد");
+        AssertSemanticContract(
+            normalizedPersian,
+            "Persian equal-gap distribution",
+            "Distribute",
+            "فاصلهٔ برابر");
+        AssertSemanticContract(
+            normalizedPersian,
+            "Persian optional four-pixel snapping",
+            "Snap",
+            "۴ پیکسل CSS",
+            "با خاموش کردن Snap");
+        AssertSemanticContract(
+            normalizedPersian,
+            "Persian Ctrl+left-drag PNG gesture",
+            "Ctrl + Left Drag",
+            "PNG");
+        AssertSemanticContract(
+            normalizedPersian,
+            "Persian explicit cross-parent placement",
+            "before/after/inside",
+            "تغییر والد",
+            "Reparent");
+        AssertSemanticContract(
+            normalizedPersian,
+            "Persian session-only locks",
+            "فقط برای همان نشست",
+            "داخل SVG ذخیره نمی‌شود",
+            "Source",
+            "عمداً همچنان قابل ویرایش است");
+        AssertSemanticContract(
+            normalizedPersian,
+            "Persian latest-wins source authority",
+            "Source",
+            "مرجع نهایی سند است",
+            "پاسخ‌های دیررس نمی‌توانند",
+            "فقط آخرین نسخهٔ معتبر");
+        AssertSemanticContract(
+            normalizedPersian,
+            "Persian fail-closed handling",
+            "Fail Closed",
+            "کاملاً رد می‌شود",
+            "حدس نمی‌زند");
         StringAssert.Contains(security, "Layers and groups boundary");
         StringAssert.Contains(
             security,
@@ -218,6 +304,50 @@ public sealed class RepositoryRoadmapTests
             security,
             "Layers drag/drop remains the only explicit before/after/inside cross-parent path");
         StringAssert.Contains(security, "never serialized");
+    }
+
+    private static void AssertMarkdownLinkTargetsDocument(
+        string markdown,
+        string expectedTarget)
+    {
+        MatchCollection links = Regex.Matches(
+            markdown,
+            @"(?<!!)\[[^\]\r\n]+\]\(\s*(?<target>[^)\s]+)(?:\s+""[^""]*"")?\s*\)");
+
+        Assert.IsTrue(
+            links.Cast<Match>().Any(match => string.Equals(
+                match.Groups["target"].Value,
+                expectedTarget,
+                StringComparison.Ordinal)),
+            $"Expected a Markdown link targeting '{expectedTarget}'.");
+    }
+
+    private static string NormalizeDocumentationText(string markdown)
+    {
+        string withoutKeyboardTags = Regex.Replace(
+            markdown,
+            @"</?kbd>",
+            string.Empty,
+            RegexOptions.IgnoreCase);
+        string withoutInlineFormatting = Regex.Replace(
+            withoutKeyboardTags,
+            @"[`*_]",
+            string.Empty);
+
+        return Regex.Replace(withoutInlineFormatting, @"\s+", " ").Trim();
+    }
+
+    private static void AssertSemanticContract(
+        string normalizedDocument,
+        string contractName,
+        params string[] markers)
+    {
+        foreach (string marker in markers)
+        {
+            Assert.IsTrue(
+                normalizedDocument.Contains(marker, StringComparison.OrdinalIgnoreCase),
+                $"{contractName} is missing semantic marker '{marker}'.");
+        }
     }
 
     private static string ReadDocument(string fileName) => File.ReadAllText(
