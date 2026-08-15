@@ -51,6 +51,7 @@ public partial class MainWindow
     private readonly Queue<string> _visualResizeGestureIdOrder = new();
     private PendingPreviewTextMeasurement?
         _pendingPreviewTextMeasurement;
+    private SvgSelectionRestoreTarget? _pendingSelectionRestore;
 
     private bool TryHandlePreviewVisualInteraction(
         string messageJson,
@@ -410,7 +411,11 @@ public partial class MainWindow
         }
 
         _visualSelectionIdentity = identity;
-        _documentEditService.Apply(SourceEditor.Document, result.Edit);
+        ApplyDocumentEditWithSelection(
+            result.Edit,
+            sourceSnapshot,
+            [identity],
+            identity);
         _previewDebouncer.Cancel();
         long updatedRevision = _sourceRevisionTracker.Current;
         string updatedSource = SourceEditor.Text;
@@ -647,6 +652,16 @@ public partial class MainWindow
         }
         _visualEditGesture = null;
         _activeSnapGuides = [];
+        if (completed.HasMoved)
+        {
+            // Pointer release must remove transient guides immediately. Keep
+            // the temporary selection at its pending delta until the atomic
+            // source edit either commits or restores the current geometry.
+            ShowVisualSelection(
+                completed.DeltaX,
+                completed.DeltaY,
+                guides: []);
+        }
         if (!completed.HasMoved)
         {
             if (completed.CollapseToSingleOnClick
@@ -762,7 +777,7 @@ public partial class MainWindow
             return;
         }
 
-        _documentEditService.Apply(SourceEditor.Document, result.Edit);
+        ApplyDocumentEditWithSelection(result.Edit, sourceSnapshot);
         _previewDebouncer.Cancel();
         long updatedRevision = _sourceRevisionTracker.Current;
         string updatedSource = SourceEditor.Text;
@@ -825,17 +840,29 @@ public partial class MainWindow
         foreach (SvgElementIdentity identity in identities)
         {
             SvgVisualElement? element = document.FindElement(identity);
-            if (element is null || !element.IsMovable)
+            if (element is null)
             {
-                error = "Every selected element must be safely measurable and movable.";
-                return false;
-            }
-            if (IsVisualElementLocked(element))
-            {
-                error = "Unlock every selected layer and its ancestors before moving it.";
+                error = "The selection changed before the move could be completed.";
                 return false;
             }
             resolved.Add(element);
+        }
+
+        if (_viewModel.Inspector.DocumentIndex is not SvgDocumentIndex sourceDocument)
+        {
+            error = "The selection changed before the move could be completed.";
+            return false;
+        }
+        SvgAuthoringAvailability availability =
+            _multiVisualMoveService.GetAvailability(
+                sourceDocument,
+                resolved,
+                _viewModel.Inspector.IsElementEffectivelyLocked,
+                _viewModel.Inspector.IsElementEffectivelyVisible);
+        if (!availability.CanExecute)
+        {
+            error = availability.UnavailableReason;
+            return false;
         }
 
         elements = [.. resolved];
@@ -849,8 +876,7 @@ public partial class MainWindow
         double svgUnitsPerCssPixelX,
         double svgUnitsPerCssPixelY)
     {
-        if (!_userPreferences.SnapToObjects
-            || !TryGetMovableSelection(
+        if (!TryGetMovableSelection(
                 gesture.SelectionIdentities,
                 out SvgVisualElement[] moving,
                 out _)
@@ -900,7 +926,8 @@ public partial class MainWindow
             requestedDeltaX,
             requestedDeltaY,
             svgUnitsPerCssPixelX,
-            svgUnitsPerCssPixelY);
+            svgUnitsPerCssPixelY,
+            _userPreferences.SnapToObjects);
     }
 
     private bool CanContinueVisualGesture(
@@ -1070,6 +1097,124 @@ public partial class MainWindow
                 document);
         }
         return SvgMultiSelectionState.Empty(revision);
+    }
+
+    private void ApplyDocumentEditWithSelection(
+        SourceTextEdit edit,
+        string sourceSnapshot,
+        IReadOnlyList<SvgElementIdentity>? preferredSelections = null,
+        SvgElementIdentity? preferredPrimary = null,
+        bool remapPrimaryToPreferred = false)
+    {
+        ArgumentNullException.ThrowIfNull(edit);
+        ArgumentNullException.ThrowIfNull(sourceSnapshot);
+        SvgMultiSelectionState before = EnsureCurrentVisualSelectionState();
+        string candidate = edit.Apply(sourceSnapshot);
+        long nextRevision = checked(_sourceRevisionTracker.Current + 1);
+        SvgDocumentIndex? candidateDocument =
+            _documentIndexService.Build(candidate).Document;
+        SvgMultiSelectionState? after = candidateDocument is null
+            ? null
+            : CreatePostEditSelection(
+                before,
+                nextRevision,
+                candidateDocument,
+                preferredSelections,
+                preferredPrimary,
+                remapPrimaryToPreferred);
+        SvgSelectionUndoOperation? selectionUndo = after is null
+            ? null
+            : new SvgSelectionUndoOperation(
+                SvgSelectionRestoreTarget.Create(before, sourceSnapshot),
+                SvgSelectionRestoreTarget.Create(after, candidate),
+                target => _pendingSelectionRestore = target);
+
+        _documentEditService.Apply(
+            SourceEditor.Document,
+            edit,
+            selectionUndo);
+        if (after is not null)
+        {
+            _visualSelectionState = after with
+            {
+                SourceRevision = _sourceRevisionTracker.Current
+            };
+        }
+    }
+
+    private SvgMultiSelectionState CreatePostEditSelection(
+        SvgMultiSelectionState before,
+        long nextRevision,
+        SvgDocumentIndex candidateDocument,
+        IReadOnlyList<SvgElementIdentity>? preferredSelections,
+        SvgElementIdentity? preferredPrimary,
+        bool remapPrimaryToPreferred)
+    {
+        if (remapPrimaryToPreferred
+            && preferredPrimary is not null
+            && candidateDocument.FindBestMatch(preferredPrimary) is not null)
+        {
+            return _multiSelectionService.ReconcileReplacingPrimary(
+                before,
+                nextRevision,
+                candidateDocument,
+                preferredPrimary);
+        }
+        if (preferredSelections is null || preferredSelections.Count == 0)
+        {
+            return _multiSelectionService.Reconcile(
+                before,
+                nextRevision,
+                candidateDocument);
+        }
+        if (preferredSelections.Count
+            > SvgMultiSelectionService.MaximumSelectionCount)
+        {
+            return SvgMultiSelectionState.Empty(nextRevision);
+        }
+
+        SvgElementIdentity[] current = preferredSelections
+            .Select(candidateDocument.FindBestMatch)
+            .Where(element => element is not null)
+            .Cast<SvgElementNode>()
+            .Select(element => element.Identity)
+            .Distinct()
+            .ToArray();
+        SvgElementIdentity? primary = preferredPrimary is null
+            ? current.FirstOrDefault()
+            : candidateDocument.FindBestMatch(preferredPrimary)?.Identity;
+        if (primary is null || !current.Contains(primary))
+        {
+            primary = current.FirstOrDefault();
+        }
+        return new SvgMultiSelectionState(
+            nextRevision,
+            current,
+            primary,
+            primary);
+    }
+
+    private void RestorePendingSelection(
+        string source,
+        long sourceRevision,
+        SvgDocumentIndexResult indexResult)
+    {
+        SvgSelectionRestoreTarget? target = _pendingSelectionRestore;
+        if (target is null)
+        {
+            return;
+        }
+        _pendingSelectionRestore = null;
+        if (!target.Matches(source)
+            || indexResult.Document is not SvgDocumentIndex document)
+        {
+            return;
+        }
+
+        _visualSelectionState = _multiSelectionService.Reconcile(
+            target.Selection,
+            sourceRevision,
+            document);
     }
 
     private void ApplyVisualSelectionState(
@@ -1374,6 +1519,7 @@ public partial class MainWindow
         _visualSelectionBridgeIds.Clear();
         _visualSelectionState = SvgMultiSelectionState.Empty(
             Math.Max(0, _sourceRevisionTracker.Current));
+        _pendingSelectionRestore = null;
         _activeSnapGuides = [];
         _consumedVisualResizeGestureIds.Clear();
         _visualResizeGestureIdOrder.Clear();
@@ -1591,27 +1737,9 @@ public partial class MainWindow
     {
         HashSet<SvgElementIdentity> selected =
             _visualSelectionState.Identities.ToHashSet();
-        foreach (SvgLayerViewModel layer in EnumerateLayerViewModels(
-            _viewModel.Inspector.LayerRoots))
-        {
-            layer.IsMultiSelected = selected.Contains(layer.Element.Identity)
-                && layer.Element.Identity != _visualSelectionState.Primary;
-        }
-        _viewModel.Inspector.SetMultiSelectionCount(selected.Count);
-    }
-
-    private static IEnumerable<SvgLayerViewModel> EnumerateLayerViewModels(
-        IEnumerable<SvgLayerViewModel> roots)
-    {
-        foreach (SvgLayerViewModel layer in roots)
-        {
-            yield return layer;
-            foreach (SvgLayerViewModel child in EnumerateLayerViewModels(
-                layer.Children))
-            {
-                yield return child;
-            }
-        }
+        _viewModel.Inspector.SetMultiSelectionPresentation(
+            selected,
+            _visualSelectionState.Primary);
     }
 
     private string GetVisualSelectionLabel()

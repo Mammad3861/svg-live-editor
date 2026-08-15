@@ -5,7 +5,10 @@ namespace SvgLiveEditor.Services;
 
 public sealed class AvalonEditDocumentEditService
 {
-    public void Apply(TextDocument document, SourceTextEdit edit)
+    public void Apply(
+        TextDocument document,
+        SourceTextEdit edit,
+        IUndoableOperation? optionalUndoOperation = null)
     {
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(edit);
@@ -21,6 +24,10 @@ public sealed class AvalonEditDocumentEditService
         try
         {
             document.Replace(edit.Start, edit.Length, edit.Replacement);
+            if (optionalUndoOperation is not null)
+            {
+                document.UndoStack.PushOptional(optionalUndoOperation);
+            }
         }
         finally
         {

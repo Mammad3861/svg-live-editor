@@ -9,6 +9,41 @@ public sealed class SvgMultiVisualMoveService
 
     public SvgAttributeEditResult CreateEdit(
         string source,
+        SvgDocumentIndex document,
+        IReadOnlyList<SvgVisualElement> elements,
+        double deltaX,
+        double deltaY,
+        Func<SvgElementNode, bool>? isEffectivelyLocked,
+        Func<SvgElementNode, bool>? isEffectivelyVisible)
+    {
+        string? error = ValidateSelection(
+            document,
+            elements,
+            isEffectivelyLocked,
+            isEffectivelyVisible);
+        return error is null
+            ? CreateEdit(source, elements, deltaX, deltaY)
+            : SvgAttributeEditResult.Invalid(error);
+    }
+
+    public SvgAuthoringAvailability GetAvailability(
+        SvgDocumentIndex document,
+        IReadOnlyList<SvgVisualElement> elements,
+        Func<SvgElementNode, bool>? isEffectivelyLocked = null,
+        Func<SvgElementNode, bool>? isEffectivelyVisible = null)
+    {
+        string? error = ValidateSelection(
+            document,
+            elements,
+            isEffectivelyLocked,
+            isEffectivelyVisible);
+        return error is null
+            ? new SvgAuthoringAvailability(true)
+            : new SvgAuthoringAvailability(false, error);
+    }
+
+    public SvgAttributeEditResult CreateEdit(
+        string source,
         IReadOnlyList<SvgVisualElement> elements,
         double deltaX,
         double deltaY)
@@ -92,5 +127,48 @@ public sealed class SvgMultiVisualMoveService
         return SvgAttributeEditResult.Success(
             SvgSourceMutationUtilities.CreateMinimalEdit(source, candidate));
     }
-}
 
+    private static string? ValidateSelection(
+        SvgDocumentIndex document,
+        IReadOnlyList<SvgVisualElement> elements,
+        Func<SvgElementNode, bool>? isEffectivelyLocked,
+        Func<SvgElementNode, bool>? isEffectivelyVisible)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(elements);
+        if (elements.Count == 0
+            || elements.Count > SvgMultiSelectionService.MaximumSelectionCount
+            || elements.Select(item => item.SourceElement.Identity)
+                .Distinct().Count() != elements.Count
+            || elements.Any(element =>
+                !document.Elements.Contains(element.SourceElement)))
+        {
+            return "The selection changed before the move could be completed.";
+        }
+        if (elements.Any(element =>
+                isEffectivelyLocked?.Invoke(element.SourceElement) == true))
+        {
+            return "The selection contains a locked element or locked ancestor.";
+        }
+        if (elements.Any(element =>
+                isEffectivelyVisible?.Invoke(element.SourceElement) == false))
+        {
+            return "The selection contains a hidden element.";
+        }
+        if (elements.Any(element =>
+                !element.IsMovable || element.Geometry is null))
+        {
+            return "The selection contains an unsupported or unmeasurable element.";
+        }
+
+        SvgElementNode? parent = document.FindParent(elements[0].SourceElement);
+        if (parent is null
+            || elements.Any(element => !ReferenceEquals(
+                document.FindParent(element.SourceElement),
+                parent)))
+        {
+            return "The selected elements must share a compatible parent.";
+        }
+        return null;
+    }
+}

@@ -99,10 +99,83 @@ public sealed class SvgMultiVisualMoveServiceTests
         StringAssert.Contains(result.ErrorMessage!, "duplicate");
     }
 
+    [TestMethod]
+    public void IncompatibleParentsRejectAtomicallyWithExactStatusAndNoUndo()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><g><rect id=\"a\" x=\"1\" y=\"2\" width=\"3\" height=\"4\"/></g><g><circle id=\"b\" cx=\"10\" cy=\"10\" r=\"2\"/></g></svg>";
+        SvgDocumentIndex document =
+            new SvgDocumentIndexService().Build(source).Document!;
+        SvgVisualElement[] elements = BuildVisual(source, document).Elements
+            .Where(element => element.SourceElement.Id is "a" or "b")
+            .ToArray();
+        TextDocument editorDocument = new(source);
+
+        SvgAttributeEditResult result = _service.CreateEdit(
+            source,
+            document,
+            elements,
+            5,
+            5,
+            isEffectivelyLocked: null,
+            isEffectivelyVisible: _ => true);
+
+        Assert.IsFalse(result.IsSuccess);
+        Assert.IsNull(result.Edit);
+        Assert.AreEqual(
+            "The selected elements must share a compatible parent.",
+            result.ErrorMessage);
+        Assert.AreEqual(source, editorDocument.Text);
+        Assert.IsFalse(editorDocument.UndoStack.CanUndo);
+    }
+
+    [TestMethod]
+    public void LockedOrHiddenMemberRejectsTheCompleteSelection()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect id=\"a\" x=\"1\" y=\"2\" width=\"3\" height=\"4\"/><circle id=\"b\" cx=\"10\" cy=\"10\" r=\"2\"/></svg>";
+        SvgDocumentIndex document =
+            new SvgDocumentIndexService().Build(source).Document!;
+        SvgVisualElement[] elements = BuildVisual(source, document).Elements.ToArray();
+
+        SvgAttributeEditResult locked = _service.CreateEdit(
+            source,
+            document,
+            elements,
+            1,
+            0,
+            element => element.Id == "b",
+            _ => true);
+        SvgAttributeEditResult hidden = _service.CreateEdit(
+            source,
+            document,
+            elements,
+            1,
+            0,
+            _ => false,
+            element => element.Id != "b");
+
+        Assert.IsNull(locked.Edit);
+        Assert.AreEqual(
+            "The selection contains a locked element or locked ancestor.",
+            locked.ErrorMessage);
+        Assert.IsNull(hidden.Edit);
+        Assert.AreEqual(
+            "The selection contains a hidden element.",
+            hidden.ErrorMessage);
+    }
+
     private static SvgVisualDocument BuildVisual(string source)
     {
         SvgDocumentIndex document =
             new SvgDocumentIndexService().Build(source).Document!;
+        return BuildVisual(source, document);
+    }
+
+    private static SvgVisualDocument BuildVisual(
+        string source,
+        SvgDocumentIndex document)
+    {
         return new SvgVisualGeometryIndexService().Build(
             document,
             new SvgCanvasSizeReader().Read(source),

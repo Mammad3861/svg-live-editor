@@ -1163,6 +1163,10 @@ public partial class MainWindow : Window
             ? PreviewPngSourceState.CurrentValid
             : PreviewPngSourceState.CurrentInvalid;
         _viewModel.ApplyValidation(result);
+        RestorePendingSelection(
+            sourceSnapshot,
+            sourceRevision,
+            indexResult);
         if (result.IsValid)
         {
             _lastValidCanvasSize =

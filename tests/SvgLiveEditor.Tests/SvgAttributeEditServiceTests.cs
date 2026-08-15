@@ -81,6 +81,23 @@ public sealed class SvgAttributeEditServiceTests
     }
 
     [TestMethod]
+    public void CreateEdit_RejectsDigitOnlyIdAsAnInvalidXmlName()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><text id=\"valid\">سلام</text></svg>";
+
+        SvgAttributeEditResult result = _editService.CreateEdit(
+            source,
+            FindElement(source, "text"),
+            "id",
+            "85");
+
+        Assert.IsFalse(result.IsSuccess);
+        Assert.IsNull(result.Edit);
+        StringAssert.Contains(result.ErrorMessage, "valid XML name");
+    }
+
+    [TestMethod]
     public void CreateEdit_ChangesOnlyTheRequestedTextDirectionAttribute()
     {
         const string source =

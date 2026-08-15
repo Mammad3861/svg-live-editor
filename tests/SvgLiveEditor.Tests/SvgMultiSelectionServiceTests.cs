@@ -116,6 +116,56 @@ public sealed class SvgMultiSelectionServiceTests
     }
 
     [TestMethod]
+    public void SmallRangeInsideLargeContainerSucceedsButOversizedRangeFails()
+    {
+        SvgElementIdentity[] siblings = Enumerable.Range(0, 129)
+            .Select(index => Identity("rect", null, $"0/{index}"))
+            .ToArray();
+        SvgMultiSelectionState state = _service.Replace(9, siblings[0]);
+
+        SvgMultiSelectionChange small = _service.SelectRange(
+            state,
+            9,
+            siblings,
+            siblings[1]);
+        SvgMultiSelectionChange oversized = _service.SelectRange(
+            state,
+            9,
+            siblings,
+            siblings[^1]);
+
+        Assert.IsTrue(small.IsSuccess);
+        Assert.AreEqual(2, small.State.Identities.Count);
+        Assert.IsFalse(oversized.IsSuccess);
+        StringAssert.Contains(oversized.ErrorMessage!, "At most 128");
+    }
+
+    [TestMethod]
+    public void FocusOnlyPrimaryChangePreservesSelectionAndAnchor()
+    {
+        SvgElementIdentity first = Identity("rect", "a", "0/0");
+        SvgElementIdentity second = Identity("circle", "b", "0/1");
+        SvgMultiSelectionState selected = new(
+            12,
+            [first, second],
+            second,
+            first);
+
+        SvgMultiSelectionChange focused = _service.FocusOrReplace(
+            selected,
+            12,
+            first);
+
+        Assert.IsTrue(focused.IsSuccess);
+        CollectionAssert.AreEqual(
+            selected.Identities.ToArray(),
+            focused.State.Identities.ToArray());
+        Assert.AreEqual(first, focused.State.Primary);
+        Assert.AreEqual(first, focused.State.Anchor);
+        Assert.AreEqual(12, focused.State.SourceRevision);
+    }
+
+    [TestMethod]
     public void ReconcileDropsMissingItemsAndKeepsAValidPrimary()
     {
         const string before =
@@ -167,6 +217,43 @@ public sealed class SvgMultiSelectionServiceTests
 
         Assert.AreEqual(0, reconciled.Identities.Count);
         Assert.IsNull(reconciled.Primary);
+    }
+
+    [TestMethod]
+    public void PrimaryReplacementPreservesOtherResolvableMembersAndAnchor()
+    {
+        const string before =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect id=\"move\"/><circle id=\"keep\"/><g/></svg>";
+        const string after =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><circle id=\"keep\"/><g><rect id=\"move\"/></g></svg>";
+        SvgDocumentIndex oldDocument =
+            new SvgDocumentIndexService().Build(before).Document!;
+        SvgDocumentIndex newDocument =
+            new SvgDocumentIndexService().Build(after).Document!;
+        SvgElementIdentity moved = oldDocument.Elements.Single(element =>
+            element.Id == "move").Identity;
+        SvgElementIdentity kept = oldDocument.Elements.Single(element =>
+            element.Id == "keep").Identity;
+        SvgElementIdentity replacement = newDocument.Elements.Single(element =>
+            element.Id == "move").Identity;
+        SvgMultiSelectionState state = new(
+            5,
+            [moved, kept],
+            moved,
+            kept);
+
+        SvgMultiSelectionState reconciled = _service.ReconcileReplacingPrimary(
+            state,
+            6,
+            newDocument,
+            replacement);
+
+        Assert.AreEqual(2, reconciled.Identities.Count);
+        Assert.AreEqual(replacement, reconciled.Primary);
+        Assert.AreEqual("keep", reconciled.Anchor?.Id);
+        CollectionAssert.AreEquivalent(
+            new[] { "move", "keep" },
+            reconciled.Identities.Select(identity => identity.Id).ToArray());
     }
 
     private static SvgElementIdentity Identity(

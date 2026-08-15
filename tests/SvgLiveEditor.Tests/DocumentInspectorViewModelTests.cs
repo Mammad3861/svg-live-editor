@@ -340,4 +340,96 @@ public sealed class DocumentInspectorViewModelTests
             sourceSnapshot,
             StringComparison.Ordinal));
     }
+
+    [TestMethod]
+    public void StructureRangeUsesOnlyVisibleSiblingsAndDuplicateIdsStayDistinct()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><g id=\"one\"><rect id=\"same\"/><rect id=\"same\"/></g><g id=\"two\"><circle/></g></svg>";
+        SvgDocumentIndex document = _indexService.Build(source).Document!;
+        DocumentInspectorViewModel inspector = new();
+        inspector.Load(document, preferredSelection: null, source: source);
+        SvgElementViewModel group = inspector.Roots.Single().Children[0];
+        SvgElementViewModel first = group.Children[0];
+        SvgElementViewModel second = group.Children[1];
+        SvgElementViewModel otherContainerChild =
+            inspector.Roots.Single().Children[1].Children.Single();
+
+        inspector.Roots.Single().IsExpanded = false;
+        Assert.AreEqual(0, inspector.GetVisibleStructureSiblings(first).Count);
+        inspector.Roots.Single().IsExpanded = true;
+        group.IsExpanded = false;
+        Assert.AreEqual(0, inspector.GetVisibleStructureSiblings(first).Count);
+
+        group.IsExpanded = true;
+        IReadOnlyList<SvgElementIdentity> visible =
+            inspector.GetVisibleStructureSiblings(first);
+        CollectionAssert.AreEqual(
+            new[] { first.Element.Identity, second.Element.Identity },
+            visible.ToArray());
+        Assert.AreNotEqual(
+            first.Element.Identity.StructuralPath,
+            second.Element.Identity.StructuralPath);
+
+        SvgMultiSelectionService selectionService = new();
+        SvgMultiSelectionState anchor = selectionService.Replace(
+            3,
+            first.Element.Identity);
+        SvgMultiSelectionChange toggled = selectionService.Toggle(
+            anchor,
+            3,
+            second.Element.Identity);
+        Assert.IsTrue(toggled.IsSuccess);
+        CollectionAssert.AreEqual(
+            visible.ToArray(),
+            toggled.State.Identities.ToArray());
+        SvgMultiSelectionChange range = selectionService.SelectRange(
+            anchor,
+            3,
+            visible,
+            second.Element.Identity);
+        Assert.IsTrue(range.IsSuccess);
+        SvgMultiSelectionChange crossParent = selectionService.SelectRange(
+            anchor,
+            3,
+            inspector.GetVisibleStructureSiblings(otherContainerChild),
+            otherContainerChild.Element.Identity);
+        Assert.IsFalse(crossParent.IsSuccess);
+        StringAssert.Contains(crossParent.ErrorMessage!, "different layer container");
+    }
+
+    [TestMethod]
+    public void StructureAndLayersExposeTheSamePrimaryAndSecondarySelection()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect id=\"first\"/><text id=\"second\">سلام</text></svg>";
+        SvgDocumentIndex document = _indexService.Build(source).Document!;
+        DocumentInspectorViewModel inspector = new();
+        inspector.Load(document, preferredSelection: null, source: source);
+        SvgElementNode first = document.Elements.Single(element =>
+            element.Id == "first");
+        SvgElementNode second = document.Elements.Single(element =>
+            element.Id == "second");
+
+        inspector.SelectNode(second, InspectorSelectionOrigin.ExplicitTreeNavigation);
+        inspector.SetMultiSelectionPresentation(
+            new HashSet<SvgElementIdentity>
+            {
+                first.Identity,
+                second.Identity
+            },
+            second.Identity);
+
+        SvgElementViewModel primary = inspector.FindViewModel(second)!;
+        SvgElementViewModel secondary = inspector.FindViewModel(first)!;
+        Assert.IsTrue(primary.IsSelected);
+        Assert.IsFalse(primary.IsMultiSelected);
+        StringAssert.Contains(primary.AutomationName, "primary selected");
+        Assert.IsTrue(secondary.IsMultiSelected);
+        StringAssert.Contains(secondary.AutomationName, "selected");
+        Assert.IsTrue(inspector.FindLayerViewModel(first)!.IsMultiSelected);
+        Assert.IsTrue(inspector.FindLayerViewModel(second)!.IsSelected);
+        Assert.AreEqual(2, inspector.MultiSelectionCount);
+        StringAssert.Contains(source, "سلام");
+    }
 }

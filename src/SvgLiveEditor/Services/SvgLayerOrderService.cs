@@ -19,6 +19,33 @@ public sealed class SvgLayerOrderService
 
     private readonly SvgValidationService _validationService = new();
 
+    public SvgLayerOrderAvailability GetSelectionAvailability(
+        SvgDocumentIndex document,
+        IReadOnlyList<SvgElementNode> selected,
+        SvgLayerOrderCommand command,
+        Func<SvgElementNode, bool>? isEffectivelyLocked = null)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(selected);
+        if (selected.Count != 1)
+        {
+            return Unavailable(
+                "Arrange requires exactly one current selected element; a multi-selection is never reordered partially.");
+        }
+        SvgElementNode element = selected[0];
+        if (!document.Elements.Contains(element))
+        {
+            return Unavailable(
+                "The selection changed before Arrange could be completed.");
+        }
+        if (isEffectivelyLocked?.Invoke(element) == true)
+        {
+            return Unavailable(
+                "Unlock the layer and its parent group before arranging it.");
+        }
+        return GetAvailability(document, element, command);
+    }
+
     public SvgLayerOrderAvailability GetAvailability(
         SvgDocumentIndex document,
         SvgElementNode element,

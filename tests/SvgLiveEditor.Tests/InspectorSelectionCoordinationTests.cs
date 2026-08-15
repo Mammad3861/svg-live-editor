@@ -117,6 +117,125 @@ public sealed class InspectorSelectionCoordinationTests
     }
 
     [TestMethod]
+    [DataRow("Persian", "فارسی")]
+    [DataRow("English", "English")]
+    [DataRow("Mixed bidi", "هولی shit این بده")]
+    [DataRow("Bidi digits punctuation", "نسخه 10.0: SVG, خوبه!")]
+    [DataRow("Multiline", "خط اول\nEnglish line\nخط سوم")]
+    [DataRow("Leading and trailing whitespace", "  فارسی English  ")]
+    [DataRow("Lexical XML entities", "فارسی &amp; English &lt;test&gt;")]
+    [DataRow("Supplementary Unicode", "فارسی 😀 English")]
+    public void PreviewNavigationSelectsExactRawDirectText(
+        string caseName,
+        string expected)
+    {
+        _ = caseName;
+        AssertExactPreviewTextSelection(expected);
+    }
+
+    [TestMethod]
+    public void PreviewNavigationPlacesCaretInsideEmptyDirectText()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><text id=\"empty\" x=\"70\" y=\"93\"></text></svg>";
+        CoordinationHarness harness = new(source);
+        SvgElementNode text = harness.FindElement("empty").Element;
+
+        harness.SelectFromPreview(text);
+
+        Assert.AreEqual(text.StartTagSpan.End, harness.SelectionStart);
+        Assert.AreEqual(0, harness.SelectionLength);
+        Assert.AreEqual(string.Empty, harness.SelectedText);
+        Assert.AreEqual(source, harness.Document.Text);
+        Assert.IsFalse(harness.Document.UndoStack.CanUndo);
+        Assert.AreEqual("empty", harness.Inspector.SelectedElement!.Element.Id);
+        Assert.IsTrue(harness.Inspector.Properties.Any(property =>
+            property.Name == "id" && property.Value == "empty"));
+    }
+
+    [TestMethod]
+    public void PreviewNavigationSelectsWhitespaceOnlyDirectTextExactly()
+    {
+        AssertExactPreviewTextSelection(" \t  ");
+    }
+
+    [TestMethod]
+    public void TypingAfterPreviewTextSelectionReplacesOnlyDirectContent()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><text id=\"edit\" x=\"70\" y=\"93\" direction=\"rtl\">هولی shit این بده</text></svg>";
+        const string replacement = "متن تازه";
+        CoordinationHarness harness = new(source);
+        harness.SelectFromPreview(harness.FindElement("edit").Element);
+        Assert.IsFalse(harness.Document.UndoStack.CanUndo);
+
+        harness.Type(replacement);
+
+        Assert.AreEqual(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><text id=\"edit\" x=\"70\" y=\"93\" direction=\"rtl\">متن تازه</text></svg>",
+            harness.Document.Text);
+        Assert.IsTrue(harness.Document.UndoStack.CanUndo);
+        harness.Undo();
+        Assert.AreEqual(source, harness.Document.Text);
+    }
+
+    [TestMethod]
+    public void PreviewNavigationFallsBackForComplexAndSelfClosingText()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><path id=\"curve\" d=\"M0 0 L10 0\"/><text id=\"nested\"><tspan>سلام</tspan></text><text id=\"path\"><textPath href=\"#curve\">hello</textPath></text><text id=\"cdata\"><![CDATA[hello]]></text><text id=\"self\"/></svg>";
+        SvgDocumentIndex index =
+            new SvgDocumentIndexService().Build(source).Document!;
+        SvgSourceNavigationSpanService service = new();
+
+        foreach (SvgElementNode text in index.Elements.Where(element =>
+                     element.Name == "text"))
+        {
+            Assert.AreEqual(
+                text.StartTagSpan,
+                service.GetPreferredSpan(
+                    source,
+                    text,
+                    InspectorSelectionOrigin.PreviewNavigation));
+        }
+    }
+
+    [TestMethod]
+    public void PreviewSelectionSurvivesProgrammaticRefreshButImeAndStaleNavigationFailClosed()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><text id=\"value\">فارسی &amp; English</text></svg>";
+        CoordinationHarness harness = new(source);
+        SvgElementViewModel text = harness.FindElement("value");
+        harness.SelectFromPreview(text.Element);
+        (int Start, int Length, string Text) expected =
+            (harness.SelectionStart, harness.SelectionLength, harness.SelectedText);
+
+        harness.ApplyIndex(
+            new SvgDocumentIndexService().Build(source).Document!,
+            text.Element.Identity);
+        harness.RaiseTreeSelectionChanged();
+        AssertSelection(harness, expected.Start, expected.Text);
+
+        harness.SetSelection(3, 2);
+        harness.IsTextCompositionActive = true;
+        harness.Navigate(
+            harness.Inspector.SelectedElement!,
+            InspectorSelectionOrigin.PreviewNavigation);
+        Assert.AreEqual(3, harness.SelectionStart);
+        Assert.AreEqual(2, harness.SelectionLength);
+
+        harness.IsTextCompositionActive = false;
+        harness.Navigate(
+            harness.Inspector.SelectedElement!,
+            InspectorSelectionOrigin.PreviewNavigation,
+            indexRevision: harness.SourceRevision - 1);
+        Assert.AreEqual(3, harness.SelectionStart);
+        Assert.AreEqual(2, harness.SelectionLength);
+        Assert.AreEqual(source, harness.Document.Text);
+    }
+
+    [TestMethod]
     public void PreviewNavigationWithDuplicateAuthoredIds_SelectsExactStructuralSpan()
     {
         const string duplicateIds =
@@ -139,6 +258,45 @@ public sealed class InspectorSelectionCoordinationTests
                 harness.SelectionStart,
                 harness.SelectionLength),
             "x=\"2\"");
+    }
+
+    [TestMethod]
+    public void DuplicateValidTextIdsRemainStructurallyExactAcrossRefreshUndoAndRedo()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><text id=\"same-id\">اول</text><text id=\"same-id\">دوم</text></svg>";
+        CoordinationHarness harness = new(source);
+        SvgElementNode[] duplicates = harness.Inspector.DocumentIndex!.Elements
+            .Where(element => element.Id == "same-id")
+            .OrderBy(element => element.StructuralPath, StringComparer.Ordinal)
+            .ToArray();
+
+        harness.SelectFromPreview(duplicates[0]);
+        AssertSelection(harness, duplicates[0].StartTagSpan.End, "اول");
+        harness.SelectFromPreview(duplicates[1]);
+        AssertSelection(harness, duplicates[1].StartTagSpan.End, "دوم");
+        SvgElementIdentity intended = duplicates[1].Identity;
+
+        harness.ApplyIndex(
+            new SvgDocumentIndexService().Build(source).Document!,
+            intended);
+        harness.RaiseTreeSelectionChanged();
+        AssertSelection(harness, duplicates[1].StartTagSpan.End, "دوم");
+        Assert.AreEqual("0/1", harness.Inspector.SelectedElement!.Element.StructuralPath);
+
+        int rootTagEnd = harness.Document.Text.IndexOf('>');
+        harness.Replace(rootTagEnd, 0, " data-name=\"root\"");
+        RebuildAndSelectIntendedDuplicate(harness, intended);
+        Assert.AreEqual("دوم", harness.SelectedText);
+        Assert.AreEqual(2, CountOccurrences(harness.Document.Text, "id=\"same-id\""));
+
+        harness.Undo();
+        RebuildAndSelectIntendedDuplicate(harness, intended);
+        Assert.AreEqual("دوم", harness.SelectedText);
+        harness.Redo();
+        RebuildAndSelectIntendedDuplicate(harness, intended);
+        Assert.AreEqual("دوم", harness.SelectedText);
+        Assert.AreEqual(2, CountOccurrences(harness.Document.Text, "id=\"same-id\""));
     }
 
     [TestMethod]
@@ -247,9 +405,69 @@ public sealed class InspectorSelectionCoordinationTests
         StringAssert.Contains(harness.Document.Text, "سلام تازه</text>");
     }
 
+    private static void AssertExactPreviewTextSelection(string expected)
+    {
+        string source =
+            $"<svg xmlns=\"http://www.w3.org/2000/svg\"><text x=\"70\" y=\"93\" direction=\"rtl\">{expected}</text></svg>";
+        CoordinationHarness harness = new(source);
+        SvgElementNode text = harness.Inspector.DocumentIndex!.Elements
+            .Single(element => element.Name == "text");
+
+        harness.SelectFromPreview(text);
+
+        AssertSelection(harness, text.StartTagSpan.End, expected);
+        Assert.AreEqual(source, harness.Document.Text);
+        Assert.IsFalse(harness.Document.UndoStack.CanUndo);
+        Assert.AreEqual("text", harness.Inspector.SelectedElement!.Element.Name);
+    }
+
+    private static void AssertSelection(
+        CoordinationHarness harness,
+        int expectedStart,
+        string expectedText)
+    {
+        Assert.AreEqual(expectedStart, harness.SelectionStart);
+        Assert.AreEqual(expectedText.Length, harness.SelectionLength);
+        Assert.AreEqual(expectedText, harness.SelectedText);
+        Assert.AreEqual(
+            new SourceSpan(expectedStart, expectedText.Length),
+            harness.SelectionSpan);
+    }
+
+    private static void RebuildAndSelectIntendedDuplicate(
+        CoordinationHarness harness,
+        SvgElementIdentity intended)
+    {
+        SvgDocumentIndex rebuilt = new SvgDocumentIndexService()
+            .Build(harness.Document.Text).Document!;
+        harness.ApplyIndex(rebuilt, intended);
+        SvgElementNode selected = harness.Inspector.SelectedElement!.Element;
+        Assert.AreEqual(intended.StructuralPath, selected.StructuralPath);
+        harness.Navigate(
+            harness.Inspector.SelectedElement,
+            InspectorSelectionOrigin.PreviewNavigation);
+    }
+
+    private static int CountOccurrences(string source, string value)
+    {
+        int count = 0;
+        int offset = 0;
+        while ((offset = source.IndexOf(
+                   value,
+                   offset,
+                   StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            offset += value.Length;
+        }
+        return count;
+    }
+
     private sealed class CoordinationHarness
     {
         private readonly InspectorSelectionCoordinator _coordinator = new();
+        private readonly SvgSourceNavigationSpanService
+            _sourceNavigationSpanService = new();
         private readonly SourceRevisionTracker _revisions = new();
         private long _indexRevision;
 
@@ -274,6 +492,14 @@ public sealed class InspectorSelectionCoordinationTests
 
         public int SelectionLength { get; private set; }
 
+        public string SelectedText => Document.GetText(
+            SelectionStart,
+            SelectionLength);
+
+        public SourceSpan SelectionSpan => new(
+            SelectionStart,
+            SelectionLength);
+
         public long SourceRevision => _revisions.Current;
 
         public void SetCaret(int offset) => SetSelection(offset, 0);
@@ -290,6 +516,32 @@ public sealed class InspectorSelectionCoordinationTests
             SelectionStart += text.Length;
             SelectionLength = 0;
             _revisions.Advance();
+        }
+
+        public void Replace(int offset, int length, string text)
+        {
+            Document.Replace(offset, length, text);
+            _revisions.Advance();
+        }
+
+        public void Undo()
+        {
+            Document.UndoStack.Undo();
+            _revisions.Advance();
+        }
+
+        public void Redo()
+        {
+            Document.UndoStack.Redo();
+            _revisions.Advance();
+        }
+
+        public void SelectFromPreview(SvgElementNode element)
+        {
+            Inspector.SelectNode(
+                element,
+                InspectorSelectionOrigin.PreviewNavigation);
+            RaiseTreeSelectionChanged();
         }
 
         public SvgElementIdentity SelectInspectorForCaret(string id)
@@ -317,7 +569,8 @@ public sealed class InspectorSelectionCoordinationTests
             Inspector.Load(
                 index,
                 preferredSelection,
-                InspectorSelectionOrigin.InspectorRestore);
+                InspectorSelectionOrigin.InspectorRestore,
+                source: Document.Text);
         }
 
         public void RaiseTreeSelectionChanged()
@@ -335,9 +588,11 @@ public sealed class InspectorSelectionCoordinationTests
             InspectorSelectionOrigin origin,
             long? indexRevision = null)
         {
+            SourceSpan preferredSpan = _sourceNavigationSpanService
+                .GetPreferredSpan(Document.Text, element.Element, origin);
             if (_coordinator.TryGetNavigationSpan(
                     origin,
-                    element.Element.StartTagSpan,
+                    preferredSpan,
                     isIndexCurrent: true,
                     indexRevision ?? _indexRevision,
                     _revisions.Current,

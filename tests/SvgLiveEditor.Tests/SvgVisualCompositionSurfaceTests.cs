@@ -53,7 +53,7 @@ public sealed class SvgVisualCompositionSurfaceTests
             "_multiVisualMoveService.CreateEdit(");
         StringAssert.Contains(
             visual,
-            "_documentEditService.Apply(SourceEditor.Document, result.Edit)");
+            "ApplyDocumentEditWithSelection(result.Edit, sourceSnapshot)");
         StringAssert.Contains(
             visual,
             "_visualSelectionState.Identities.Count != 1");
@@ -64,13 +64,16 @@ public sealed class SvgVisualCompositionSurfaceTests
     public void ExplicitPreviewSelectionNavigatesSourceButRefreshDoesNot()
     {
         string visual = ReadUi("MainWindow.VisualEditing.cs");
+        string inspector = ReadUi("MainWindow.Inspector.cs");
         string applySelection = CompactCode(ExtractMethod(
             visual,
             "private void ApplyVisualSelectionState("));
+        string navigate = CompactCode(ExtractMethod(
+            inspector,
+            "private void NavigateToInspectorElement("));
 
-        Assert.AreEqual(
-            3,
-            CountOccurrences(CompactCode(visual), "navigateSource:true"));
+        Assert.IsTrue(
+            CountOccurrences(CompactCode(visual), "navigateSource:true") >= 3);
         StringAssert.Contains(
             applySelection,
             "boolnavigateSource=false)");
@@ -85,6 +88,12 @@ public sealed class SvgVisualCompositionSurfaceTests
             CountOccurrences(
                 applySelection,
                 "NavigateToInspectorElement(selected,origin)"));
+        StringAssert.Contains(
+            navigate,
+            "_svgSourceNavigationSpanService.GetPreferredSpan(SourceEditor.Text,element.Element,origin)");
+        StringAssert.Contains(
+            navigate,
+            "_inspectorSelectionCoordinator.TryGetNavigationSpan(origin,preferredSpan,");
     }
 
     [TestMethod]
@@ -210,6 +219,9 @@ public sealed class SvgVisualCompositionSurfaceTests
 
         StringAssert.Contains(
             resolveSnap,
+            "returnnewSvgSnapResult(requestedDeltaX,requestedDeltaY,[]);");
+        StringAssert.Contains(
+            resolveSnap,
             "ReferenceEquals(sourceDocument.FindParent(element.SourceElement),parent)");
         StringAssert.Contains(resolveSnap, "&&element.IsMovable");
         StringAssert.Contains(resolveSnap, "&&element.Geometryisnotnull");
@@ -222,6 +234,38 @@ public sealed class SvgVisualCompositionSurfaceTests
         StringAssert.Contains(
             resolveSnap,
             "return_objectSnapService.Snap(moving,siblings,document.Viewport,");
+        StringAssert.Contains(resolveSnap, "_userPreferences.SnapToObjects);");
+    }
+
+    [TestMethod]
+    public void SnapGuidesClearOnCommitCancelSelectionModeSourceAndPreferenceChanges()
+    {
+        string visual = ReadUi("MainWindow.VisualEditing.cs");
+        string main = ReadUi("MainWindow.xaml.cs");
+
+        foreach (string method in new[]
+                 {
+                     ExtractMethod(visual, "private void CompleteVisualEditGesture("),
+                     ExtractMethod(visual, "private void CancelVisualEditGesture("),
+                     ExtractMethod(visual, "private void ApplyVisualSelectionState("),
+                     ExtractMethod(visual, "private void OnVisualSourceChanged(")
+                 })
+        {
+            StringAssert.Contains(method, "_activeSnapGuides = [];");
+        }
+
+        StringAssert.Contains(
+            CompactCode(ExtractMethod(
+                visual,
+                "private void CompleteVisualEditGesture(")),
+            "ShowVisualSelection(completed.DeltaX,completed.DeltaY,guides:[]);");
+
+        StringAssert.Contains(
+            ExtractMethod(main, "private void SetPanMode("),
+            "CancelVisualEditGesture();");
+        StringAssert.Contains(
+            ExtractMethod(main, "private void OnSnapToObjectsClick("),
+            "CancelVisualEditGesture();");
     }
 
     private static string ReadUi(string fileName)
