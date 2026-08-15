@@ -12,7 +12,8 @@ public sealed class SvgLayoutService
         SvgDocumentIndex document,
         IReadOnlyList<SvgVisualElement> elements,
         SvgLayoutCommand command,
-        Func<SvgElementNode, bool>? isEffectivelyLocked = null)
+        Func<SvgElementNode, bool>? isEffectivelyLocked = null,
+        Func<SvgElementNode, bool>? isEffectivelyVisible = null)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(document);
@@ -21,7 +22,8 @@ public sealed class SvgLayoutService
             document,
             elements,
             command,
-            isEffectivelyLocked);
+            isEffectivelyLocked,
+            isEffectivelyVisible);
         if (error is not null)
         {
             return SvgAttributeEditResult.Invalid(error);
@@ -54,13 +56,15 @@ public sealed class SvgLayoutService
         SvgDocumentIndex document,
         IReadOnlyList<SvgVisualElement> elements,
         SvgLayoutCommand command,
-        Func<SvgElementNode, bool>? isEffectivelyLocked = null)
+        Func<SvgElementNode, bool>? isEffectivelyLocked = null,
+        Func<SvgElementNode, bool>? isEffectivelyVisible = null)
     {
         string? error = Validate(
             document,
             elements,
             command,
-            isEffectivelyLocked);
+            isEffectivelyLocked,
+            isEffectivelyVisible);
         return error is null
             ? new SvgAuthoringAvailability(true)
             : new SvgAuthoringAvailability(false, error);
@@ -70,7 +74,8 @@ public sealed class SvgLayoutService
         SvgDocumentIndex document,
         IReadOnlyList<SvgVisualElement> elements,
         SvgLayoutCommand command,
-        Func<SvgElementNode, bool>? isEffectivelyLocked)
+        Func<SvgElementNode, bool>? isEffectivelyLocked,
+        Func<SvgElementNode, bool>? isEffectivelyVisible)
     {
         int minimum = command is SvgLayoutCommand.DistributeHorizontally
             or SvgLayoutCommand.DistributeVertically
@@ -87,11 +92,24 @@ public sealed class SvgLayoutService
                     : "Select 2 to 128 distinct elements to align.";
         }
         if (elements.Any(element =>
-                !element.IsMovable
-                || element.Geometry is null
-                || isEffectivelyLocked?.Invoke(element.SourceElement) == true))
+                isEffectivelyLocked?.Invoke(element.SourceElement) == true))
         {
-            return "Every selected element must be measurable, movable, and unlocked.";
+            return "The selection contains a locked element or locked ancestor.";
+        }
+        if (elements.Any(element =>
+                isEffectivelyVisible?.Invoke(element.SourceElement) == false))
+        {
+            return "The selection contains a hidden element.";
+        }
+        if (elements.Any(element =>
+                !document.Elements.Contains(element.SourceElement)))
+        {
+            return "The selection changed before the layout command completed.";
+        }
+        if (elements.Any(element =>
+                !element.IsMovable || element.Geometry is null))
+        {
+            return "The selection contains an unsupported or unmeasurable element.";
         }
 
         SvgElementNode? parent = document.FindParent(elements[0].SourceElement);
@@ -100,7 +118,7 @@ public sealed class SvgLayoutService
                 document.FindParent(element.SourceElement),
                 parent)))
         {
-            return "Layout commands require selected elements under one compatible parent coordinate system.";
+            return "The selected elements must share a compatible parent coordinate system.";
         }
         return null;
     }
@@ -185,4 +203,3 @@ public sealed class SvgLayoutService
         return movements;
     }
 }
-

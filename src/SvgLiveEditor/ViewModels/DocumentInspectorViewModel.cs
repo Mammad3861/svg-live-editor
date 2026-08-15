@@ -253,6 +253,50 @@ public sealed class DocumentInspectorViewModel : ObservableObject
             layer.OpaqueId.Equals(opaqueId, StringComparison.Ordinal));
     }
 
+    public IReadOnlyList<SvgElementIdentity> GetVisibleStructureSiblings(
+        SvgElementViewModel element)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        if (!_elementsByPath.TryGetValue(
+                element.Element.StructuralPath,
+                out SvgElementViewModel? current)
+            || !ReferenceEquals(current, element))
+        {
+            return [];
+        }
+        for (SvgElementViewModel? ancestor = element.Parent;
+             ancestor is not null;
+             ancestor = ancestor.Parent)
+        {
+            if (!ancestor.IsExpanded)
+            {
+                return [];
+            }
+        }
+
+        IEnumerable<SvgElementViewModel> siblings = element.Parent?.Children
+            ?? Roots;
+        return siblings.Select(item => item.Element.Identity).ToArray();
+    }
+
+    public void SetMultiSelectionPresentation(
+        IReadOnlyCollection<SvgElementIdentity> selected,
+        SvgElementIdentity? primary)
+    {
+        ArgumentNullException.ThrowIfNull(selected);
+        foreach (SvgElementViewModel element in EnumerateElements(Roots))
+        {
+            element.IsMultiSelected = selected.Contains(element.Element.Identity)
+                && element.Element.Identity != primary;
+        }
+        foreach (SvgLayerViewModel layer in EnumerateLayers(LayerRoots))
+        {
+            layer.IsMultiSelected = selected.Contains(layer.Element.Identity)
+                && layer.Element.Identity != primary;
+        }
+        SetMultiSelectionCount(selected.Count);
+    }
+
     public bool IsElementEffectivelyLocked(SvgElementNode element) =>
         _documentIndex is not null
         && _layerWorkspaceService.IsEffectivelyLocked(

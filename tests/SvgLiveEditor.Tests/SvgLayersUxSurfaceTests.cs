@@ -175,7 +175,9 @@ public sealed class SvgLayersUxSurfaceTests
             StringComparison.Ordinal);
         Assert.IsTrue(guard >= 0 && mutation > guard);
         StringAssert.Contains(moveSelectionGuard, "foreach (SvgElementIdentity identity in identities)");
-        StringAssert.Contains(moveSelectionGuard, "if (IsVisualElementLocked(element))");
+        StringAssert.Contains(moveSelectionGuard, "_multiVisualMoveService.GetAvailability(");
+        StringAssert.Contains(moveSelectionGuard, "_viewModel.Inspector.IsElementEffectivelyLocked");
+        StringAssert.Contains(moveSelectionGuard, "_viewModel.Inspector.IsElementEffectivelyVisible");
         StringAssert.Contains(moveSelectionGuard, "return false;");
         Assert.IsFalse(moveSelectionGuard.Contains(
             "Where(element => !IsVisualElementLocked",
@@ -186,7 +188,8 @@ public sealed class SvgLayersUxSurfaceTests
         StringAssert.Contains(dragCommit, "ApplyVisualMovement(");
         StringAssert.Contains(layerDrop, "_viewModel.Inspector.IsElementEffectivelyLocked");
         StringAssert.Contains(layerMove, "_viewModel.Inspector.IsElementEffectivelyLocked");
-        StringAssert.Contains(arrange, "IsElementEffectivelyLocked(element)");
+        StringAssert.Contains(arrange, "_svgLayerOrderService.GetSelectionAvailability(");
+        StringAssert.Contains(arrange, "_viewModel.Inspector.IsElementEffectivelyLocked");
         StringAssert.Contains(group, "_viewModel.Inspector.IsElementEffectivelyLocked");
         StringAssert.Contains(ungroup, "_viewModel.Inspector.IsElementEffectivelyLocked");
         StringAssert.Contains(layout, "_viewModel.Inspector.IsElementEffectivelyLocked");
@@ -210,7 +213,7 @@ public sealed class SvgLayersUxSurfaceTests
             "current.Identities.Contains(layer.Element.Identity)");
         StringAssert.Contains(
             handler,
-            "current with { Primary = layer.Element.Identity }");
+            "_multiSelectionService.FocusOrReplace(");
         StringAssert.Contains(handler, "navigateSource: preserveMultiSelection");
         StringAssert.Contains(handler, "_layerDragCandidate = layer");
     }

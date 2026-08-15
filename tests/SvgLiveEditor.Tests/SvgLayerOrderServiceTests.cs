@@ -329,6 +329,27 @@ public sealed class SvgLayerOrderServiceTests
     }
 
     [TestMethod]
+    public void ArrangeRejectsMultiSelectionInsteadOfMovingOnlyThePrimary()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect id=\"one\"/><circle id=\"two\"/><line id=\"three\"/></svg>";
+        SvgDocumentIndex document = _indexService.Build(source).Document!;
+        SvgElementNode[] selected =
+            [Find(document, "one"), Find(document, "two")];
+
+        SvgLayerOrderAvailability availability =
+            _service.GetSelectionAvailability(
+                document,
+                selected,
+                SvgLayerOrderCommand.BringToFront);
+
+        Assert.IsFalse(availability.CanExecute);
+        Assert.AreEqual(
+            "Arrange requires exactly one current selected element; a multi-selection is never reordered partially.",
+            availability.UnavailableReason);
+    }
+
+    [TestMethod]
     public void LayerDropReorderIsOneUndoOperation()
     {
         const string source =

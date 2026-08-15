@@ -11,13 +11,15 @@ public sealed class SvgGroupService
         string source,
         SvgDocumentIndex document,
         IReadOnlyList<SvgElementNode> selected,
-        Func<SvgElementNode, bool>? isEffectivelyLocked = null)
+        Func<SvgElementNode, bool>? isEffectivelyLocked = null,
+        Func<SvgElementNode, bool>? isEffectivelyVisible = null)
     {
         return TryValidateGroup(
             source,
             document,
             selected,
             isEffectivelyLocked,
+            isEffectivelyVisible,
             out _,
             out _,
             out string? error)
@@ -31,13 +33,15 @@ public sealed class SvgGroupService
         string source,
         SvgDocumentIndex document,
         IReadOnlyList<SvgElementNode> selected,
-        Func<SvgElementNode, bool>? isEffectivelyLocked = null)
+        Func<SvgElementNode, bool>? isEffectivelyLocked = null,
+        Func<SvgElementNode, bool>? isEffectivelyVisible = null)
     {
         if (!TryValidateGroup(
                 source,
                 document,
                 selected,
                 isEffectivelyLocked,
+                isEffectivelyVisible,
                 out _,
                 out SvgElementNode[] ordered,
                 out string? error))
@@ -66,20 +70,23 @@ public sealed class SvgGroupService
 
         return SvgAuthoringEditResult.Success(
             SvgSourceMutationUtilities.CreateMinimalEdit(source, candidate),
-            group.Identity);
+            group.Identity,
+            preferredSelections: [group.Identity]);
     }
 
     public SvgAuthoringAvailability GetUngroupAvailability(
         string source,
         SvgDocumentIndex document,
         SvgElementNode? group,
-        Func<SvgElementNode, bool>? isEffectivelyLocked = null)
+        Func<SvgElementNode, bool>? isEffectivelyLocked = null,
+        Func<SvgElementNode, bool>? isEffectivelyVisible = null)
     {
         string? error = ValidateUngroup(
             source,
             document,
             group,
-            isEffectivelyLocked);
+            isEffectivelyLocked,
+            isEffectivelyVisible);
         return error is null
             ? new SvgAuthoringAvailability(true)
             : new SvgAuthoringAvailability(false, error);
@@ -89,13 +96,15 @@ public sealed class SvgGroupService
         string source,
         SvgDocumentIndex document,
         SvgElementNode? group,
-        Func<SvgElementNode, bool>? isEffectivelyLocked = null)
+        Func<SvgElementNode, bool>? isEffectivelyLocked = null,
+        Func<SvgElementNode, bool>? isEffectivelyVisible = null)
     {
         string? error = ValidateUngroup(
             source,
             document,
             group,
-            isEffectivelyLocked);
+            isEffectivelyLocked,
+            isEffectivelyVisible);
         if (error is not null || group is null)
         {
             return SvgAuthoringEditResult.Invalid(
@@ -120,11 +129,18 @@ public sealed class SvgGroupService
             source.AsSpan(group.FullSpan.End));
         SvgValidationResult validation = _validationService.Validate(candidate);
         SvgDocumentIndexResult rebuilt = _indexService.Build(candidate);
-        int firstChildStart = group.Children[0].FullSpan.Start
-            - group.StartTagSpan.Length;
-        SvgElementNode? firstChild = rebuilt.Document?.FindElementAtOffset(
-            Math.Min(firstChildStart + 1, candidate.Length - 1));
-        if (!validation.IsValid || firstChild is null)
+        SvgElementIdentity[] childSelections = group.Children
+            .Select(child => rebuilt.Document?.FindElementAtOffset(
+                Math.Min(
+                    child.FullSpan.Start - group.StartTagSpan.Length + 1,
+                    candidate.Length - 1)))
+            .Where(child => child is not null)
+            .Cast<SvgElementNode>()
+            .Select(child => child.Identity)
+            .Distinct()
+            .ToArray();
+        if (!validation.IsValid
+            || childSelections.Length != group.Children.Count)
         {
             return SvgAuthoringEditResult.Invalid(
                 $"The ungrouped source could not be validated: {validation.Message}");
@@ -132,7 +148,8 @@ public sealed class SvgGroupService
 
         return SvgAuthoringEditResult.Success(
             SvgSourceMutationUtilities.CreateMinimalEdit(source, candidate),
-            firstChild.Identity);
+            childSelections[0],
+            preferredSelections: childSelections);
     }
 
     private static bool TryValidateGroup(
@@ -140,6 +157,7 @@ public sealed class SvgGroupService
         SvgDocumentIndex document,
         IReadOnlyList<SvgElementNode> selected,
         Func<SvgElementNode, bool>? isEffectivelyLocked,
+        Func<SvgElementNode, bool>? isEffectivelyVisible,
         out SvgElementNode? parent,
         out SvgElementNode[] ordered,
         out string? error)
@@ -173,7 +191,7 @@ public sealed class SvgGroupService
                 || !SvgSourceMutationUtilities.IsCurrentElement(source, element))
             || !SvgSourceMutationUtilities.IsCurrentElement(source, parent))
         {
-            error = "Grouping requires current eligible elements under one parent.";
+            error = "Group requires current eligible elements under one compatible parent.";
             return false;
         }
         if (ordered.Any(element =>
@@ -181,6 +199,12 @@ public sealed class SvgGroupService
             || isEffectivelyLocked?.Invoke(parent) == true)
         {
             error = "Unlock every selected layer and its parent before grouping.";
+            return false;
+        }
+        if (ordered.Any(element =>
+                isEffectivelyVisible?.Invoke(element) == false))
+        {
+            error = "Group cannot include a hidden element.";
             return false;
         }
 
@@ -202,7 +226,8 @@ public sealed class SvgGroupService
         string source,
         SvgDocumentIndex document,
         SvgElementNode? group,
-        Func<SvgElementNode, bool>? isEffectivelyLocked)
+        Func<SvgElementNode, bool>? isEffectivelyLocked,
+        Func<SvgElementNode, bool>? isEffectivelyVisible)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(document);
@@ -217,9 +242,17 @@ public sealed class SvgGroupService
         {
             return "An empty group has no children to ungroup.";
         }
+        if (group.Children.Count > SvgMultiSelectionService.MaximumSelectionCount)
+        {
+            return "Ungroup supports groups with at most 128 direct children.";
+        }
         if (isEffectivelyLocked?.Invoke(group) == true)
         {
             return "Unlock the group and its ancestors before ungrouping.";
+        }
+        if (isEffectivelyVisible?.Invoke(group) == false)
+        {
+            return "A hidden group cannot be ungrouped from the visual workspace.";
         }
         if (group.Attributes.Count > 0)
         {

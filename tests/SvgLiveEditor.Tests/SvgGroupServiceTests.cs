@@ -32,6 +32,7 @@ public sealed class SvgGroupServiceTests
             "<svg xmlns=\"http://www.w3.org/2000/svg\"><g><rect id=\"a\"/><circle id=\"b\"/></g><line id=\"c\"/></svg>",
             candidate);
         Assert.AreEqual("g", result.PreferredSelection?.Name);
+        Assert.AreEqual(1, result.PreferredSelections?.Count);
         AssertSingleUndo(source, candidate, result.Edit);
     }
 
@@ -85,14 +86,24 @@ public sealed class SvgGroupServiceTests
         SvgElementNode c = ById(document, "c");
         SvgElementNode nested = ById(document, "nested");
 
-        Assert.IsFalse(_service.CreateGroupEdit(
+        SvgAuthoringEditResult nonContiguous = _service.CreateGroupEdit(
             source,
             document,
-            [a, c]).IsSuccess);
-        Assert.IsFalse(_service.CreateGroupEdit(
+            [a, c]);
+        SvgAuthoringEditResult crossParent = _service.CreateGroupEdit(
             source,
             document,
-            [a, nested]).IsSuccess);
+            [a, nested]);
+        Assert.IsFalse(nonContiguous.IsSuccess);
+        Assert.IsNull(nonContiguous.Edit);
+        Assert.AreEqual(
+            "Grouping a non-contiguous selection could change paint order and was rejected.",
+            nonContiguous.ErrorMessage);
+        Assert.IsFalse(crossParent.IsSuccess);
+        Assert.IsNull(crossParent.Edit);
+        Assert.AreEqual(
+            "Group requires current eligible elements under one compatible parent.",
+            crossParent.ErrorMessage);
         Assert.IsFalse(_service.CreateGroupEdit(
             source.Replace("id=\"a\"", "id=\"changed\"", StringComparison.Ordinal),
             document,
@@ -104,6 +115,18 @@ public sealed class SvgGroupServiceTests
             element => ReferenceEquals(element, a));
         Assert.IsFalse(locked.IsSuccess);
         StringAssert.Contains(locked.ErrorMessage!, "Unlock");
+        SvgAuthoringEditResult hidden = _service.CreateGroupEdit(
+            source,
+            document,
+            [a, ById(document, "middle")],
+            isEffectivelyLocked: null,
+            isEffectivelyVisible: element => element.Id != "middle");
+        Assert.IsNull(hidden.Edit);
+        Assert.AreEqual(
+            "Group cannot include a hidden element.",
+            hidden.ErrorMessage);
+        TextDocument unchanged = new(source);
+        Assert.IsFalse(unchanged.UndoStack.CanUndo);
     }
 
     [TestMethod]
@@ -174,6 +197,9 @@ public sealed class SvgGroupServiceTests
             "<svg xmlns=\"http://www.w3.org/2000/svg\"><line id=\"before\"/><rect id=\"a\"/>\n<circle id=\"b\"/><line id=\"after\"/></svg>",
             candidate);
         Assert.AreEqual("a", result.PreferredSelection?.Id);
+        CollectionAssert.AreEqual(
+            new[] { "a", "b" },
+            result.PreferredSelections!.Select(identity => identity.Id).ToArray());
         AssertSingleUndo(source, candidate, result.Edit);
     }
 

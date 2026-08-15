@@ -20,6 +20,8 @@ public partial class MainWindow
     private readonly AvalonEditDocumentEditService _documentEditService = new();
     private readonly InspectorSourceGuard _inspectorSourceGuard = new();
     private readonly InspectorSelectionCoordinator _inspectorSelectionCoordinator = new();
+    private readonly SvgSourceNavigationSpanService
+        _svgSourceNavigationSpanService = new();
     private readonly SvgFontFamilyStackService
         _svgFontFamilyStackService = new();
     private readonly InstalledFontGlyphCoverageService
@@ -363,12 +365,13 @@ public partial class MainWindow
         SvgMultiSelectionState current = EnsureCurrentVisualSelectionState();
         bool preserveMultiSelection = current.Identities.Count > 1
             && current.Identities.Contains(layer.Element.Identity);
+        SvgMultiSelectionChange focusChange =
+            _multiSelectionService.FocusOrReplace(
+                current,
+                _sourceRevisionTracker.Current,
+                layer.Element.Identity);
         ApplyVisualSelectionState(
-            preserveMultiSelection
-                ? current with { Primary = layer.Element.Identity }
-                : _multiSelectionService.Replace(
-                    _sourceRevisionTracker.Current,
-                    layer.Element.Identity),
+            focusChange.State,
             InspectorSelectionOrigin.ExplicitTreeNavigation,
             navigateSource: preserveMultiSelection);
 
@@ -611,7 +614,7 @@ public partial class MainWindow
         CancelVisualEditGesture();
         string opaqueId = layer.OpaqueId;
         SvgElementIdentity selection = layer.Element.Identity;
-        _documentEditService.Apply(SourceEditor.Document, result.Edit);
+        ApplyDocumentEditWithSelection(result.Edit, sourceSnapshot);
         _viewModel.Inspector.SetHiddenAttributeOwned(
             opaqueId,
             result.OwnsHiddenAttributeAfterEdit);
@@ -629,15 +632,68 @@ public partial class MainWindow
         MouseButtonEventArgs e)
     {
         if (e.OriginalSource is not DependencyObject originalSource
+            || FindVisualAncestor<ButtonBase>(originalSource) is not null
             || FindNearestTreeElement(originalSource)
                 is not SvgElementViewModel element)
         {
             return;
         }
 
-        NavigateToInspectorElement(
-            element,
-            InspectorSelectionOrigin.ExplicitTreeNavigation);
+        ModifierKeys modifiers = Keyboard.Modifiers;
+        if (modifiers is ModifierKeys.Control
+            or ModifierKeys.Shift
+            or (ModifierKeys.Control | ModifierKeys.Shift))
+        {
+            HandleStructureMultiSelection(element, modifiers);
+        }
+        else
+        {
+            SvgMultiSelectionState current =
+                EnsureCurrentVisualSelectionState();
+            SvgMultiSelectionChange focusChange =
+                _multiSelectionService.FocusOrReplace(
+                    current,
+                    _sourceRevisionTracker.Current,
+                    element.Element.Identity);
+            ApplyVisualSelectionState(
+                focusChange.State,
+                InspectorSelectionOrigin.ExplicitTreeNavigation,
+                navigateSource: true);
+        }
+
+        FindVisualAncestor<TreeViewItem>(originalSource)?.Focus();
+        e.Handled = true;
+    }
+
+    private void HandleStructureMultiSelection(
+        SvgElementViewModel element,
+        ModifierKeys modifiers)
+    {
+        SvgMultiSelectionState current = EnsureCurrentVisualSelectionState();
+        SvgMultiSelectionChange change = (modifiers & ModifierKeys.Shift) != 0
+            ? _multiSelectionService.SelectRange(
+                current,
+                _sourceRevisionTracker.Current,
+                _viewModel.Inspector.GetVisibleStructureSiblings(element),
+                element.Element.Identity)
+            : _multiSelectionService.Toggle(
+                current,
+                _sourceRevisionTracker.Current,
+                element.Element.Identity);
+        if (!change.IsSuccess)
+        {
+            _viewModel.SetOperationStatus(
+                change.ErrorMessage
+                ?? "The Structure selection was rejected.");
+            return;
+        }
+
+        ApplyVisualSelectionState(
+            change.State,
+            InspectorSelectionOrigin.ExplicitTreeNavigation,
+            navigateSource: true);
+        RefreshAuthoringControls();
+        _viewModel.SetOperationStatus(GetVisualSelectionLabel());
     }
 
     private static SvgElementViewModel? FindNearestTreeElement(
@@ -822,7 +878,8 @@ public partial class MainWindow
             ReferenceEquals(source.Parent, target.Parent)
                 && placement != SvgLayerDropPlacement.Inside
                     ? $"{source.Label} reordered within {destination}"
-                    : $"{source.Label} moved into {destination}");
+                    : $"{source.Label} moved into {destination}",
+            preserveExistingSelection: true);
     }
 
     private void OnAddElementClick(object sender, RoutedEventArgs e)
@@ -981,14 +1038,16 @@ public partial class MainWindow
             result,
             source,
             revision,
-            "Element moved to the front of the SVG root");
+            "Element moved to the front of the SVG root",
+            preserveExistingSelection: true);
     }
 
     private bool ApplyAuthoringEdit(
         SvgAuthoringEditResult result,
         string sourceSnapshot,
         long expectedRevision,
-        string successStatus)
+        string successStatus,
+        bool preserveExistingSelection = false)
     {
         if (!result.IsSuccess
             || result.Edit is null
@@ -1024,7 +1083,15 @@ public partial class MainWindow
 
         CancelOpacitySliderGesture();
         CancelVisualEditGesture();
-        _documentEditService.Apply(SourceEditor.Document, result.Edit);
+        ApplyDocumentEditWithSelection(
+            result.Edit,
+            sourceSnapshot,
+            result.PreferredSelections
+                ?? (preserveExistingSelection
+                    ? null
+                    : [result.PreferredSelection]),
+            result.PreferredSelection,
+            remapPrimaryToPreferred: preserveExistingSelection);
         _previewDebouncer.Cancel();
         string updatedSource = SourceEditor.Text;
         long updatedRevision = _sourceRevisionTracker.Current;
@@ -1167,14 +1234,16 @@ public partial class MainWindow
                 source,
                 document!,
                 selectedNodes,
-                _viewModel.Inspector.IsElementEffectivelyLocked)
+                _viewModel.Inspector.IsElementEffectivelyLocked,
+                _viewModel.Inspector.IsElementEffectivelyVisible)
             : unavailable;
         SvgAuthoringAvailability ungroup = isCurrent
             ? _svgGroupService.GetUngroupAvailability(
                 source,
                 document!,
                 selectedNodes.Length == 1 ? selectedNodes[0] : null,
-                _viewModel.Inspector.IsElementEffectivelyLocked)
+                _viewModel.Inspector.IsElementEffectivelyLocked,
+                _viewModel.Inspector.IsElementEffectivelyVisible)
             : unavailable;
 
         foreach (MenuItem item in EnumerateMenuItems(items))
@@ -1458,7 +1527,8 @@ public partial class MainWindow
             revision,
             friendlyName.Length == 0
                 ? "Friendly layer name removed"
-                : $"Layer named {friendlyName}");
+                : $"Layer named {friendlyName}",
+            preserveExistingSelection: true);
         if (restoreLayerFocus || !applied)
         {
             QueueFocusSelectedLayerRow();
@@ -1741,7 +1811,8 @@ public partial class MainWindow
             source,
             document,
             GetSelectedElementNodes(document),
-            _viewModel.Inspector.IsElementEffectivelyLocked);
+            _viewModel.Inspector.IsElementEffectivelyLocked,
+            _viewModel.Inspector.IsElementEffectivelyVisible);
         ApplyAuthoringEdit(result, source, revision, "Elements grouped");
     }
 
@@ -1762,7 +1833,8 @@ public partial class MainWindow
             source,
             document,
             selected.Length == 1 ? selected[0] : null,
-            _viewModel.Inspector.IsElementEffectivelyLocked);
+            _viewModel.Inspector.IsElementEffectivelyLocked,
+            _viewModel.Inspector.IsElementEffectivelyVisible);
         ApplyAuthoringEdit(result, source, revision, "Group removed");
     }
 
@@ -1783,7 +1855,8 @@ public partial class MainWindow
             document,
             elements,
             command,
-            _viewModel.Inspector.IsElementEffectivelyLocked);
+            _viewModel.Inspector.IsElementEffectivelyLocked,
+            _viewModel.Inspector.IsElementEffectivelyVisible);
         if (!result.IsSuccess)
         {
             _viewModel.SetOperationStatus(
@@ -1805,7 +1878,7 @@ public partial class MainWindow
 
         CancelOpacitySliderGesture();
         CancelVisualEditGesture();
-        _documentEditService.Apply(SourceEditor.Document, result.Edit);
+        ApplyDocumentEditWithSelection(result.Edit, source);
         _previewDebouncer.Cancel();
         string updatedSource = SourceEditor.Text;
         long updatedRevision = _sourceRevisionTracker.Current;
@@ -1852,7 +1925,8 @@ public partial class MainWindow
                 SourceEditor.Text,
                 document,
                 nodes,
-                _viewModel.Inspector.IsElementEffectivelyLocked);
+                _viewModel.Inspector.IsElementEffectivelyLocked,
+                _viewModel.Inspector.IsElementEffectivelyVisible);
         }
         if (command.Equals("Ungroup", StringComparison.Ordinal))
         {
@@ -1860,7 +1934,8 @@ public partial class MainWindow
                 SourceEditor.Text,
                 document,
                 nodes.Length == 1 ? nodes[0] : null,
-                _viewModel.Inspector.IsElementEffectivelyLocked);
+                _viewModel.Inspector.IsElementEffectivelyLocked,
+                _viewModel.Inspector.IsElementEffectivelyVisible);
         }
         if (Enum.TryParse(
             command,
@@ -1871,7 +1946,8 @@ public partial class MainWindow
                 document,
                 GetSelectedVisualElements(),
                 layoutCommand,
-                _viewModel.Inspector.IsElementEffectivelyLocked);
+                _viewModel.Inspector.IsElementEffectivelyLocked,
+                _viewModel.Inspector.IsElementEffectivelyVisible);
         }
         return new SvgAuthoringAvailability(false, "Unknown composition command.");
     }
@@ -2004,7 +2080,11 @@ public partial class MainWindow
             return;
         }
 
-        _documentEditService.Apply(SourceEditor.Document, result.Edit);
+        ApplyDocumentEditWithSelection(
+            result.Edit,
+            sourceSnapshot,
+            [result.PreferredSelection],
+            result.PreferredSelection);
         SvgDocumentIndexResult rebuilt =
             _documentIndexService.Build(SourceEditor.Text);
         ApplyDocumentInspectorResult(rebuilt, result.PreferredSelection);
@@ -2038,14 +2118,22 @@ public partial class MainWindow
                 false,
                 "Select an eligible element in a valid current SVG.");
         }
-        if (_viewModel.Inspector.IsElementEffectivelyLocked(element))
+        SvgElementNode[] selected = GetSelectedElementNodes(document);
+        if (selected.Length != 1
+            || !ReferenceEquals(selected[0], element))
         {
             return new SvgLayerOrderAvailability(
                 false,
-                "Unlock the layer and its parent group before arranging it.");
+                selected.Length > 1
+                    ? "Arrange requires exactly one current selected element; a multi-selection is never reordered partially."
+                    : "The selection changed before Arrange could be completed.");
         }
 
-        return _svgLayerOrderService.GetAvailability(document, element, command);
+        return _svgLayerOrderService.GetSelectionAvailability(
+            document,
+            selected,
+            command,
+            _viewModel.Inspector.IsElementEffectivelyLocked);
     }
 
     private static bool TryReadLayerOrderCommand(
@@ -2238,7 +2326,7 @@ public partial class MainWindow
         }
 
         SvgElementIdentity preferredSelection = opacity.Element.Identity;
-        _documentEditService.Apply(SourceEditor.Document, result.Edit);
+        ApplyDocumentEditWithSelection(result.Edit, sourceSnapshot);
         SvgDocumentIndexResult rebuilt =
             _documentIndexService.Build(SourceEditor.Text);
         ApplyDocumentInspectorResult(rebuilt, preferredSelection);
@@ -2255,9 +2343,11 @@ public partial class MainWindow
         SvgElementViewModel element,
         InspectorSelectionOrigin origin)
     {
+        SourceSpan preferredSpan = _svgSourceNavigationSpanService
+            .GetPreferredSpan(SourceEditor.Text, element.Element, origin);
         if (!_inspectorSelectionCoordinator.TryGetNavigationSpan(
                 origin,
-                element.Element.StartTagSpan,
+                preferredSpan,
                 _isInspectorIndexCurrent,
                 _inspectorSourceRevision,
                 _sourceRevisionTracker.Current,
@@ -2507,7 +2597,7 @@ public partial class MainWindow
         }
 
         SvgElementIdentity preferredSelection = property.Element.Identity;
-        _documentEditService.Apply(SourceEditor.Document, result.Edit);
+        ApplyDocumentEditWithSelection(result.Edit, sourceSnapshot);
         property.MarkApplied(commitValue);
 
         SvgDocumentIndexResult rebuilt =

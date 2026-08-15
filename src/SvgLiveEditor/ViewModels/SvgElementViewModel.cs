@@ -6,6 +6,7 @@ namespace SvgLiveEditor.ViewModels;
 public sealed class SvgElementViewModel : ObservableObject
 {
     private bool _isSelected;
+    private bool _isMultiSelected;
     private bool _isExpanded;
     private InspectorSelectionOrigin? _pendingSelectionOrigin;
 
@@ -25,6 +26,18 @@ public sealed class SvgElementViewModel : ObservableObject
 
     public string Label => Element.DisplayLabel;
 
+    public string AutomationName => IsSelected
+        ? $"{Label}, primary selected"
+        : IsMultiSelected
+            ? $"{Label}, selected"
+            : Label;
+
+    public string RowHelp => IsSelected
+        ? "Primary selection. Source and Properties follow this SVG element."
+        : IsMultiSelected
+            ? "Included in the current multi-selection."
+            : "SVG structure element.";
+
     public ObservableCollection<SvgElementViewModel> Children { get; }
 
     public bool IsSelected
@@ -37,7 +50,24 @@ public sealed class SvgElementViewModel : ObservableObject
                 _pendingSelectionOrigin = null;
             }
 
-            SetProperty(ref _isSelected, value);
+            if (SetProperty(ref _isSelected, value))
+            {
+                OnPropertyChanged(nameof(AutomationName));
+                OnPropertyChanged(nameof(RowHelp));
+            }
+        }
+    }
+
+    public bool IsMultiSelected
+    {
+        get => _isMultiSelected;
+        set
+        {
+            if (SetProperty(ref _isMultiSelected, value))
+            {
+                OnPropertyChanged(nameof(AutomationName));
+                OnPropertyChanged(nameof(RowHelp));
+            }
         }
     }
 
