@@ -2,7 +2,7 @@
 param(
     [Parameter()]
     [ValidatePattern('^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')]
-    [string]$Version = '0.10.0',
+    [string]$Version = '0.10.1',
 
     [Parameter()]
     [string]$RepositoryRoot
@@ -63,6 +63,20 @@ function Get-PeMachine {
         $reader.Dispose()
         $stream.Dispose()
     }
+}
+
+function Assert-ApplicationIcon {
+    param(
+        [Parameter(Mandatory)]
+        [string]$ExecutablePath,
+
+        [Parameter(Mandatory)]
+        [string]$IconPath
+    )
+
+    & (Join-Path $PSScriptRoot 'Test-AppIcon.ps1') `
+      -ExecutablePath $ExecutablePath `
+      -IconPath $IconPath
 }
 
 function Get-ForbiddenPackageReason {
@@ -187,6 +201,10 @@ function Assert-PublishDirectory {
         throw ('SvgLiveEditor.exe is not an x64 PE executable (machine 0x{0:X4}).' -f $machine)
     }
 
+    Assert-ApplicationIcon `
+      -ExecutablePath (Join-Path $Directory 'SvgLiveEditor.exe') `
+      -IconPath $script:ApplicationIconPath
+
     foreach ($item in Get-ChildItem -LiteralPath $Directory -Recurse -Force) {
         $relativePath = $item.FullName.Substring($Directory.Length).TrimStart('\', '/')
         $reason = Get-ForbiddenPackageReason -RelativePath $relativePath
@@ -249,6 +267,12 @@ $projectPath = Assert-RepositoryChildPath `
 if (-not (Test-Path -LiteralPath $projectPath -PathType Leaf)) {
     throw "SvgLiveEditor project was not found: $projectPath"
 }
+$script:ApplicationIconPath = Assert-RepositoryChildPath `
+  -Path (Join-Path $resolvedRepositoryRoot 'src\SvgLiveEditor\Assets\SvgLiveEditor.ico') `
+  -Description 'the application icon'
+if (-not (Test-Path -LiteralPath $script:ApplicationIconPath -PathType Leaf)) {
+    throw "SvgLiveEditor application icon was not found: $script:ApplicationIconPath"
+}
 
 $resolvedPublishDirectory = Assert-RepositoryChildPath `
   -Path (Join-Path $resolvedRepositoryRoot 'dist\win-x64') `
@@ -275,6 +299,8 @@ $checksumPath = Assert-RepositoryChildPath `
 $localDotnet = Join-Path $resolvedRepositoryRoot '.dotnet\dotnet.exe'
 $dotnetCommand = if (Test-Path -LiteralPath $localDotnet) { $localDotnet } else { 'dotnet' }
 
+$packageOperationFailed = $false
+try {
 New-Item -ItemType Directory -Force -Path $resolvedReleaseDirectory | Out-Null
 
 if (Test-Path -LiteralPath $resolvedStagingDirectory) {
@@ -349,3 +375,30 @@ $utf8WithoutBom = [Text.UTF8Encoding]::new($false)
 
 Write-Host "Created $archivePath"
 Write-Host "Created $checksumPath"
+}
+catch {
+    $packageOperationFailed = $true
+    throw
+}
+finally {
+    if (Test-Path -LiteralPath $resolvedStagingDirectory) {
+        try {
+            Remove-Item `
+              -LiteralPath $resolvedStagingDirectory `
+              -Recurse `
+              -Force `
+              -ErrorAction Stop
+        }
+        catch {
+            $cleanupMessage =
+              "Could not remove temporary publish staging directory " +
+              "'$resolvedStagingDirectory': $($_.Exception.Message)"
+            if ($packageOperationFailed) {
+                Write-Warning $cleanupMessage
+            }
+            else {
+                throw $cleanupMessage
+            }
+        }
+    }
+}

@@ -59,6 +59,41 @@ public sealed class PublishDependencyTests
         StringAssert.Contains(script, "$segment -ieq 'EBWebView'");
     }
 
+    [TestMethod]
+    public void PublishAuditValidatesTheEmbeddedAndShellApplicationIcon()
+    {
+        string publishScript = File.ReadAllText(
+            Path.Combine(
+                AppContext.BaseDirectory,
+                "scripts",
+                "Publish-WinX64.ps1"));
+        string iconAuditScript = File.ReadAllText(
+            Path.Combine(
+                AppContext.BaseDirectory,
+                "scripts",
+                "Test-AppIcon.ps1"));
+
+        StringAssert.Contains(publishScript, "Assert-ApplicationIcon");
+        StringAssert.Contains(publishScript, "Test-AppIcon.ps1");
+        StringAssert.Contains(iconAuditScript, "RT_GROUP_ICON");
+        StringAssert.Contains(iconAuditScript, "RT_ICON");
+        StringAssert.Contains(iconAuditScript, "Icon]::ExtractAssociatedIcon");
+        StringAssert.Contains(iconAuditScript, "Get-ByteArrayHash");
+    }
+
+    [TestMethod]
+    public void PublishScriptDefaultsToCurrentPatchVersion()
+    {
+        string script = File.ReadAllText(
+            Path.Combine(
+                AppContext.BaseDirectory,
+                "scripts",
+                "Publish-WinX64.ps1"));
+
+        StringAssert.Contains(script, "[string]$Version = '0.10.1'");
+        StringAssert.Contains(script, "SvgLiveEditor-v$Version-win-x64.zip");
+    }
+
     private static int CountOccurrences(string text, string value)
     {
         int count = 0;
