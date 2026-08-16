@@ -114,10 +114,10 @@ dotnet publish src/SvgLiveEditor/SvgLiveEditor.csproj --configuration Release --
 Output is written to `dist/win-x64`. To publish, audit, and create versioned ZIP and SHA-256 files locally:
 
 ```powershell
-./scripts/Publish-WinX64.ps1 -Version 0.10.0
+./scripts/Publish-WinX64.ps1 -Version 0.10.1
 ```
 
-This creates `releases/SvgLiveEditor-v0.10.0-win-x64.zip` and the internal/local `releases/SvgLiveEditor-v0.10.0-win-x64.sha256`. Publishing is folder-based and intentionally not trimmed, ReadyToRun-enabled, or forced into a single file, which is safer for WPF, WebView2 native dependencies, startup reliability, and the established package-size baseline. This local command does not create or modify a GitHub Release.
+This creates `releases/SvgLiveEditor-v0.10.1-win-x64.zip` and the internal/local `releases/SvgLiveEditor-v0.10.1-win-x64.sha256`. Publishing is folder-based and intentionally not trimmed, ReadyToRun-enabled, or forced into a single file, which is safer for WPF, WebView2 native dependencies, startup reliability, and the established package-size baseline. This local command does not create or modify a GitHub Release.
 
 ## Automated GitHub Releases
 

@@ -253,14 +253,14 @@ dist/win-x64
 برای انتشار محلی، ممیزی بسته و ساخت فایل `ZIP` و `SHA-256` نسخه‌دار، فرمان زیر را اجرا کنید:
 
 ```powershell
-./scripts/Publish-WinX64.ps1 -Version 0.10.0
+./scripts/Publish-WinX64.ps1 -Version 0.10.1
 ```
 
 فایل‌های زیر ساخته می‌شوند:
 
 ```text
-releases/SvgLiveEditor-v0.10.0-win-x64.zip
-releases/SvgLiveEditor-v0.10.0-win-x64.sha256
+releases/SvgLiveEditor-v0.10.1-win-x64.zip
+releases/SvgLiveEditor-v0.10.1-win-x64.sha256
 ```
 
 دستور محلی هیچ انتشار گیت‌هابی (`GitHub Release`) را ایجاد یا تغییر نمی‌دهد. بسته عمداً `Trim`، `ReadyToRun` یا `Single-file` نشده است. ساختار پوشه‌ای برای سازگاری `WPF`، وابستگی‌های بومی `WebView2`، پایداری شروع برنامه و خط پایهٔ اندازهٔ بسته حفظ شده است.

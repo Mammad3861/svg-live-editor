@@ -33,7 +33,7 @@ function New-RoundedRectanglePath {
     return $path
 }
 
-function New-IconPng {
+function New-IconBitmap {
     param([int]$Size)
 
     $scale = $Size / 256.0
@@ -113,25 +113,110 @@ function New-IconPng {
             $purpleBrush.Dispose()
         }
 
-        $stream = [IO.MemoryStream]::new()
-        try {
-            $bitmap.Save($stream, [Drawing.Imaging.ImageFormat]::Png)
-            return $stream.ToArray()
-        }
-        finally {
-            $stream.Dispose()
-        }
+        return $bitmap
+    }
+    catch {
+        $bitmap.Dispose()
+        throw
     }
     finally {
         $graphics.Dispose()
-        $bitmap.Dispose()
+    }
+}
+
+function ConvertTo-IconPng {
+    param(
+        [Parameter(Mandatory)]
+        [Drawing.Bitmap]$Bitmap
+    )
+
+    $stream = [IO.MemoryStream]::new()
+    try {
+        $Bitmap.Save($stream, [Drawing.Imaging.ImageFormat]::Png)
+        return $stream.ToArray()
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
+function ConvertTo-IconDib {
+    param(
+        [Parameter(Mandatory)]
+        [Drawing.Bitmap]$Bitmap
+    )
+
+    $width = $Bitmap.Width
+    $height = $Bitmap.Height
+    $xorLength = $width * $height * 4
+    $maskStride = [int]([Math]::Ceiling($width / 32.0) * 4)
+    $stream = [IO.MemoryStream]::new()
+    $writer = [IO.BinaryWriter]::new($stream)
+    try {
+        # ICO DIB heights include both the 32-bit XOR bitmap and the 1-bit
+        # transparency mask. Small and medium frames intentionally remain
+        # uncompressed for conventional Windows Shell compatibility.
+        $writer.Write([uint32]40)
+        $writer.Write([int32]$width)
+        $writer.Write([int32]($height * 2))
+        $writer.Write([uint16]1)
+        $writer.Write([uint16]32)
+        $writer.Write([uint32]0)
+        $writer.Write([uint32]$xorLength)
+        $writer.Write([int32]0)
+        $writer.Write([int32]0)
+        $writer.Write([uint32]0)
+        $writer.Write([uint32]0)
+
+        for ($y = $height - 1; $y -ge 0; $y--) {
+            for ($x = 0; $x -lt $width; $x++) {
+                $pixel = $Bitmap.GetPixel($x, $y)
+                $writer.Write([byte]$pixel.B)
+                $writer.Write([byte]$pixel.G)
+                $writer.Write([byte]$pixel.R)
+                $writer.Write([byte]$pixel.A)
+            }
+        }
+
+        for ($y = $height - 1; $y -ge 0; $y--) {
+            $maskRow = [byte[]]::new($maskStride)
+            for ($x = 0; $x -lt $width; $x++) {
+                if ($Bitmap.GetPixel($x, $y).A -eq 0) {
+                    $byteIndex = [int][Math]::Floor($x / 8.0)
+                    $maskRow[$byteIndex] = $maskRow[$byteIndex] -bor
+                      [byte](0x80 -shr ($x % 8))
+                }
+            }
+            $writer.Write($maskRow)
+        }
+
+        $writer.Flush()
+        return $stream.ToArray()
+    }
+    finally {
+        $writer.Dispose()
     }
 }
 
 $frames = foreach ($size in $sizes) {
-    [PSCustomObject]@{
-        Size = $size
-        Bytes = New-IconPng $size
+    $bitmap = New-IconBitmap $size
+    try {
+        $format = if ($size -eq 256) { 'PNG' } else { 'DIB' }
+        $bytes = if ($format -eq 'PNG') {
+            ConvertTo-IconPng -Bitmap $bitmap
+        }
+        else {
+            ConvertTo-IconDib -Bitmap $bitmap
+        }
+
+        [PSCustomObject]@{
+            Size = $size
+            Format = $format
+            Bytes = $bytes
+        }
+    }
+    finally {
+        $bitmap.Dispose()
     }
 }
 
@@ -170,4 +255,6 @@ finally {
     $writer.Dispose()
 }
 
-Write-Host "Created $outputPath with sizes: $($sizes -join ', ')"
+$frameSummary = $frames |
+  ForEach-Object { "$($_.Size)px $($_.Format)" }
+Write-Host "Created $outputPath with frames: $($frameSummary -join ', ')"
