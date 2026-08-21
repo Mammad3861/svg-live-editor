@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace SvgLiveEditor.Tests;
 
 [TestClass]
@@ -10,6 +12,15 @@ public sealed class ReleaseWorkflowTests
                 AppContext.BaseDirectory,
                 "workflows",
                 "release.yml"));
+    }
+
+    private static string ReadPublishScript()
+    {
+        return File.ReadAllText(
+            Path.Combine(
+                AppContext.BaseDirectory,
+                "scripts",
+                "Publish-WinX64.ps1"));
     }
 
     [TestMethod]
@@ -89,5 +100,70 @@ public sealed class ReleaseWorkflowTests
             "^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$");
         StringAssert.Contains(workflow, "git checkout --detach \"refs/tags/$tag\"");
         StringAssert.Contains(workflow, "$checkedOutCommit -cne $tagCommit");
+    }
+
+    [TestMethod]
+    public void ReleaseToolingStagesEveryPackagingScriptDependencyBeforeCheckout()
+    {
+        string workflow = ReadWorkflow();
+        string publishScript = ReadPublishScript();
+        string[] siblingDependencies = Regex.Matches(
+                publishScript,
+                @"Join-Path\s+\$PSScriptRoot\s+'(?<name>[^']+\.ps1)'",
+                RegexOptions.CultureInvariant)
+            .Select(match => match.Groups["name"].Value)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        CollectionAssert.Contains(siblingDependencies, "Test-AppIcon.ps1");
+
+        const string toolingDirectoryAssignment =
+            "$releaseToolingDirectory = Join-Path $env:RUNNER_TEMP "
+            + "'SvgLiveEditor.ReleaseTooling'";
+        int toolingStart = workflow.IndexOf(
+            toolingDirectoryAssignment,
+            StringComparison.Ordinal);
+        int checkout = workflow.IndexOf(
+            "git checkout --detach \"refs/tags/$tag\"",
+            StringComparison.Ordinal);
+        Assert.IsTrue(toolingStart >= 0 && checkout > toolingStart);
+        string preCheckoutTooling = workflow[toolingStart..checkout];
+
+        Match stagedScripts = Regex.Match(
+            preCheckoutTooling,
+            @"\$releaseToolingScripts\s*=\s*@\((?<body>.*?)\)",
+            RegexOptions.CultureInvariant | RegexOptions.Singleline);
+        Assert.IsTrue(stagedScripts.Success);
+        string[] stagedScriptNames = Regex.Matches(
+                stagedScripts.Groups["body"].Value,
+                @"'(?<name>[^']+\.ps1)'",
+                RegexOptions.CultureInvariant)
+            .Select(match => match.Groups["name"].Value)
+            .ToArray();
+        string[] requiredScripts =
+            ["Publish-WinX64.ps1", .. siblingDependencies];
+        CollectionAssert.AreEquivalent(
+            requiredScripts.Distinct(StringComparer.Ordinal).ToArray(),
+            stagedScriptNames);
+
+        StringAssert.Contains(
+            preCheckoutTooling,
+            "foreach ($scriptName in $releaseToolingScripts)");
+        StringAssert.Contains(
+            preCheckoutTooling,
+            "-LiteralPath (Join-Path 'scripts' $scriptName)");
+        StringAssert.Contains(
+            preCheckoutTooling,
+            "-Destination (Join-Path $releaseToolingDirectory $scriptName)");
+
+        int packageStep = workflow.IndexOf(
+            "- name: Build and audit release package",
+            StringComparison.Ordinal);
+        Assert.IsTrue(packageStep > checkout);
+        string packageWorkflow = workflow[packageStep..];
+        StringAssert.Contains(packageWorkflow, toolingDirectoryAssignment);
+        StringAssert.Contains(
+            packageWorkflow,
+            "$packagingScript = Join-Path $releaseToolingDirectory 'Publish-WinX64.ps1'");
     }
 }

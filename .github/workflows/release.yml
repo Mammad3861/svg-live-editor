@@ -55,8 +55,18 @@ jobs:
             throw "Tag '$tag' does not exist in this repository."
           }
 
-          $packagingScript = Join-Path $env:RUNNER_TEMP 'Publish-WinX64.ps1'
-          Copy-Item -LiteralPath 'scripts/Publish-WinX64.ps1' -Destination $packagingScript -Force
+          $releaseToolingDirectory = Join-Path $env:RUNNER_TEMP 'SvgLiveEditor.ReleaseTooling'
+          [IO.Directory]::CreateDirectory($releaseToolingDirectory) | Out-Null
+          $releaseToolingScripts = @(
+            'Publish-WinX64.ps1',
+            'Test-AppIcon.ps1'
+          )
+          foreach ($scriptName in $releaseToolingScripts) {
+            Copy-Item `
+              -LiteralPath (Join-Path 'scripts' $scriptName) `
+              -Destination (Join-Path $releaseToolingDirectory $scriptName) `
+              -Force
+          }
 
           $tagCommit = (git rev-list -n 1 "refs/tags/$tag").Trim()
           if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($tagCommit)) {
@@ -116,7 +126,8 @@ jobs:
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $packagingScript = Join-Path $env:RUNNER_TEMP 'Publish-WinX64.ps1'
+          $releaseToolingDirectory = Join-Path $env:RUNNER_TEMP 'SvgLiveEditor.ReleaseTooling'
+          $packagingScript = Join-Path $releaseToolingDirectory 'Publish-WinX64.ps1'
           & $packagingScript -Version $env:RELEASE_VERSION -RepositoryRoot $env:GITHUB_WORKSPACE
 
           $archiveName = "SvgLiveEditor-$env:RELEASE_TAG-win-x64.zip"
