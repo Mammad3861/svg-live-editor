@@ -54,6 +54,14 @@ Later v0.10 polish (not part of Stage 1):
 - Evaluate safe basic path bounding-box resize after the core composition architecture is stable.
 - Allow safely supported elements to be partially positioned or resized outside the root SVG viewBox/canvas instead of reverting solely because their visual bounds cross the canvas edge.
 
+### v0.11.0 — Source synchronization foundation
+
+- Keep the exact AvalonEdit Source as the single source of truth without reformatting, normalization, or XML reserialization.
+- Coordinate only the newest current valid revision across Preview, Layers/Structure, Properties, and the primary selection.
+- Use explicit Source, Properties, visual-command, Undo/Redo, and document-load origins so caret-only inspection cannot create feedback edits or steal focus.
+- Preserve exact invalid source and the last valid Preview while disabling revision-sensitive visual and Properties mutations until validity returns.
+- Keep Undo/Redo selection-aware and expose only the bounded multi-selection primary to Source and Properties.
+
 ### v1.0.0 — Stable Release / stabilization
 
 - Accessibility.

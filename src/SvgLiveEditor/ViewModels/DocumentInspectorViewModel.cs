@@ -165,7 +165,8 @@ public sealed class DocumentInspectorViewModel : ObservableObject
         InspectorSelectionOrigin selectionOrigin =
             InspectorSelectionOrigin.InspectorRestore,
         string? source = null,
-        SvgVisualDocument? visualDocument = null)
+        SvgVisualDocument? visualDocument = null,
+        bool selectFirstRootWhenSelectionIsEmpty = true)
     {
         ArgumentNullException.ThrowIfNull(documentIndex);
 
@@ -191,7 +192,9 @@ public sealed class DocumentInspectorViewModel : ObservableObject
         StateMessage = $"{documentIndex.Elements.Count} SVG element(s)";
 
         SvgElementNode? selectedNode = preferredSelection is null
-            ? documentIndex.Roots.FirstOrDefault()
+            ? selectFirstRootWhenSelectionIsEmpty
+                ? documentIndex.Roots.FirstOrDefault()
+                : null
             : documentIndex.FindBestMatch(preferredSelection);
         SelectNode(selectedNode, selectionOrigin);
         OnPropertyChanged(nameof(DocumentIndex));

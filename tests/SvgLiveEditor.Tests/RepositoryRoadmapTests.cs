@@ -19,6 +19,7 @@ public sealed class RepositoryRoadmapTests
                      "v0.8",
                      "v0.9.0",
                      "v0.10.0",
+                     "v0.11.0",
                      "v1.0.0"
                  })
         {
@@ -59,6 +60,13 @@ public sealed class RepositoryRoadmapTests
             "safe basic path bounding-box resize",
             "partially positioned or resized outside the root SVG viewBox/canvas",
             "360-degree rotation",
+            "v0.11.0 — Source synchronization foundation",
+            "single source of truth without reformatting, normalization, or XML reserialization",
+            "newest current valid revision",
+            "explicit Source, Properties, visual-command, Undo/Redo, and document-load origins",
+            "caret-only inspection cannot create feedback edits or steal focus",
+            "exact invalid source and the last valid Preview",
+            "bounded multi-selection primary to Source and Properties",
             "v1.0.0 — Stable Release / stabilization",
             "Reliability and data-loss review",
             "Persistence and recovery validation",
@@ -124,6 +132,13 @@ public sealed class RepositoryRoadmapTests
             "bounding-box برای path",
             "بخشی بیرون viewBox/canvas ریشه",
             "rotation کامل ۳۶۰ درجه",
+            "v0.11.0 — زیرساخت هماهنگی کد اصلی",
+            "تنها مرجع نهایی، بدون قالب‌بندی دوباره، نرمال‌سازی یا بازسازی XML",
+            "فقط تازه‌ترین نسخهٔ معتبر و فعلی",
+            "مبدأهای صریح Source، Properties، فرمان دیداری، Undo/Redo و بارگذاری سند",
+            "بررسی مکان‌نما ویرایش بازگشتی نسازد و فوکوس را نگیرد",
+            "کد نامعتبر دقیق و آخرین Preview معتبر",
+            "مورد اصلی انتخاب چندگانهٔ محدود در Source و Properties",
             "v1.0.0 — انتشار پایدار / پایدارسازی",
             "خطر از دست رفتن داده",
             "اعتبارسنجی ماندگاری و بازیابی",
@@ -178,14 +193,14 @@ public sealed class RepositoryRoadmapTests
         AssertSemanticContract(
             normalizedEnglish,
             "English v0.10.0 Stage 1 bounded selection",
-            "Version 0.10.0",
+            "v0.10.0 Stage 1 behavior",
             "Stage 1",
             "bounded multi-selection",
             "128");
         AssertSemanticContract(
             normalizedEnglish,
             "English atomic multi-object Move/Nudge",
-            "atomic multi-object movement/nudge",
+            "moves together by drag or Arrow keys",
             "no safe subset",
             "one Undo unit");
         AssertSemanticContract(
@@ -197,12 +212,12 @@ public sealed class RepositoryRoadmapTests
         AssertSemanticContract(
             normalizedEnglish,
             "English equal-gap distribution",
-            "equal-gap distribution",
+            "horizontal/vertical distribution",
             "visual gaps equal");
         AssertSemanticContract(
             normalizedEnglish,
             "English optional four-pixel snapping",
-            "optional object/canvas-center snapping",
+            "Snap to objects",
             "4 CSS pixels");
         AssertSemanticContract(
             normalizedEnglish,
@@ -221,10 +236,10 @@ public sealed class RepositoryRoadmapTests
             "Source editing remains available");
         AssertSemanticContract(
             normalizedEnglish,
-            "English Stage 0 latest-wins source authority",
-            "Stage 0",
-            "latest-wins",
-            "source-authoritative");
+            "English latest-wins source authority",
+            "single source of truth",
+            "Stale work is ignored",
+            "current valid Source revision");
         AssertSemanticContract(
             normalizedEnglish,
             "English fail-closed handling",
@@ -232,10 +247,20 @@ public sealed class RepositoryRoadmapTests
             "fail closed");
 
         AssertSemanticContract(
+            normalizedEnglish,
+            "English v0.11.0 source synchronization foundation",
+            "Version 0.11.0",
+            "revision-bound",
+            "explicit Source, Properties, visual-command, Undo/Redo, and document-load origins",
+            "Caret-only Source synchronization",
+            "invalid XML",
+            "primary selection");
+
+        AssertSemanticContract(
             normalizedPersian,
             "Persian v0.10.0 Stage 1 bounded selection",
             "0.10.0",
-            "مرحلهٔ اول",
+            "ابزارهای ویرایش دیداری نسخهٔ 0.10.0",
             "انتخاب چندگانهٔ محدود",
             "حداکثر ۱۲۸");
         AssertSemanticContract(
@@ -293,6 +318,16 @@ public sealed class RepositoryRoadmapTests
             "Fail Closed",
             "کاملاً رد می‌شود",
             "حدس نمی‌زند");
+        AssertSemanticContract(
+            normalizedPersian,
+            "Persian v0.11.0 source synchronization foundation",
+            "0.11.0",
+            "فقط تازه‌ترین نسخهٔ معتبر",
+            "حرکت مکان‌نما",
+            "تاریخچهٔ Undo",
+            "متن تایپ‌شده و آخرین نمایش معتبر",
+            "انتخاب اصلی");
+
         StringAssert.Contains(security, "Layers and groups boundary");
         StringAssert.Contains(
             security,

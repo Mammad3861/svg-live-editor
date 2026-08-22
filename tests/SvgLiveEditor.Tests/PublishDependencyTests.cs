@@ -90,7 +90,7 @@ public sealed class PublishDependencyTests
                 "scripts",
                 "Publish-WinX64.ps1"));
 
-        StringAssert.Contains(script, "[string]$Version = '0.10.1'");
+        StringAssert.Contains(script, "[string]$Version = '0.11.0'");
         StringAssert.Contains(script, "SvgLiveEditor-v$Version-win-x64.zip");
     }
 
