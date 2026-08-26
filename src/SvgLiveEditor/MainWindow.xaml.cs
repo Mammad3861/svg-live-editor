@@ -75,6 +75,7 @@ public partial class MainWindow : Window
     private readonly ContextMenu _previewContextMenu;
 
     private bool _isUpdatingEditor;
+    private SourceChangeOrigin? _activeSourceChangeOrigin;
     private bool _isWebViewReady;
     private bool _hasVisiblePreview;
     private bool _isPreviewNavigationRequested;
@@ -146,6 +147,7 @@ public partial class MainWindow : Window
         InitializeSourceEditorContextMenu();
         SourceEditor.Document.TextChanged += OnEditorDocumentTextChanged;
         SourceEditor.TextArea.Caret.PositionChanged += OnCaretPositionChanged;
+        SourceEditor.TextArea.SelectionChanged += OnSourceSelectionChanged;
         PreviewWebView.CoreWebView2InitializationCompleted += OnCoreWebView2InitializationCompleted;
         _fitResizeTimer.Tick += OnFitResizeTimerTick;
         _dragFileCleanupTimer.Tick += OnDragFileCleanupTimerTick;
@@ -1102,7 +1104,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        _sourceRevisionTracker.Advance();
+        ClearPendingSourceNavigationIntent();
+        _sourceRevisionTracker.Advance(
+            _activeSourceChangeOrigin ?? SourceChangeOrigin.SourceEditor);
+        ObservePendingSelectionRestoreAfterSourceChanged();
         _previewPngSourceState =
             PreviewPngSourceState.PendingValidation;
         _viewModel.UpdateTextFromEditor(SourceEditor.Text);
@@ -1163,10 +1168,11 @@ public partial class MainWindow : Window
             ? PreviewPngSourceState.CurrentValid
             : PreviewPngSourceState.CurrentInvalid;
         _viewModel.ApplyValidation(result);
-        RestorePendingSelection(
+        bool selectionRestoreApplied = TryRestorePendingSelection(
             sourceSnapshot,
             sourceRevision,
-            indexResult);
+            indexResult,
+            out SvgElementIdentity? restoredPrimary);
         if (result.IsValid)
         {
             _lastValidCanvasSize =
@@ -1177,10 +1183,31 @@ public partial class MainWindow : Window
                 sourceRevision,
                 sourceSnapshot);
         }
+        SvgElementIdentity? inspectorSelection =
+            _inspectorSelectionCoordinator.ResolveRefreshSelection(
+                preferredSelection,
+                selectionRestoreApplied,
+                restoredPrimary,
+                _viewModel.Inspector.CaptureSelectionIdentity(),
+                _visualSelectionState.Primary,
+                indexResult.Document,
+                out bool selectFirstRootWhenSelectionIsEmpty);
         ApplyDocumentInspectorResult(
             indexResult,
-            preferredSelection
-            ?? _viewModel.Inspector.CaptureSelectionIdentity());
+            inspectorSelection,
+            selectFirstRootWhenSelectionIsEmpty);
+        if (_sourceRevisionTracker.CanSynchronizeSourceCaret(
+                sourceRevision,
+                SourceEditor.IsKeyboardFocusWithin,
+                _isEditorTextCompositionActive,
+                selectionRestoreApplied)
+            || !selectionRestoreApplied
+                && SourceEditor.IsKeyboardFocusWithin
+                && !_isEditorTextCompositionActive
+                && HasCurrentSourceNavigationIntent(sourceRevision))
+        {
+            QueueInspectorCaretSynchronization();
+        }
         if (!result.IsValid)
         {
             OnVisualValidationCompleted(
@@ -1481,7 +1508,7 @@ public partial class MainWindow : Window
         try
         {
             SourceEditor.Text = text;
-            _sourceRevisionTracker.Advance();
+            _sourceRevisionTracker.Advance(SourceChangeOrigin.DocumentLoad);
             _loadedSourceRevision =
                 _sourceRevisionTracker.Current;
             SourceEditor.CaretOffset = 0;
@@ -1544,7 +1571,27 @@ public partial class MainWindow : Window
     private void OnCaretPositionChanged(object? sender, EventArgs e)
     {
         _viewModel.UpdateCaret(SourceEditor.TextArea.Caret.Line, SourceEditor.TextArea.Caret.Column);
+        RegisterCurrentUserSourceNavigationIntent();
         QueueInspectorCaretSynchronization();
+    }
+
+    private void OnSourceSelectionChanged(object? sender, EventArgs e)
+    {
+        RegisterCurrentUserSourceNavigationIntent();
+        QueueInspectorCaretSynchronization();
+    }
+
+    private void RegisterCurrentUserSourceNavigationIntent()
+    {
+        if (_isUpdatingEditor
+            || _isSynchronizingInspectorSelection
+            || !SourceEditor.IsKeyboardFocusWithin
+            || _activeSourceChangeOrigin is not null)
+        {
+            return;
+        }
+
+        RegisterSourceNavigationIntent();
     }
 
     private void OnNewClick(object sender, RoutedEventArgs e)
@@ -1737,7 +1784,9 @@ public partial class MainWindow : Window
     {
         if (SourceEditor.CanUndo)
         {
-            SourceEditor.Undo();
+            RunWithSourceChangeOrigin(
+                SourceChangeOrigin.UndoRedo,
+                () => SourceEditor.Undo());
         }
     }
 
@@ -1745,7 +1794,32 @@ public partial class MainWindow : Window
     {
         if (SourceEditor.CanRedo)
         {
-            SourceEditor.Redo();
+            RunWithSourceChangeOrigin(
+                SourceChangeOrigin.UndoRedo,
+                () => SourceEditor.Redo());
+        }
+    }
+
+    private void RunWithSourceChangeOrigin(
+        SourceChangeOrigin origin,
+        Action action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        SourceChangeOrigin? previous = _activeSourceChangeOrigin;
+        _activeSourceChangeOrigin = origin;
+        bool operationCompleted = false;
+        try
+        {
+            action();
+            operationCompleted = true;
+        }
+        finally
+        {
+            if (origin == SourceChangeOrigin.UndoRedo)
+            {
+                ArmPendingSelectionRestoreAfterUndoRedo(operationCompleted);
+            }
+            _activeSourceChangeOrigin = previous;
         }
     }
 
@@ -1811,9 +1885,24 @@ public partial class MainWindow : Window
             return false;
         }
 
-        SourceEditor.Select(index, query.Length);
-        SourceEditor.ScrollToLine(SourceEditor.Document.GetLineByOffset(index).LineNumber);
-        SourceEditor.Focus();
+        RegisterSourceNavigationIntent();
+        bool wasSynchronizingInspectorSelection =
+            _isSynchronizingInspectorSelection;
+        _isSynchronizingInspectorSelection = true;
+        try
+        {
+            SourceEditor.Focus();
+            Keyboard.Focus(SourceEditor.TextArea);
+            SourceEditor.Select(index, query.Length);
+            SourceEditor.ScrollToLine(
+                SourceEditor.Document.GetLineByOffset(index).LineNumber);
+        }
+        finally
+        {
+            _isSynchronizingInspectorSelection =
+                wasSynchronizingInspectorSelection;
+        }
+        QueueInspectorCaretSynchronization();
         return true;
     }
 
@@ -2696,6 +2785,11 @@ public partial class MainWindow : Window
         ClosePreviewContextMenu();
         SourceEditor.Document.TextChanged -= OnEditorDocumentTextChanged;
         SourceEditor.TextArea.Caret.PositionChanged -= OnCaretPositionChanged;
+        SourceEditor.TextArea.SelectionChanged -= OnSourceSelectionChanged;
+        if (SourceEditor.ContextMenu is ContextMenu sourceContextMenu)
+        {
+            sourceContextMenu.Closed -= OnSourceEditorContextMenuClosed;
+        }
         PreviewWebView.CoreWebView2InitializationCompleted -= OnCoreWebView2InitializationCompleted;
         DisposeDocumentInspector();
         _fitResizeTimer.Stop();

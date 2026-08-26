@@ -38,10 +38,35 @@ public partial class MainWindow
             menu.Items.Add(item);
         }
 
+        menu.Closed += OnSourceEditorContextMenuClosed;
         SourceEditor.ContextMenu = menu;
         SourceEditor.ContextMenuOpening += OnSourceEditorContextMenuOpening;
         SourceEditor.PreviewMouseRightButtonDown +=
             OnSourceEditorPreviewMouseRightButtonDown;
+    }
+
+    private void OnSourceEditorContextMenuClosed(
+        object? sender,
+        RoutedEventArgs e)
+    {
+        Dispatcher.BeginInvoke(
+            System.Windows.Threading.DispatcherPriority.Input,
+            new Action(() =>
+            {
+                if (_isWindowClosing)
+                {
+                    ClearPendingSourceNavigationIntent();
+                    return;
+                }
+
+                if (!SourceEditor.IsKeyboardFocusWithin)
+                {
+                    ClearPendingSourceNavigationIntent();
+                    return;
+                }
+
+                QueueInspectorCaretSynchronization();
+            }));
     }
 
     private void OnSourceEditorContextMenuOpening(
@@ -98,6 +123,7 @@ public partial class MainWindow
             return;
         }
 
+        RegisterSourceNavigationIntent();
         SourceEditor.CaretOffset = offset;
         SourceEditor.Select(offset, 0);
     }
@@ -118,10 +144,10 @@ public partial class MainWindow
         switch (command)
         {
             case SourceEditorContextCommand.Undo:
-                SourceEditor.Undo();
+                OnUndoClick(this, new RoutedEventArgs());
                 break;
             case SourceEditorContextCommand.Redo:
-                SourceEditor.Redo();
+                OnRedoClick(this, new RoutedEventArgs());
                 break;
             case SourceEditorContextCommand.Cut:
                 SourceEditor.Cut();
@@ -136,6 +162,7 @@ public partial class MainWindow
                 SourceEditor.Delete();
                 break;
             case SourceEditorContextCommand.SelectAll:
+                RegisterSourceNavigationIntent();
                 SourceEditor.SelectAll();
                 break;
         }

@@ -49,6 +49,8 @@ public partial class MainWindow
     private bool _isInspectorTextCompositionActive;
     private bool _isExplicitInspectorKeyboardNavigation;
     private long _inspectorSourceRevision = -1;
+    private long _inspectorCaretRequestGeneration;
+    private long? _scheduledInspectorCaretRequestGeneration;
     private OpacitySliderGesture? _opacitySliderGesture;
     private SvgLayerViewModel? _layerDragCandidate;
     private SvgLayerViewModel? _layerDropTarget;
@@ -91,7 +93,8 @@ public partial class MainWindow
 
     private void DisposeDocumentInspector()
     {
-        _inspectorCaretTimer.Stop();
+        CancelPendingInspectorCaretSynchronization();
+        ClearPendingSelectionSynchronizationState();
         _inspectorCaretTimer.Tick -= OnInspectorCaretTimerTick;
         TextCompositionManager.RemovePreviewTextInputStartHandler(
             SourceEditor,
@@ -129,7 +132,8 @@ public partial class MainWindow
 
     private void ApplyDocumentInspectorResult(
         SvgDocumentIndexResult result,
-        SvgElementIdentity? preferredSelection)
+        SvgElementIdentity? preferredSelection,
+        bool selectFirstRootWhenSelectionIsEmpty = true)
     {
         CancelOpacitySliderGesture();
         _isInspectorIndexCurrent = true;
@@ -147,7 +151,8 @@ public partial class MainWindow
                     _lastValidVisualSourceRevision
                         == _sourceRevisionTracker.Current
                         ? _lastValidVisualDocument
-                        : null);
+                        : null,
+                    selectFirstRootWhenSelectionIsEmpty);
             }
             else
             {
@@ -168,6 +173,7 @@ public partial class MainWindow
     private void QueueInspectorCaretSynchronization()
     {
         if (_isSynchronizingInspectorSelection
+            || !SourceEditor.IsKeyboardFocusWithin
             || !_inspectorSourceGuard.CanUseIndex(
                 _isInspectorIndexCurrent,
                 _inspectorSourceRevision,
@@ -178,8 +184,20 @@ public partial class MainWindow
             return;
         }
 
+        _inspectorCaretRequestGeneration = unchecked(
+            _inspectorCaretRequestGeneration + 1);
+        _scheduledInspectorCaretRequestGeneration =
+            _inspectorCaretRequestGeneration;
         _inspectorCaretTimer.Stop();
         _inspectorCaretTimer.Start();
+    }
+
+    private void CancelPendingInspectorCaretSynchronization()
+    {
+        _inspectorCaretRequestGeneration = unchecked(
+            _inspectorCaretRequestGeneration + 1);
+        _scheduledInspectorCaretRequestGeneration = null;
+        _inspectorCaretTimer.Stop();
     }
 
     private void MarkDocumentInspectorSourceChanged()
@@ -187,15 +205,21 @@ public partial class MainWindow
         CancelOpacitySliderGesture();
         _isInspectorIndexCurrent = false;
         _inspectorSourceRevision = -1;
-        _inspectorCaretTimer.Stop();
+        CancelPendingInspectorCaretSynchronization();
         RefreshAuthoringControls();
     }
 
     private void OnInspectorCaretTimerTick(object? sender, EventArgs e)
     {
         _inspectorCaretTimer.Stop();
+        long? requestGeneration = _scheduledInspectorCaretRequestGeneration;
+        _scheduledInspectorCaretRequestGeneration = null;
         SvgDocumentIndex? documentIndex = _viewModel.Inspector.DocumentIndex;
-        if (!_inspectorSourceGuard.CanUseIndex(
+        if (requestGeneration is null
+            || requestGeneration != _inspectorCaretRequestGeneration
+            || _isWindowClosing
+            || !SourceEditor.IsKeyboardFocusWithin
+            || !_inspectorSourceGuard.CanUseIndex(
                 _isInspectorIndexCurrent,
                 _inspectorSourceRevision,
                 _sourceRevisionTracker.Current,
@@ -205,6 +229,7 @@ public partial class MainWindow
             return;
         }
 
+        CompleteCurrentSourceNavigationIntent();
         SvgElementNode? element = documentIndex.FindElementAtOffset(
             SourceEditor.CaretOffset);
         if (element is null
@@ -246,6 +271,10 @@ public partial class MainWindow
                 ? InspectorSelectionOrigin.ExplicitTreeNavigation
                 : InspectorSelectionOrigin.InspectorRestore);
         _isExplicitInspectorKeyboardNavigation = false;
+        if (origin == InspectorSelectionOrigin.ExplicitTreeNavigation)
+        {
+            RegisterExplicitVisualSelectionIntent();
+        }
         _viewModel.Inspector.AcceptTreeSelection(element);
         NavigateToInspectorElement(element, origin);
         SynchronizeVisualSelectionFromInspector(
@@ -271,6 +300,10 @@ public partial class MainWindow
                 ? InspectorSelectionOrigin.ExplicitTreeNavigation
                 : InspectorSelectionOrigin.InspectorRestore);
         _isExplicitInspectorKeyboardNavigation = false;
+        if (origin == InspectorSelectionOrigin.ExplicitTreeNavigation)
+        {
+            RegisterExplicitVisualSelectionIntent();
+        }
         _viewModel.Inspector.AcceptLayerSelection(layer);
         if (origin == InspectorSelectionOrigin.ExplicitTreeNavigation
             && _viewModel.Inspector.FindViewModel(layer.Element)
@@ -322,6 +355,7 @@ public partial class MainWindow
                 && _viewModel.Inspector.FindViewModel(layer.Element)
                     is SvgElementViewModel structureElement)
             {
+                RegisterExplicitVisualSelectionIntent();
                 _viewModel.Inspector.AcceptLayerSelection(layer);
                 NavigateToInspectorElement(
                     structureElement,
@@ -1675,7 +1709,25 @@ public partial class MainWindow
         {
             return;
         }
-        item.IsSelected = true;
+
+        switch (item.DataContext)
+        {
+            case SvgLayerViewModel { IsSelected: false } layer:
+                layer.SetSelected(
+                    true,
+                    InspectorSelectionOrigin.ExplicitTreeNavigation);
+                break;
+            case SvgElementViewModel { IsSelected: false } element:
+                element.SetSelected(
+                    true,
+                    InspectorSelectionOrigin.ExplicitTreeNavigation);
+                break;
+            case SvgLayerViewModel or SvgElementViewModel:
+                RegisterExplicitVisualSelectionIntent();
+                break;
+            default:
+                return;
+        }
         item.Focus();
     }
 
@@ -1688,6 +1740,7 @@ public partial class MainWindow
         {
             if (InspectorTree.SelectedItem is SvgElementViewModel element)
             {
+                RegisterExplicitVisualSelectionIntent();
                 NavigateToInspectorElement(
                     element,
                     InspectorSelectionOrigin.ExplicitTreeNavigation);
@@ -2597,7 +2650,10 @@ public partial class MainWindow
         }
 
         SvgElementIdentity preferredSelection = property.Element.Identity;
-        ApplyDocumentEditWithSelection(result.Edit, sourceSnapshot);
+        ApplyDocumentEditWithSelection(
+            result.Edit,
+            sourceSnapshot,
+            changeOrigin: SourceChangeOrigin.InspectorProperty);
         property.MarkApplied(commitValue);
 
         SvgDocumentIndexResult rebuilt =
@@ -2659,7 +2715,7 @@ public partial class MainWindow
         TextCompositionEventArgs e)
     {
         _isEditorTextCompositionActive = true;
-        _inspectorCaretTimer.Stop();
+        CancelPendingInspectorCaretSynchronization();
     }
 
     private void OnEditorTextCompositionUpdated(
@@ -2667,7 +2723,7 @@ public partial class MainWindow
         TextCompositionEventArgs e)
     {
         _isEditorTextCompositionActive = true;
-        _inspectorCaretTimer.Stop();
+        CancelPendingInspectorCaretSynchronization();
     }
 
     private void OnEditorTextCompositionCompleted(
@@ -2687,6 +2743,8 @@ public partial class MainWindow
         object sender,
         KeyboardFocusChangedEventArgs e)
     {
+        bool sourceMenuOwnsFocusTransition =
+            SourceEditor.ContextMenu?.IsOpen == true;
         Dispatcher.BeginInvoke(
             DispatcherPriority.Input,
             new Action(() =>
@@ -2694,6 +2752,11 @@ public partial class MainWindow
                 if (!SourceEditor.IsKeyboardFocusWithin)
                 {
                     _isEditorTextCompositionActive = false;
+                    CancelPendingInspectorCaretSynchronization();
+                    if (!sourceMenuOwnsFocusTransition)
+                    {
+                        ClearPendingSourceNavigationIntent();
+                    }
                 }
             }));
     }

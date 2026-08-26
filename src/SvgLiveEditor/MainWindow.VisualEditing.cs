@@ -51,7 +51,9 @@ public partial class MainWindow
     private readonly Queue<string> _visualResizeGestureIdOrder = new();
     private PendingPreviewTextMeasurement?
         _pendingPreviewTextMeasurement;
-    private SvgSelectionRestoreTarget? _pendingSelectionRestore;
+    private PendingSelectionRestore? _pendingSelectionRestore;
+    private PendingSourceNavigationIntent? _pendingSourceNavigationIntent;
+    private long _selectionIntentGeneration;
 
     private bool TryHandlePreviewVisualInteraction(
         string messageJson,
@@ -442,6 +444,8 @@ public partial class MainWindow
         {
             return;
         }
+
+        RegisterExplicitVisualSelectionIntent();
 
         if (!_previewSvgCoordinateMapper.TryMap(
                 visualDocument.Viewport,
@@ -1104,7 +1108,8 @@ public partial class MainWindow
         string sourceSnapshot,
         IReadOnlyList<SvgElementIdentity>? preferredSelections = null,
         SvgElementIdentity? preferredPrimary = null,
-        bool remapPrimaryToPreferred = false)
+        bool remapPrimaryToPreferred = false,
+        SourceChangeOrigin changeOrigin = SourceChangeOrigin.VisualCommand)
     {
         ArgumentNullException.ThrowIfNull(edit);
         ArgumentNullException.ThrowIfNull(sourceSnapshot);
@@ -1127,12 +1132,14 @@ public partial class MainWindow
             : new SvgSelectionUndoOperation(
                 SvgSelectionRestoreTarget.Create(before, sourceSnapshot),
                 SvgSelectionRestoreTarget.Create(after, candidate),
-                target => _pendingSelectionRestore = target);
+                RequestPendingSelectionRestore);
 
-        _documentEditService.Apply(
-            SourceEditor.Document,
-            edit,
-            selectionUndo);
+        RunWithSourceChangeOrigin(
+            changeOrigin,
+            () => _documentEditService.Apply(
+                SourceEditor.Document,
+                edit,
+                selectionUndo));
         if (after is not null)
         {
             _visualSelectionState = after with
@@ -1194,34 +1201,151 @@ public partial class MainWindow
             primary);
     }
 
-    private void RestorePendingSelection(
+    private bool TryRestorePendingSelection(
         string source,
         long sourceRevision,
-        SvgDocumentIndexResult indexResult)
+        SvgDocumentIndexResult indexResult,
+        out SvgElementIdentity? restoredPrimary)
     {
-        SvgSelectionRestoreTarget? target = _pendingSelectionRestore;
-        if (target is null)
+        restoredPrimary = null;
+        PendingSelectionRestore? pending = _pendingSelectionRestore;
+        if (pending is null)
         {
-            return;
+            return false;
         }
         _pendingSelectionRestore = null;
-        if (!target.Matches(source)
+        if (pending.ExpectedSourceRevision != sourceRevision
+            || pending.ExpectedSelectionIntentGeneration
+                != _selectionIntentGeneration
+            || !pending.Target.Matches(source)
             || indexResult.Document is not SvgDocumentIndex document)
+        {
+            return false;
+        }
+
+        _visualSelectionState = _multiSelectionService.Reconcile(
+            pending.Target.Selection,
+            sourceRevision,
+            document);
+        restoredPrimary = _visualSelectionState.Primary;
+        return true;
+    }
+
+    private void RequestPendingSelectionRestore(
+        SvgSelectionRestoreTarget target)
+    {
+        // AvalonEdit invokes the optional operation before its public
+        // TextChanged notification for both Undo and Redo. During Redo the
+        // document already exposes the target bytes, but the revision tracker
+        // is still old. Bind only from the immediately resulting notification.
+        _pendingSelectionRestore = new PendingSelectionRestore(
+            target,
+            _sourceRevisionTracker.Current,
+            ExpectedSourceRevision: null,
+            ExpectedSelectionIntentGeneration: null);
+    }
+
+    private void ObservePendingSelectionRestoreAfterSourceChanged()
+    {
+        PendingSelectionRestore? pending = _pendingSelectionRestore;
+        if (pending is null)
         {
             return;
         }
 
-        _visualSelectionState = _multiSelectionService.Reconcile(
-            target.Selection,
-            sourceRevision,
-            document);
+        if (pending.ExpectedSourceRevision is not null)
+        {
+            _pendingSelectionRestore = null;
+            return;
+        }
+
+        long currentRevision = _sourceRevisionTracker.Current;
+        _pendingSelectionRestore = currentRevision
+                == pending.RequestSourceRevision + 1
+            && pending.Target.Matches(SourceEditor.Text)
+                ? pending with { ExpectedSourceRevision = currentRevision }
+                : null;
     }
+
+    private void ArmPendingSelectionRestoreAfterUndoRedo(bool operationCompleted)
+    {
+        PendingSelectionRestore? pending = _pendingSelectionRestore;
+        if (!operationCompleted
+            || pending?.ExpectedSourceRevision != _sourceRevisionTracker.Current
+            || !pending.Target.Matches(SourceEditor.Text))
+        {
+            _pendingSelectionRestore = null;
+            return;
+        }
+
+        _pendingSelectionRestore = pending with
+        {
+            ExpectedSelectionIntentGeneration = _selectionIntentGeneration
+        };
+    }
+
+    private void RegisterExplicitVisualSelectionIntent()
+    {
+        if (_pendingSelectionRestore is not null
+            || _pendingSourceNavigationIntent is not null)
+        {
+            AdvanceSelectionIntentGeneration();
+        }
+        _pendingSelectionRestore = null;
+        _pendingSourceNavigationIntent = null;
+        CancelPendingInspectorCaretSynchronization();
+    }
+
+    private void RegisterSourceNavigationIntent()
+    {
+        if (HasCurrentSourceNavigationIntent(_sourceRevisionTracker.Current))
+        {
+            return;
+        }
+
+        AdvanceSelectionIntentGeneration();
+        _pendingSelectionRestore = null;
+        _pendingSourceNavigationIntent = new PendingSourceNavigationIntent(
+            _sourceRevisionTracker.Current,
+            _selectionIntentGeneration);
+    }
+
+    private bool HasCurrentSourceNavigationIntent(long sourceRevision) =>
+        _pendingSourceNavigationIntent is PendingSourceNavigationIntent pending
+        && pending.SourceRevision == sourceRevision
+        && pending.SelectionIntentGeneration == _selectionIntentGeneration;
+
+    private void CompleteCurrentSourceNavigationIntent()
+    {
+        if (HasCurrentSourceNavigationIntent(_sourceRevisionTracker.Current))
+        {
+            _pendingSourceNavigationIntent = null;
+        }
+    }
+
+    private void ClearPendingSourceNavigationIntent() =>
+        _pendingSourceNavigationIntent = null;
+
+    private void ClearPendingSelectionSynchronizationState()
+    {
+        AdvanceSelectionIntentGeneration();
+        _pendingSelectionRestore = null;
+        _pendingSourceNavigationIntent = null;
+    }
+
+    private void AdvanceSelectionIntentGeneration() =>
+        _selectionIntentGeneration = unchecked(_selectionIntentGeneration + 1);
 
     private void ApplyVisualSelectionState(
         SvgMultiSelectionState state,
         InspectorSelectionOrigin origin,
         bool navigateSource = false)
     {
+        if (origin is InspectorSelectionOrigin.PreviewNavigation
+            or InspectorSelectionOrigin.ExplicitTreeNavigation)
+        {
+            RegisterExplicitVisualSelectionIntent();
+        }
         _visualEditGesture = null;
         _visualResizeGesture = null;
         _activeSnapGuides = [];
@@ -1255,6 +1379,7 @@ public partial class MainWindow
 
     private void ClearVisualSelection()
     {
+        CancelPendingInspectorCaretSynchronization();
         long revision = Math.Max(0, _sourceRevisionTracker.Current);
         _visualSelectionState = SvgMultiSelectionState.Empty(revision);
         _visualSelectionIdentity = null;
@@ -1519,12 +1644,22 @@ public partial class MainWindow
         _visualSelectionBridgeIds.Clear();
         _visualSelectionState = SvgMultiSelectionState.Empty(
             Math.Max(0, _sourceRevisionTracker.Current));
-        _pendingSelectionRestore = null;
+        ClearPendingSelectionSynchronizationState();
         _activeSnapGuides = [];
         _consumedVisualResizeGestureIds.Clear();
         _visualResizeGestureIdOrder.Clear();
         PostVisualSelection(selection: null);
     }
+
+    private sealed record PendingSelectionRestore(
+        SvgSelectionRestoreTarget Target,
+        long RequestSourceRevision,
+        long? ExpectedSourceRevision,
+        long? ExpectedSelectionIntentGeneration);
+
+    private sealed record PendingSourceNavigationIntent(
+        long SourceRevision,
+        long SelectionIntentGeneration);
 
     private void InitializeLastValidVisualDocument(
         string source,

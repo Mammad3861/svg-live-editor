@@ -32,4 +32,34 @@ public sealed class InspectorSelectionCoordinator
         navigationSpan = span;
         return true;
     }
+
+    public SvgElementIdentity? ResolveRefreshSelection(
+        SvgElementIdentity? preferredSelection,
+        bool selectionRestoreApplied,
+        SvgElementIdentity? restoredPrimary,
+        SvgElementIdentity? currentSelection,
+        SvgElementIdentity? reconciledPrimary,
+        SvgDocumentIndex? currentDocument,
+        out bool selectFirstRootWhenSelectionIsEmpty)
+    {
+        if (selectionRestoreApplied)
+        {
+            selectFirstRootWhenSelectionIsEmpty = false;
+            return ResolveCurrent(restoredPrimary, currentDocument);
+        }
+
+        SvgElementIdentity? resolved =
+            ResolveCurrent(preferredSelection, currentDocument)
+            ?? ResolveCurrent(currentSelection, currentDocument)
+            ?? ResolveCurrent(reconciledPrimary, currentDocument);
+        selectFirstRootWhenSelectionIsEmpty = resolved is null;
+        return resolved;
+    }
+
+    private static SvgElementIdentity? ResolveCurrent(
+        SvgElementIdentity? selection,
+        SvgDocumentIndex? document) =>
+        selection is null || document is null
+            ? null
+            : document.FindBestMatch(selection)?.Identity;
 }

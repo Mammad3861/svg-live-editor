@@ -126,15 +126,22 @@ public sealed class SourceEditorContextMenuPolicyTests
     }
 
     [TestMethod]
-    public void MainWindowWiresNativeAvalonEditMethodsWithoutCustomClipboardFormats()
+    public void MainWindowRoutesUndoRedoAndKeepsNativeAvalonEditClipboardMethods()
     {
         string source = File.ReadAllText(Path.Combine(
             AppContext.BaseDirectory,
             "ui",
             "MainWindow.SourceEditor.cs"));
+        string mainWindow = File.ReadAllText(Path.Combine(
+            AppContext.BaseDirectory,
+            "ui",
+            "MainWindow.xaml.cs"));
 
-        StringAssert.Contains(source, "SourceEditor.Undo()");
-        StringAssert.Contains(source, "SourceEditor.Redo()");
+        StringAssert.Contains(source, "OnUndoClick(this, new RoutedEventArgs())");
+        StringAssert.Contains(source, "OnRedoClick(this, new RoutedEventArgs())");
+        StringAssert.Contains(mainWindow, "() => SourceEditor.Undo()");
+        StringAssert.Contains(mainWindow, "() => SourceEditor.Redo()");
+        StringAssert.Contains(mainWindow, "SourceChangeOrigin.UndoRedo");
         StringAssert.Contains(source, "SourceEditor.Cut()");
         StringAssert.Contains(source, "SourceEditor.Copy()");
         StringAssert.Contains(source, "SourceEditor.Paste()");
