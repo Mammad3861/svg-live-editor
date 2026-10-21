@@ -257,6 +257,52 @@ public sealed class SvgVisualTextTests
         StringAssert.Contains(text.UnsupportedReason, "control");
     }
 
+    [TestMethod]
+    [DataRow(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" xml:space=\"preserve\"><text id=\"label\" x=\"1\" y=\"20\" font-size=\"16\">A   B</text></svg>")]
+    [DataRow(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\"><g xml:space=\"default\"><text id=\"label\" x=\"1\" y=\"20\" font-size=\"16\">A   B</text></g></svg>")]
+    [DataRow(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\"><g xml:space=\"preserve\"><g><text id=\"label\" x=\"1\" y=\"20\" font-size=\"16\">A   B</text></g></g></svg>")]
+    [DataRow(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\"><text id=\"label\" x=\"1\" y=\"20\" font-size=\"16\" xml:space=\"preserve\">A   B</text></svg>")]
+    public void ExplicitXmlSpaceOnSelfOrAncestorPreventsTrustedMeasurement(
+        string source)
+    {
+        SvgVisualElement text = Build(source).Elements.Single(element =>
+            element.SourceElement.Id == "label");
+        SvgVisualDocument afterForgedBounds = _measurementService.Apply(
+            Build(source),
+            [new SvgVisualTextMeasurementResult(
+                0,
+                true,
+                new SvgVisualBounds(1, 4, 40, 22))]);
+        SvgVisualElement after = afterForgedBounds.Elements.Single(element =>
+            element.SourceElement.Id == "label");
+
+        Assert.IsNull(text.TextMeasurement);
+        Assert.IsNull(after.TextMeasurement);
+        Assert.IsNull(after.Geometry);
+        Assert.IsFalse(after.IsResizable);
+        StringAssert.Contains(after.UnsupportedReason, "xml:space");
+    }
+
+    [TestMethod]
+    public void SiblingXmlSpaceDoesNotSuppressTrustedMeasurement()
+    {
+        const string source =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><g xml:space=\"preserve\"><text id=\"sibling\" x=\"1\" y=\"20\" font-size=\"16\">A   B</text></g><text id=\"label\" x=\"1\" y=\"50\" font-size=\"16\">Editable</text></svg>";
+        SvgVisualDocument document = Build(source);
+        SvgVisualElement sibling = document.Elements.Single(element =>
+            element.SourceElement.Id == "sibling");
+        SvgVisualElement target = document.Elements.Single(element =>
+            element.SourceElement.Id == "label");
+
+        Assert.IsNull(sibling.TextMeasurement);
+        Assert.IsNotNull(target.TextMeasurement);
+        Assert.AreEqual("Editable", target.TextMeasurement.Text);
+    }
+
     private SvgVisualDocument Build(string source)
     {
         SvgDocumentIndexResult index = _indexService.Build(source);

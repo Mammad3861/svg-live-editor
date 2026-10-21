@@ -22,6 +22,11 @@ public partial class MainWindow
     private readonly SvgVisualResizeService _visualResizeService = new();
     private readonly SvgVisualResizeHandleService
         _visualResizeHandleService = new();
+    private readonly SvgTextResizeService _textResizeService = new();
+    private readonly SvgDirectTextContentEditService
+        _directTextContentEditService = new();
+    private readonly PreviewTextEditMessageParser
+        _previewTextEditMessageParser = new();
     private readonly PreviewVisualInteractionMessageParser
         _previewVisualInteractionMessageParser = new();
     private readonly VisualEditingReadinessPolicy
@@ -51,6 +56,7 @@ public partial class MainWindow
     private readonly Queue<string> _visualResizeGestureIdOrder = new();
     private PendingPreviewTextMeasurement?
         _pendingPreviewTextMeasurement;
+    private PreviewTextEditSession? _previewTextEditSession;
     private PendingSelectionRestore? _pendingSelectionRestore;
     private PendingSourceNavigationIntent? _pendingSourceNavigationIntent;
     private long _selectionIntentGeneration;
@@ -62,6 +68,16 @@ public partial class MainWindow
         if (_visiblePreviewSourceRevision is not long sourceRevision)
         {
             return false;
+        }
+
+        if (_previewTextEditMessageParser.TryParse(
+                messageJson,
+                bridgeToken,
+                sourceRevision,
+                out PreviewTextEditMessage textEdit))
+        {
+            HandlePreviewTextEdit(textEdit);
+            return true;
         }
 
         if (_previewVisualInteractionMessageParser.TryParsePointer(
@@ -97,6 +113,252 @@ public partial class MainWindow
         }
 
         return false;
+    }
+
+    private void HandlePreviewTextEdit(PreviewTextEditMessage message)
+    {
+        if (message.Action == PreviewTextEditAction.Begin)
+        {
+            BeginPreviewTextEdit(message);
+            return;
+        }
+
+        if (_previewTextEditSession is not PreviewTextEditSession session
+            || !session.SessionId.Equals(
+                message.SessionId,
+                StringComparison.Ordinal)
+            || !session.SelectionId.Equals(
+                message.SelectionId,
+                StringComparison.Ordinal)
+            || session.SourceRevision != message.SourceRevision)
+        {
+            return;
+        }
+        if (message.Action == PreviewTextEditAction.Cancel)
+        {
+            ClosePreviewTextEditSession(message.RestorePreviewFocus);
+            _viewModel.SetOperationStatus("Text edit cancelled");
+            return;
+        }
+
+        CommitPreviewTextEdit(
+            session,
+            message.Value ?? string.Empty,
+            message.RestorePreviewFocus);
+    }
+
+    private void BeginPreviewTextEdit(PreviewTextEditMessage message)
+    {
+        if (_previewTextEditSession is not null)
+        {
+            return;
+        }
+        // Composition focus can live in the native controller with no WPF
+        // focused element. Keep this fallback local to text-edit begin; managed
+        // Source/inspector focus and the existing shortcut routes keep priority.
+        if (!(HasPreviewKeyboardFocus()
+                || (Keyboard.FocusedElement is null
+                    && ((System.Windows.Interop.IKeyboardInputSink)PreviewWebView)
+                        .HasFocusWithin()))
+            || !CanUseVisualEditing(message.SourceRevision)
+            || _visualSelectionState.SourceRevision != message.SourceRevision
+            || _visualSelectionState.Identities.Count != 1
+            || _visualSelectionState.Primary
+                is not SvgElementIdentity identity
+            || _visualSelectionIdentity != identity
+            || _visualSelectionBridgeId?.Equals(
+                message.SelectionId,
+                StringComparison.Ordinal) != true
+            || _viewModel.Inspector.DocumentIndex
+                is not SvgDocumentIndex document
+            || document.FindBestMatch(identity) is not SvgElementNode current
+            || _visiblePreviewVisualDocument?.FindElement(identity)
+                is not SvgVisualElement visual
+            || visual.Kind != SvgVisualElementKind.Text
+            || visual.Geometry is null
+            || visual.TextMeasurement
+                is not SvgVisualTextMeasurementSpec measurement)
+        {
+            _viewModel.SetOperationStatus(
+                "Select one eligible visible text element before editing it.");
+            return;
+        }
+        if (_viewModel.Inspector.IsElementEffectivelyLocked(current))
+        {
+            _viewModel.SetOperationStatus(
+                "Unlock this layer or its parent group to edit text content.");
+            return;
+        }
+
+        string sourceSnapshot = SourceEditor.Text;
+        SvgDirectTextAnalysis analysis = _directTextContentEditService.Analyze(
+            sourceSnapshot,
+            document,
+            current);
+        if (!analysis.IsEligible
+            || analysis.Content is not SvgDirectTextContent content)
+        {
+            _viewModel.SetOperationStatus(
+                analysis.UnavailableReason
+                ?? "The selected text cannot be edited safely.");
+            return;
+        }
+
+        string sessionId = CreateVisualSelectionBridgeId();
+        _previewTextEditSession = new PreviewTextEditSession(
+            sessionId,
+            message.SelectionId,
+            message.SourceRevision,
+            identity);
+        if (!PostPreviewTextEditOpen(
+                sessionId,
+                message.SelectionId,
+                message.SourceRevision,
+                content.Text,
+                measurement.Direction))
+        {
+            _previewTextEditSession = null;
+            _viewModel.SetOperationStatus(
+                "The Preview text editor could not be opened. Try again.");
+            return;
+        }
+
+        CancelVisualEditGesture();
+        _viewModel.SetOperationStatus(
+            "Editing text · Enter commits · Escape cancels");
+    }
+
+    private void CommitPreviewTextEdit(
+        PreviewTextEditSession session,
+        string value,
+        bool restorePreviewFocus)
+    {
+        SvgDocumentIndex? document = _viewModel.Inspector.DocumentIndex;
+        SvgElementNode? current = document?.FindBestMatch(
+            session.ElementIdentity);
+        if (!_sourceRevisionTracker.IsCurrent(session.SourceRevision)
+            || _visiblePreviewSourceRevision != session.SourceRevision
+            || _visualSelectionState.SourceRevision != session.SourceRevision
+            || _visualSelectionState.Identities.Count != 1
+            || _visualSelectionState.Primary != session.ElementIdentity
+            || _visualSelectionBridgeId?.Equals(
+                session.SelectionId,
+                StringComparison.Ordinal) != true
+            || document is null
+            || current is null
+            || _viewModel.Inspector.IsElementEffectivelyLocked(current))
+        {
+            ClosePreviewTextEditSession(restorePreviewFocus);
+            _viewModel.SetOperationStatus(
+                "The source, selection, or lock state changed; text was not edited.");
+            return;
+        }
+
+        string sourceSnapshot = SourceEditor.Text;
+        SvgAttributeEditResult result = _directTextContentEditService.CreateEdit(
+            sourceSnapshot,
+            document,
+            current,
+            value);
+        if (!result.IsSuccess)
+        {
+            ClosePreviewTextEditSession(restorePreviewFocus);
+            _viewModel.SetOperationStatus(
+                result.ErrorMessage
+                ?? "The text content could not be edited safely.");
+            return;
+        }
+
+        ClosePreviewTextEditSession(restorePreviewFocus);
+        if (result.Edit is null)
+        {
+            _viewModel.SetOperationStatus("Text content unchanged");
+            return;
+        }
+        if (!_sourceRevisionTracker.IsCurrent(session.SourceRevision)
+            || !SourceEditor.Text.Equals(sourceSnapshot, StringComparison.Ordinal))
+        {
+            _viewModel.SetOperationStatus(
+                "The source changed; text was not edited.");
+            return;
+        }
+
+        ApplyDocumentEditWithSelection(
+            result.Edit,
+            sourceSnapshot,
+            [session.ElementIdentity],
+            session.ElementIdentity);
+        _previewDebouncer.Cancel();
+        long updatedRevision = _sourceRevisionTracker.Current;
+        string updatedSource = SourceEditor.Text;
+        SvgDocumentIndexResult rebuilt =
+            _documentIndexService.Build(updatedSource);
+        ApplyValidationResult(
+            updatedSource,
+            updatedRevision,
+            rebuilt);
+        _viewModel.SetOperationStatus("Text content updated");
+    }
+
+    private bool PostPreviewTextEditOpen(
+        string sessionId,
+        string selectionId,
+        long sourceRevision,
+        string value,
+        string direction)
+    {
+        if (!_isWebViewReady
+            || _activePreviewBridgeToken is not string token
+            || PreviewWebView.CoreWebView2 is not CoreWebView2 core)
+        {
+            return false;
+        }
+        try
+        {
+            core.PostWebMessageAsJson(
+                _previewPageMessageBuilder.BuildTextEditOpenMessage(
+                    token,
+                    sourceRevision,
+                    sessionId,
+                    selectionId,
+                    value,
+                    direction));
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    private void ClosePreviewTextEditSession(bool restorePreviewFocus = false)
+    {
+        PreviewTextEditSession? session = _previewTextEditSession;
+        _previewTextEditSession = null;
+        if (session is null
+            || !_isWebViewReady
+            || _activePreviewBridgeToken is not string token
+            || PreviewWebView.CoreWebView2 is not CoreWebView2 core)
+        {
+            return;
+        }
+        try
+        {
+            core.PostWebMessageAsJson(
+                _previewPageMessageBuilder.BuildTextEditCloseMessage(
+                    token,
+                    session.SourceRevision,
+                    session.SessionId,
+                    restorePreviewFocus));
+            if (restorePreviewFocus)
+            {
+                _isPreviewControllerKeyboardFocused = true;
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            // Navigation/disposal races already invalidate this bounded session.
+        }
     }
 
     private bool TryHandlePreviewTextMeasurements(
@@ -293,12 +555,13 @@ public partial class MainWindow
                 "The requested resize is outside the supported range.");
             return;
         }
-        if (!_visualResizeService.TryCalculate(
+        if (!TryCalculateVisualResize(
                 element,
                 gesture.Handle,
                 mapped.Point,
                 pointer.ShiftHeld,
                 out SvgVisualShapeGeometry resized,
+                out double? textFontSize,
                 out resizeError))
         {
             CancelVisualEditGesture(
@@ -308,11 +571,14 @@ public partial class MainWindow
 
         _visualResizeGesture = gesture with
         {
-            PreviewGeometry = resized
+            PreviewGeometry = resized,
+            PreviewTextFontSize = textFontSize
         };
         ShowVisualSelection(geometryOverride: resized);
         _viewModel.SetOperationStatus(
-            FormatResizeStatus(element.Kind, resized));
+            textFontSize is double size
+                ? $"Text size {FormatDelta(size)}"
+                : FormatResizeStatus(element.Kind, resized));
     }
 
     private void CompleteVisualResizeGesture(
@@ -348,12 +614,13 @@ public partial class MainWindow
                 "The requested resize is outside the supported range.");
             return;
         }
-        if (!_visualResizeService.TryCalculate(
+        if (!TryCalculateVisualResize(
                 element,
                 completed.Handle,
                 mapped.Point,
                 pointer.ShiftHeld,
                 out SvgVisualShapeGeometry resized,
+                out double? textFontSize,
                 out resizeError))
         {
             CancelVisualEditGesture(
@@ -364,14 +631,58 @@ public partial class MainWindow
         _visualResizeGesture = null;
         ApplyVisualResize(
             completed.ElementIdentity,
-            resized);
+            resized,
+            textFontSize);
+    }
+
+    private bool TryCalculateVisualResize(
+        SvgVisualElement element,
+        SvgResizeHandle handle,
+        SvgVisualPoint pointer,
+        bool preserveAspectRatio,
+        out SvgVisualShapeGeometry resized,
+        out double? textFontSize,
+        out string? error)
+    {
+        textFontSize = null;
+        if (element.Kind == SvgVisualElementKind.Text)
+        {
+            bool success = _textResizeService.TryCalculate(
+                element,
+                handle,
+                pointer,
+                out SvgTextResizeCandidate candidate,
+                out error);
+            resized = success
+                ? candidate.Geometry
+                : element.Geometry
+                    ?? new SvgVisualShapeGeometry(
+                        SvgVisualElementKind.Text,
+                        0,
+                        0,
+                        0,
+                        0);
+            textFontSize = success ? candidate.FontSize : null;
+            return success;
+        }
+
+        return _visualResizeService.TryCalculate(
+            element,
+            handle,
+            pointer,
+            preserveAspectRatio,
+            out resized,
+            out error);
     }
 
     private void ApplyVisualResize(
         SvgElementIdentity identity,
-        SvgVisualShapeGeometry resizedGeometry)
+        SvgVisualShapeGeometry resizedGeometry,
+        double? textFontSize = null)
     {
         if (!CanUseVisualEditing(_sourceRevisionTracker.Current)
+            || _viewModel.Inspector.DocumentIndex
+                is not SvgDocumentIndex document
             || _lastValidVisualDocument?.FindElement(identity)
                 is not SvgVisualElement element
             || IsVisualElementLocked(element))
@@ -384,10 +695,20 @@ public partial class MainWindow
 
         long expectedRevision = _sourceRevisionTracker.Current;
         string sourceSnapshot = SourceEditor.Text;
-        SvgAttributeEditResult result = _visualResizeService.CreateEdit(
-            sourceSnapshot,
-            element,
-            resizedGeometry);
+        SvgAttributeEditResult result = element.Kind
+            == SvgVisualElementKind.Text
+                ? textFontSize is double size
+                    ? _textResizeService.CreateEdit(
+                        sourceSnapshot,
+                        document,
+                        element,
+                        size)
+                    : SvgAttributeEditResult.Invalid(
+                        "The text size candidate is unavailable.")
+                : _visualResizeService.CreateEdit(
+                    sourceSnapshot,
+                    element,
+                    resizedGeometry);
         if (!result.IsSuccess)
         {
             _viewModel.SetOperationStatus(
@@ -428,7 +749,9 @@ public partial class MainWindow
             updatedRevision,
             rebuilt);
         _viewModel.SetOperationStatus(
-            $"{element.SourceElement.Name} resized");
+            element.Kind == SvgVisualElementKind.Text
+                ? $"Text size set to {FormatDelta(textFontSize ?? 0)}"
+                : $"{element.SourceElement.Name} resized");
     }
 
     private void BeginVisualEditGesture(
@@ -799,7 +1122,8 @@ public partial class MainWindow
 
     private bool CanUseVisualEditing(long sourceRevision)
     {
-        return sourceRevision == _sourceRevisionTracker.Current
+        return _previewTextEditSession is null
+            && sourceRevision == _sourceRevisionTracker.Current
             && _visualEditingReadinessPolicy.IsReady(
                 new VisualEditingReadiness(
                     _isPanModeEnabled,
@@ -1341,6 +1665,12 @@ public partial class MainWindow
         InspectorSelectionOrigin origin,
         bool navigateSource = false)
     {
+        if (_previewTextEditSession is PreviewTextEditSession textSession
+            && (state.Identities.Count != 1
+                || state.Primary != textSession.ElementIdentity))
+        {
+            ClosePreviewTextEditSession(restorePreviewFocus: false);
+        }
         if (origin is InspectorSelectionOrigin.PreviewNavigation
             or InspectorSelectionOrigin.ExplicitTreeNavigation)
         {
@@ -1379,6 +1709,7 @@ public partial class MainWindow
 
     private void ClearVisualSelection()
     {
+        ClosePreviewTextEditSession(restorePreviewFocus: false);
         CancelPendingInspectorCaretSynchronization();
         long revision = Math.Max(0, _sourceRevisionTracker.Current);
         _visualSelectionState = SvgMultiSelectionState.Empty(revision);
@@ -1450,6 +1781,17 @@ public partial class MainWindow
             _viewModel.SetOperationStatus(
                 visualElement.UnsupportedReason
                 ?? $"{visualElement.SourceElement.Name} is read-only in Select mode.");
+        }
+        else if (announce
+            && visualElement is
+            {
+                Kind: SvgVisualElementKind.Text,
+                IsResizable: false,
+                ResizeUnavailableReason: not null
+            })
+        {
+            _viewModel.SetOperationStatus(
+                visualElement.ResizeUnavailableReason);
         }
     }
 
@@ -1523,6 +1865,11 @@ public partial class MainWindow
 
     private void SetVisualSelectionIdentity(SvgElementIdentity? identity)
     {
+        if (_previewTextEditSession is PreviewTextEditSession textSession
+            && identity != textSession.ElementIdentity)
+        {
+            ClosePreviewTextEditSession(restorePreviewFocus: false);
+        }
         _visualEditGesture = null;
         _visualResizeGesture = null;
         _activeSnapGuides = [];
@@ -1628,6 +1975,7 @@ public partial class MainWindow
 
     private void OnVisualSourceChanged()
     {
+        ClosePreviewTextEditSession(restorePreviewFocus: false);
         CancelVisualEditGesture();
         _visualSelectionBridgeId = null;
         _visualSelectionBridgeIds.Clear();
@@ -1637,6 +1985,7 @@ public partial class MainWindow
 
     private void OnVisualDocumentLoaded()
     {
+        ClosePreviewTextEditSession(restorePreviewFocus: false);
         _visualEditGesture = null;
         _visualResizeGesture = null;
         _visualSelectionIdentity = null;
@@ -1801,6 +2150,7 @@ public partial class MainWindow
 
     private void OnVisualPreviewReset()
     {
+        ClosePreviewTextEditSession(restorePreviewFocus: false);
         _activePreviewVisualDocument = null;
         _activePreviewSourceRevision = null;
         _visiblePreviewVisualDocument = null;
@@ -1949,5 +2299,12 @@ public partial class MainWindow
         long SourceRevision,
         SvgElementIdentity ElementIdentity,
         SvgResizeHandle Handle,
-        SvgVisualShapeGeometry PreviewGeometry);
+        SvgVisualShapeGeometry PreviewGeometry,
+        double? PreviewTextFontSize = null);
+
+    private sealed record PreviewTextEditSession(
+        string SessionId,
+        string SelectionId,
+        long SourceRevision,
+        SvgElementIdentity ElementIdentity);
 }

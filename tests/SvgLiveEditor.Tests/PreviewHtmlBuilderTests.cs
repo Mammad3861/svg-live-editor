@@ -453,6 +453,47 @@ public sealed class PreviewHtmlBuilderTests
     }
 
     [TestMethod]
+    public void Build_TextEditorIsBoundedAccessibleAndOwnsConflictingGestures()
+    {
+        string html = _builder.Build(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><text>سلام</text></svg>",
+            300,
+            150,
+            BridgeToken,
+            sourceRevision: 7);
+        string script = ExtractHostScript(html);
+
+        StringAssert.Contains(html, "class=\"text-editor-layer\"");
+        StringAssert.Contains(html, ".text-editor-input:focus-visible");
+        StringAssert.Contains(html, "@media (forced-colors: active)");
+        StringAssert.Contains(script, "document.createElement('input')");
+        StringAssert.Contains(script, "input.type = 'text'");
+        StringAssert.Contains(script, "input.maxLength = 1024");
+        StringAssert.Contains(script, "input.value = message.value");
+        StringAssert.Contains(script, "Edit selected SVG text content");
+        StringAssert.Contains(script, "input.focus({ preventScroll: true })");
+        StringAssert.Contains(script, "input.select()");
+        StringAssert.Contains(script, "compositionstart");
+        StringAssert.Contains(script, "compositionend");
+        StringAssert.Contains(script, "!event.isComposing");
+        StringAssert.Contains(script, "activeTextEditor.composing");
+        StringAssert.Contains(script, "submit('commit', true)");
+        StringAssert.Contains(script, "submit('cancel', true)");
+        StringAssert.Contains(script, "activeTextEditor.composing ? 'cancel' : 'commit'");
+        StringAssert.Contains(script, "if (activeTextEditor !== null) {");
+        StringAssert.Contains(script, "event.preventDefault()");
+        StringAssert.Contains(script, "activeTextEditor.submitted");
+        StringAssert.Contains(script, "message.type === 'textEditState'");
+        StringAssert.Contains(script, "Object.keys(message).length === 8");
+        StringAssert.Contains(script, "Object.keys(message).length === 6");
+        StringAssert.Contains(script, "message.sourceRevision === sourceRevision");
+        StringAssert.Contains(script, "activeTextEditor.sessionId === message.sessionId");
+        Assert.IsFalse(script.Contains("innerHTML", StringComparison.Ordinal));
+        Assert.IsFalse(script.Contains("contentEditable", StringComparison.Ordinal));
+        Assert.IsFalse(script.Contains("image.contentDocument", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     public void Build_PreviewFocusIsSubtleKeyboardOnlyAndHighContrastAware()
     {
         string html = _builder.Build(

@@ -28,6 +28,8 @@ public partial class MainWindow
         _installedFontGlyphCoverageService = new();
     private readonly SvgTextDirectionAdvisoryService
         _svgTextDirectionAdvisoryService = new();
+    private readonly SvgDirectTextContentEditService
+        _svgDirectTextContentEditService = new();
     private readonly SvgLayerOrderService _svgLayerOrderService = new();
     private readonly SvgLayerVisibilityService _svgLayerVisibilityService = new();
     private readonly SvgOpacityService _svgOpacityService = new();
@@ -343,6 +345,14 @@ public partial class MainWindow
             return;
         }
 
+        if (e.OriginalSource is DependencyObject controlSource
+            && FindVisualAncestor<ButtonBase>(controlSource) is not null)
+        {
+            // Tab deliberately enters row controls; their activation keys belong
+            // to the focused visibility/lock/disclosure control, not the row.
+            return;
+        }
+
         if (key == Key.F2 && Keyboard.Modifiers == ModifierKeys.None)
         {
             BeginSelectedLayerRename();
@@ -594,6 +604,7 @@ public partial class MainWindow
 
         CancelOpacitySliderGesture();
         CancelVisualEditGesture();
+        ClosePreviewTextEditSession(restorePreviewFocus: false);
         if (_viewModel.Inspector.ToggleLayerLock(layer))
         {
             ShowVisualSelection();
@@ -2434,6 +2445,42 @@ public partial class MainWindow
         }
     }
 
+    private void OnInspectorTextContentLostKeyboardFocus(
+        object sender,
+        KeyboardFocusChangedEventArgs e)
+    {
+        if (!_isInspectorTextCompositionActive
+            && sender is FrameworkElement
+            {
+                Tag: SvgTextContentViewModel textContent
+            })
+        {
+            _ = ApplyInspectorTextContent(textContent);
+        }
+    }
+
+    private void OnInspectorTextContentKeyDown(object sender, KeyEventArgs e)
+    {
+        if (sender is not FrameworkElement
+            {
+                Tag: SvgTextContentViewModel textContent
+            })
+        {
+            return;
+        }
+
+        if (e.Key == Key.Enter && !_isInspectorTextCompositionActive)
+        {
+            _ = ApplyInspectorTextContent(textContent);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape)
+        {
+            textContent.Revert();
+            e.Handled = true;
+        }
+    }
+
     private void OnInspectorPropertyKeyDown(object sender, KeyEventArgs e)
     {
         if (sender is not FrameworkElement { Tag: SvgPropertyViewModel property })
@@ -2467,6 +2514,8 @@ public partial class MainWindow
         {
             SvgPropertyViewModel property => property.HasUncommittedValue,
             SvgOpacityViewModel opacity => opacity.HasUncommittedValue,
+            SvgTextContentViewModel textContent =>
+                textContent.HasUncommittedValue,
             _ => false
         };
         bool hasLocalRedo = Keyboard.FocusedElement is TextBoxBase
@@ -2507,7 +2556,9 @@ public partial class MainWindow
         {
             if (current is FrameworkElement
                 {
-                    Tag: SvgPropertyViewModel or SvgOpacityViewModel
+                    Tag: SvgPropertyViewModel
+                        or SvgOpacityViewModel
+                        or SvgTextContentViewModel
                 } tagged)
             {
                 return tagged.Tag;
@@ -2659,6 +2710,88 @@ public partial class MainWindow
         SvgDocumentIndexResult rebuilt =
             _documentIndexService.Build(SourceEditor.Text);
         ApplyDocumentInspectorResult(rebuilt, preferredSelection);
+        return true;
+    }
+
+    private bool ApplyInspectorTextContent(
+        SvgTextContentViewModel textContent)
+    {
+        if (!textContent.IsEnabled)
+        {
+            return false;
+        }
+        if (!textContent.HasUncommittedValue)
+        {
+            textContent.ErrorMessage = string.Empty;
+            return true;
+        }
+        if (textContent.WasCurrentValueAlreadyAttempted)
+        {
+            return false;
+        }
+        textContent.MarkCommitAttempt();
+
+        long expectedRevision = _inspectorSourceRevision;
+        SvgDocumentIndex? document = _viewModel.Inspector.DocumentIndex;
+        if (!_inspectorSourceGuard.CanUseIndex(
+                _isInspectorIndexCurrent,
+                expectedRevision,
+                _sourceRevisionTracker.Current,
+                isEditorTextCompositionActive: false)
+            || document is null
+            || _viewModel.Inspector.SelectedElement?.Element.Identity
+                != textContent.Element.Identity)
+        {
+            textContent.ErrorMessage =
+                "The source or selection changed; select the text again.";
+            return false;
+        }
+        if (_viewModel.Inspector.IsElementEffectivelyLocked(
+                textContent.Element))
+        {
+            textContent.ErrorMessage =
+                "Unlock this layer or its parent group to edit text content.";
+            return false;
+        }
+
+        string sourceSnapshot = SourceEditor.Text;
+        SvgAttributeEditResult result = _svgDirectTextContentEditService
+            .CreateEdit(
+                sourceSnapshot,
+                document,
+                textContent.Element,
+                textContent.Value);
+        if (!result.IsSuccess)
+        {
+            textContent.ErrorMessage = result.ErrorMessage
+                ?? "The text content could not be edited safely.";
+            return false;
+        }
+        if (result.Edit is null)
+        {
+            textContent.MarkApplied();
+            return true;
+        }
+        if (!_sourceRevisionTracker.IsCurrent(expectedRevision)
+            || !SourceEditor.Text.Equals(sourceSnapshot, StringComparison.Ordinal))
+        {
+            textContent.ErrorMessage =
+                "The source changed; select the text again.";
+            return false;
+        }
+
+        SvgElementIdentity identity = textContent.Element.Identity;
+        ApplyDocumentEditWithSelection(
+            result.Edit,
+            sourceSnapshot,
+            [identity],
+            identity,
+            changeOrigin: SourceChangeOrigin.InspectorProperty);
+        textContent.MarkApplied();
+        SvgDocumentIndexResult rebuilt =
+            _documentIndexService.Build(SourceEditor.Text);
+        ApplyDocumentInspectorResult(rebuilt, identity);
+        _viewModel.SetOperationStatus("Text content updated");
         return true;
     }
 

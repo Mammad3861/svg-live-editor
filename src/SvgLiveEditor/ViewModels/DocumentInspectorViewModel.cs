@@ -27,7 +27,10 @@ public sealed class DocumentInspectorViewModel : ObservableObject
     private IReadOnlyList<string> _fontFamilySuggestions = [];
     private readonly SvgOpacityService _opacityService = new();
     private readonly SvgLayerOrderService _layerOrderService = new();
+    private readonly SvgDirectTextContentEditService
+        _directTextContentEditService = new();
     private SvgOpacityViewModel? _opacity;
+    private SvgTextContentViewModel? _textContent;
     private string? _source;
     private SvgLayerPositionInfo? _layerPosition;
     private SvgVisualDocument? _visualDocument;
@@ -58,6 +61,20 @@ public sealed class DocumentInspectorViewModel : ObservableObject
     }
 
     public bool HasOpacityControl => Opacity is not null;
+
+    public SvgTextContentViewModel? TextContent
+    {
+        get => _textContent;
+        private set
+        {
+            if (SetProperty(ref _textContent, value))
+            {
+                OnPropertyChanged(nameof(HasTextContentControl));
+            }
+        }
+    }
+
+    public bool HasTextContentControl => TextContent is not null;
 
     public SvgLayerPositionInfo? LayerPosition
     {
@@ -178,6 +195,7 @@ public sealed class DocumentInspectorViewModel : ObservableObject
         Roots.Clear();
         LayerRoots.Clear();
         Properties.Clear();
+        TextContent = null;
         _elementsByPath.Clear();
         _layersByPath.Clear();
 
@@ -212,6 +230,7 @@ public sealed class DocumentInspectorViewModel : ObservableObject
         _selectedElement = null;
         _selectedLayer = null;
         Opacity = null;
+        TextContent = null;
         LayerPosition = null;
         HasIndex = false;
         HasSelection = false;
@@ -390,6 +409,7 @@ public sealed class DocumentInspectorViewModel : ObservableObject
         _selectedLayer = layer;
         Properties.Clear();
         Opacity = null;
+        TextContent = null;
         LayerPosition = null;
         SelectionAdvisory = string.Empty;
 
@@ -457,6 +477,20 @@ public sealed class DocumentInspectorViewModel : ObservableObject
                 element.Element,
                 _source);
             bool isLocked = IsElementEffectivelyLocked(element.Element);
+            if (element.Element.Name.Equals("text", StringComparison.Ordinal)
+                && _source is not null
+                && _documentIndex is not null)
+            {
+                SvgDirectTextAnalysis textAnalysis =
+                    _directTextContentEditService.Analyze(
+                        _source,
+                        _documentIndex,
+                        element.Element);
+                TextContent = new SvgTextContentViewModel(
+                    element.Element,
+                    textAnalysis,
+                    isLocked);
+            }
             if (opacityState.IsVisible && isLocked)
             {
                 opacityState = opacityState with

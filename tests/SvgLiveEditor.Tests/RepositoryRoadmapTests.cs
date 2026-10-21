@@ -20,6 +20,7 @@ public sealed class RepositoryRoadmapTests
                      "v0.9.0",
                      "v0.10.0",
                      "v0.11.0",
+                     "v0.12.0",
                      "v1.0.0"
                  })
         {
@@ -67,6 +68,14 @@ public sealed class RepositoryRoadmapTests
             "caret-only inspection cannot create feedback edits or steal focus",
             "exact invalid source and the last valid Preview",
             "bounded multi-selection primary to Source and Properties",
+            "v0.12.0 — Preview text editing and consistent resize handles",
+            "eligible direct simple `<text>` content from Live Preview",
+            "same exact text-content edit in Properties",
+            "one exact XML-escaped source replacement and one Undo unit",
+            "navigation token, source revision, opaque single selection",
+            "one uniform single-selection text resize handle",
+            "Disable object snapping for fresh user profiles",
+            "nested `tspan`/`textPath`",
             "v1.0.0 — Stable Release / stabilization",
             "Reliability and data-loss review",
             "Persistence and recovery validation",
@@ -139,6 +148,14 @@ public sealed class RepositoryRoadmapTests
             "بررسی مکان‌نما ویرایش بازگشتی نسازد و فوکوس را نگیرد",
             "کد نامعتبر دقیق و آخرین Preview معتبر",
             "مورد اصلی انتخاب چندگانهٔ محدود در Source و Properties",
+            "v0.12.0 — ویرایش متن در نمایش و دستگیره‌های هماهنگ تغییر اندازه",
+            "متن ساده و مستقیم (`<text>`) از نمایش زنده (`Live Preview`)",
+            "همان ویرایش دقیق محتوای متن در بخش ویژگی‌ها (`Properties`)",
+            "یک جایگزینی دقیق و XML-safe و یک مرحله `Undo`",
+            "توکن ناوبری، نسخهٔ کد اصلی، انتخاب تکی و ناشناس فعلی",
+            "یک دستگیرهٔ یکنواخت برای تغییر اندازهٔ متن تک‌انتخابی",
+            "خاموش بودن چسبیدن به اشیا (`Snap`) برای پروفایل تازه",
+            "`tspan`/`textPath` تودرتو",
             "v1.0.0 — انتشار پایدار / پایدارسازی",
             "خطر از دست رفتن داده",
             "اعتبارسنجی ماندگاری و بازیابی",
@@ -193,8 +210,7 @@ public sealed class RepositoryRoadmapTests
         AssertSemanticContract(
             normalizedEnglish,
             "English v0.10.0 Stage 1 bounded selection",
-            "v0.10.0 Stage 1 behavior",
-            "Stage 1",
+            "v0.10 bounded multi-selection/layout scope",
             "bounded multi-selection",
             "128");
         AssertSemanticContract(
@@ -249,12 +265,23 @@ public sealed class RepositoryRoadmapTests
         AssertSemanticContract(
             normalizedEnglish,
             "English v0.11.0 source synchronization foundation",
-            "Version 0.11.0",
+            "v0.11 synchronization foundation",
             "revision-bound",
             "explicit Source, Properties, visual-command, Undo/Redo, and document-load origins",
             "Caret-only Source synchronization",
             "invalid XML",
             "primary selection");
+        AssertSemanticContract(
+            normalizedEnglish,
+            "English v0.12.0 Preview text editing",
+            "Version 0.12.0",
+            "direct simple <text>",
+            "double-click",
+            "Text content",
+            "one exact escaped source replacement",
+            "navigation token",
+            "uniform corner handle",
+            "fresh user profile");
 
         AssertSemanticContract(
             normalizedPersian,
@@ -327,6 +354,17 @@ public sealed class RepositoryRoadmapTests
             "تاریخچهٔ Undo",
             "متن تایپ‌شده و آخرین نمایش معتبر",
             "انتخاب اصلی");
+        AssertSemanticContract(
+            normalizedPersian,
+            "Persian v0.12.0 Preview text editing",
+            "نسخهٔ 0.12.0",
+            "متن ساده و مستقیم",
+            "دوبار کلیک",
+            "فیلد جدا برای محتوای کامل متن",
+            "XML-safe",
+            "توکن ناوبری",
+            "دستگیرهٔ یکنواخت",
+            "پروفایل تازه");
 
         StringAssert.Contains(security, "Layers and groups boundary");
         StringAssert.Contains(

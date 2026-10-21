@@ -30,6 +30,11 @@ public sealed class SvgVisualResizeHandleService
         SvgResizeHandle.End
     ];
 
+    private static readonly SvgResizeHandle[] TextHandles =
+    [
+        SvgResizeHandle.Uniform
+    ];
+
     public IReadOnlyList<SvgResizeHandleDefinition> Create(
         SvgVisualElement element,
         SvgVisualShapeGeometry? geometry = null)
@@ -45,7 +50,7 @@ public sealed class SvgVisualResizeHandleService
         return HandlesFor(element.Kind)
             .Select(handle => new SvgResizeHandleDefinition(
                 handle,
-                GetPoint(shape, handle)))
+                GetPoint(shape, handle, element.TextMeasurement)))
             .ToArray();
     }
 
@@ -73,6 +78,7 @@ public sealed class SvgVisualResizeHandleService
         SvgResizeHandle.Left => "left",
         SvgResizeHandle.Start => "start",
         SvgResizeHandle.End => "end",
+        SvgResizeHandle.Uniform => "uniform",
         _ => throw new ArgumentOutOfRangeException(nameof(handle))
     };
 
@@ -92,11 +98,12 @@ public sealed class SvgVisualResizeHandleService
             "left" => SvgResizeHandle.Left,
             "start" => SvgResizeHandle.Start,
             "end" => SvgResizeHandle.End,
+            "uniform" => SvgResizeHandle.Uniform,
             _ => default
         };
         return value is "top-left" or "top" or "top-right" or "right"
             or "bottom-right" or "bottom" or "bottom-left" or "left"
-            or "start" or "end";
+            or "start" or "end" or "uniform";
     }
 
     private static IReadOnlyList<SvgResizeHandle> HandlesFor(
@@ -106,12 +113,14 @@ public sealed class SvgVisualResizeHandleService
             BoxHandles,
         SvgVisualElementKind.Circle => CircleHandles,
         SvgVisualElementKind.Line => LineHandles,
+        SvgVisualElementKind.Text => TextHandles,
         _ => []
     };
 
     private static SvgVisualPoint GetPoint(
         SvgVisualShapeGeometry geometry,
-        SvgResizeHandle handle)
+        SvgResizeHandle handle,
+        SvgVisualTextMeasurementSpec? textMeasurement)
     {
         SvgVisualBounds bounds = geometry.Bounds;
         double centerX = (bounds.Left + bounds.Right) / 2;
@@ -128,7 +137,23 @@ public sealed class SvgVisualResizeHandleService
             SvgResizeHandle.Left => new(bounds.Left, centerY),
             SvgResizeHandle.Start => new(geometry.X1, geometry.Y1),
             SvgResizeHandle.End => new(geometry.X2, geometry.Y2),
+            SvgResizeHandle.Uniform => GetTextSizePoint(
+                geometry.Bounds,
+                textMeasurement),
             _ => throw new ArgumentOutOfRangeException(nameof(handle))
         };
+    }
+
+    private static SvgVisualPoint GetTextSizePoint(
+        SvgVisualBounds bounds,
+        SvgVisualTextMeasurementSpec? measurement)
+    {
+        double anchorX = measurement?.X
+            ?? ((bounds.Left + bounds.Right) / 2);
+        double handleX = Math.Abs(bounds.Left - anchorX)
+            > Math.Abs(bounds.Right - anchorX)
+                ? bounds.Left
+                : bounds.Right;
+        return new SvgVisualPoint(handleX, bounds.Bottom);
     }
 }

@@ -68,7 +68,7 @@ public sealed class UserPreferencesService
                     out JsonElement snapValue)
                 && snapValue.ValueKind is JsonValueKind.True or JsonValueKind.False
                     ? snapValue.GetBoolean()
-                    : true;
+                    : false;
             return new UserPreferences(wordWrap, ReadPreviewZoom(root))
             {
                 AutoSaveEnabled = autoSaveEnabled,

@@ -315,6 +315,7 @@ public partial class MainWindow : Window
         if (_isPreviewNavigationRequested)
         {
             ClosePreviewContextMenu();
+            ClosePreviewTextEditSession(restorePreviewFocus: false);
             CancelVisualEditGesture();
             _previewDirectDragHandshake.Reset();
             CancelPendingPreviewPngRequest(
@@ -2082,6 +2083,10 @@ public partial class MainWindow : Window
         // The event origin is therefore stronger evidence than
         // IsKeyboardFocusWithin, which remains false for this real route.
         _isPreviewControllerKeyboardFocused = true;
+        if (_previewTextEditSession is not null)
+        {
+            return;
+        }
         Key pressedKey = e.Key == Key.System ? e.SystemKey : e.Key;
         ModifierKeys modifiers = GetPreviewAcceleratorModifiers(
             Keyboard.Modifiers);
@@ -2291,6 +2296,10 @@ public partial class MainWindow : Window
         bool previewKeyRoute = ReferenceEquals(
             e.OriginalSource,
             PreviewWebView);
+        if (previewKeyRoute && _previewTextEditSession is not null)
+        {
+            return;
+        }
         ModifierKeys modifiers = previewKeyRoute
             ? GetPreviewAcceleratorModifiers(Keyboard.Modifiers)
             : Keyboard.Modifiers;
