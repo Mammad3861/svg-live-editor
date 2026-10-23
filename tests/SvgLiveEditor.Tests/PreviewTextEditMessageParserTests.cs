@@ -40,6 +40,29 @@ public sealed class PreviewTextEditMessageParserTests
     }
 
     [TestMethod]
+    [DataRow(@"\uD800")]
+    [DataRow(@"\uDC00")]
+    public void IsolatedSurrogateEscapesFailClosed(string escapedValue)
+    {
+        // Keep the JSON escapes raw so no serializer replaces malformed Unicode.
+        string json =
+            $$"""{"type":"textEdit","token":"{{Token}}","sourceRevision":7,"action":"commit","selectionId":"{{SelectionId}}","sessionId":"{{SessionId}}","restorePreviewFocus":false,"value":"{{escapedValue}}"}""";
+
+        Assert.IsFalse(_parser.TryParse(json, Token, 7, out PreviewTextEditMessage message));
+        Assert.IsNull(message);
+    }
+
+    [TestMethod]
+    public void ValidSurrogatePairEscapesPreserveExactUnicode()
+    {
+        string json =
+            $$"""{"type":"textEdit","token":"{{Token}}","sourceRevision":7,"action":"commit","selectionId":"{{SelectionId}}","sessionId":"{{SessionId}}","restorePreviewFocus":false,"value":"سلام \uD83D\uDE00"}""";
+
+        Assert.IsTrue(_parser.TryParse(json, Token, 7, out PreviewTextEditMessage message));
+        Assert.AreEqual("سلام 😀", message.Value);
+    }
+
+    [TestMethod]
     public void StaleTokenRevisionIdentitySchemaAndPayloadFailClosed()
     {
         string valid =

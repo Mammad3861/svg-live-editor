@@ -128,8 +128,16 @@ public sealed class PreviewTextEditMessageParser
         {
             return false;
         }
-        value = property.GetString() ?? string.Empty;
-        return true;
+        try
+        {
+            value = property.GetString() ?? string.Empty;
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            // Malformed surrogate escapes fail when the JSON string is decoded.
+            return false;
+        }
     }
 
     private static bool TryReadBoolean(
