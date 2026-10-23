@@ -181,6 +181,53 @@ public sealed class PreviewPageMessageBuilder
         });
     }
 
+    public string BuildTextEditCommitMessage(
+        string bridgeToken,
+        long sourceRevision,
+        string sessionId)
+    {
+        ValidateBridgeToken(bridgeToken);
+        ValidateHexToken(sessionId, nameof(sessionId));
+        if (sourceRevision is < 0 or > MaximumJavaScriptSafeInteger)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sourceRevision));
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            type = "textEditState",
+            token = bridgeToken,
+            sourceRevision,
+            action = "commit",
+            sessionId
+        });
+    }
+
+    public string BuildTextEditResumeMessage(
+        string bridgeToken,
+        long sourceRevision,
+        string sessionId,
+        string nextSessionId)
+    {
+        ValidateBridgeToken(bridgeToken);
+        ValidateHexToken(sessionId, nameof(sessionId));
+        ValidateHexToken(nextSessionId, nameof(nextSessionId));
+        if (sourceRevision is < 0 or > MaximumJavaScriptSafeInteger)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sourceRevision));
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            type = "textEditState",
+            token = bridgeToken,
+            sourceRevision,
+            action = "resume",
+            sessionId,
+            nextSessionId
+        });
+    }
+
     public string BuildTextEditCloseMessage(
         string bridgeToken,
         long sourceRevision,

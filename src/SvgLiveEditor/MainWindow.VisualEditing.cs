@@ -57,6 +57,7 @@ public partial class MainWindow
     private PendingPreviewTextMeasurement?
         _pendingPreviewTextMeasurement;
     private PreviewTextEditSession? _previewTextEditSession;
+    private TaskCompletionSource<bool>? _pendingPreviewTextEditCommit;
     private PendingSelectionRestore? _pendingSelectionRestore;
     private PendingSourceNavigationIntent? _pendingSourceNavigationIntent;
     private long _selectionIntentGeneration;
@@ -269,17 +270,20 @@ public partial class MainWindow
             return;
         }
 
+        if (result.Edit is not null
+            && (!_sourceRevisionTracker.IsCurrent(session.SourceRevision)
+                || !SourceEditor.Text.Equals(sourceSnapshot, StringComparison.Ordinal)))
+        {
+            ClosePreviewTextEditSession(restorePreviewFocus);
+            _viewModel.SetOperationStatus(
+                "The source changed; text was not edited.");
+            return;
+        }
+        _pendingPreviewTextEditCommit?.TrySetResult(true);
         ClosePreviewTextEditSession(restorePreviewFocus);
         if (result.Edit is null)
         {
             _viewModel.SetOperationStatus("Text content unchanged");
-            return;
-        }
-        if (!_sourceRevisionTracker.IsCurrent(session.SourceRevision)
-            || !SourceEditor.Text.Equals(sourceSnapshot, StringComparison.Ordinal))
-        {
-            _viewModel.SetOperationStatus(
-                "The source changed; text was not edited.");
             return;
         }
 
@@ -331,8 +335,54 @@ public partial class MainWindow
         }
     }
 
+    private async Task<bool> CommitPendingPreviewTextEditForCloseAsync()
+    {
+        if (_previewTextEditSession is not PreviewTextEditSession session
+            || !_isWebViewReady
+            || _activePreviewBridgeToken is not string token
+            || PreviewWebView.CoreWebView2 is not CoreWebView2 core)
+        {
+            return false;
+        }
+
+        TaskCompletionSource<bool> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        _pendingPreviewTextEditCommit = completion;
+        try
+        {
+            core.PostWebMessageAsJson(_previewPageMessageBuilder.BuildTextEditCommitMessage(
+                token, session.SourceRevision, session.SessionId));
+            return await completion.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (Exception exception) when (exception is TimeoutException or InvalidOperationException)
+        {
+            if (exception is TimeoutException && _previewTextEditSession == session)
+            {
+                // Expire the unanswered submission without losing the page-owned value.
+                // Replies from the previous session cannot satisfy a later close attempt.
+                PreviewTextEditSession resumed = session with { SessionId = Guid.NewGuid().ToString("N") };
+                _previewTextEditSession = resumed;
+                try
+                {
+                    core.PostWebMessageAsJson(_previewPageMessageBuilder.BuildTextEditResumeMessage(
+                        token, session.SourceRevision, session.SessionId, resumed.SessionId));
+                }
+                catch (InvalidOperationException)
+                {
+                    // A navigation/disposal race leaves closing canceled.
+                }
+            }
+            _viewModel.SetOperationStatus("Finish or cancel the Preview text edit before closing.");
+            return false;
+        }
+        finally
+        {
+            _pendingPreviewTextEditCommit = null;
+        }
+    }
+
     private void ClosePreviewTextEditSession(bool restorePreviewFocus = false)
     {
+        _pendingPreviewTextEditCommit?.TrySetResult(false);
         PreviewTextEditSession? session = _previewTextEditSession;
         _previewTextEditSession = null;
         if (session is null

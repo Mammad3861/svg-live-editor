@@ -12,6 +12,37 @@ public sealed class PreviewTextEditPageMessageTests
     private readonly PreviewPageMessageBuilder _builder = new();
 
     [TestMethod]
+    public void CloseCommitRequestUsesOnlyBoundedSessionState()
+    {
+        using JsonDocument message = JsonDocument.Parse(
+            _builder.BuildTextEditCommitMessage(Token, 9, SessionId));
+        JsonElement root = message.RootElement;
+        Assert.AreEqual(5, root.EnumerateObject().Count());
+        Assert.AreEqual("textEditState", root.GetProperty("type").GetString());
+        Assert.AreEqual("commit", root.GetProperty("action").GetString());
+        Assert.AreEqual(Token, root.GetProperty("token").GetString());
+        Assert.AreEqual(9, root.GetProperty("sourceRevision").GetInt64());
+        Assert.AreEqual(SessionId, root.GetProperty("sessionId").GetString());
+        using JsonDocument resume = JsonDocument.Parse(
+            _builder.BuildTextEditResumeMessage(Token, 9, SessionId, SelectionId));
+        JsonElement resumed = resume.RootElement;
+        Assert.AreEqual(6, resumed.EnumerateObject().Count());
+        Assert.AreEqual("textEditState", resumed.GetProperty("type").GetString());
+        Assert.AreEqual("resume", resumed.GetProperty("action").GetString());
+        Assert.AreEqual(Token, resumed.GetProperty("token").GetString());
+        Assert.AreEqual(9, resumed.GetProperty("sourceRevision").GetInt64());
+        Assert.AreEqual(SessionId, resumed.GetProperty("sessionId").GetString());
+        Assert.AreEqual(SelectionId, resumed.GetProperty("nextSessionId").GetString());
+        Assert.Throws<ArgumentException>(() => _builder.BuildTextEditResumeMessage("bad", 9, SessionId, SelectionId));
+        Assert.Throws<ArgumentException>(() => _builder.BuildTextEditResumeMessage(Token, 9, "bad", SelectionId));
+        Assert.Throws<ArgumentException>(() => _builder.BuildTextEditResumeMessage(Token, 9, SessionId, "bad"));
+        Assert.Throws<ArgumentOutOfRangeException>(() => _builder.BuildTextEditResumeMessage(Token, -1, SessionId, SelectionId));
+        Assert.Throws<ArgumentException>(() => _builder.BuildTextEditCommitMessage("bad", 9, SessionId));
+        Assert.Throws<ArgumentException>(() => _builder.BuildTextEditCommitMessage(Token, 9, "bad"));
+        Assert.Throws<ArgumentOutOfRangeException>(() => _builder.BuildTextEditCommitMessage(Token, -1, SessionId));
+    }
+
+    [TestMethod]
     public void OpenAndCloseUseExactBoundedHostSchemas()
     {
         using JsonDocument open = JsonDocument.Parse(

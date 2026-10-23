@@ -1757,8 +1757,42 @@ public partial class MainWindow : Window
         return canProceed;
     }
 
-    private void OnWindowClosing(object? sender, CancelEventArgs e)
+    private bool _isPreparingTextEditClose;
+
+    private async void OnWindowClosing(object? sender, CancelEventArgs e)
     {
+        if (_isPreparingTextEditClose)
+        {
+            e.Cancel = true;
+            return;
+        }
+        if (_previewTextEditSession is not null)
+        {
+            // The page owns the pending plain-text value. Keep the window alive
+            // until its normal, session-bound commit has reached Source.
+            e.Cancel = true;
+            _isPreparingTextEditClose = true;
+            try
+            {
+                if (!await CommitPendingPreviewTextEditForCloseAsync())
+                {
+                    return;
+                }
+                await Dispatcher.Yield(DispatcherPriority.Background);
+            }
+            finally
+            {
+                _isPreparingTextEditClose = false;
+            }
+            Close();
+            return;
+        }
+        if (_viewModel.Inspector.TextContent is { HasUncommittedValue: true } textContent
+            && (_isInspectorTextCompositionActive || !ApplyInspectorTextContent(textContent)))
+        {
+            e.Cancel = true;
+            return;
+        }
         if (!ConfirmCanLeaveCurrentDocument())
         {
             e.Cancel = true;
