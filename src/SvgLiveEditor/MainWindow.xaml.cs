@@ -1595,17 +1595,13 @@ public partial class MainWindow : Window
         RegisterSourceNavigationIntent();
     }
 
-    private void OnNewClick(object sender, RoutedEventArgs e)
+    private async void OnNewClick(object sender, RoutedEventArgs e)
     {
-        if (!ConfirmCanLeaveCurrentDocument())
-        {
-            return;
-        }
-
-        LoadIntoEditor(_welcomeSvgProvider.Load(), path: null);
+        await TryReplaceCurrentDocumentAsync(() =>
+            LoadIntoEditor(_welcomeSvgProvider.Load(), path: null));
     }
 
-    private void OnOpenClick(object sender, RoutedEventArgs e)
+    private async void OnOpenClick(object sender, RoutedEventArgs e)
     {
         OpenFileDialog dialog = new()
         {
@@ -1615,9 +1611,9 @@ public partial class MainWindow : Window
             Multiselect = false
         };
 
-        if (dialog.ShowDialog(this) == true && ConfirmCanLeaveCurrentDocument())
+        if (dialog.ShowDialog(this) == true)
         {
-            OpenDocument(dialog.FileName);
+            await TryReplaceCurrentDocumentAsync(() => OpenDocument(dialog.FileName));
         }
     }
 
@@ -1721,6 +1717,41 @@ public partial class MainWindow : Window
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
             return false;
+        }
+    }
+
+    private async Task<bool> TryReplaceCurrentDocumentAsync(Action replaceDocument)
+    {
+        if (_isPreparingTextEditClose)
+        {
+            return false;
+        }
+
+        // Reuse the close guard and commit/resume protocol so another replacement
+        // or window close cannot race the pending text and save decision.
+        _isPreparingTextEditClose = true;
+        try
+        {
+            if (_previewTextEditSession is not null
+                && !await CommitPendingPreviewTextEditForCloseAsync())
+            {
+                return false;
+            }
+            if (_viewModel.Inspector.TextContent is { HasUncommittedValue: true } textContent
+                && (_isInspectorTextCompositionActive || !ApplyInspectorTextContent(textContent)))
+            {
+                return false;
+            }
+            if (!ConfirmCanLeaveCurrentDocument())
+            {
+                return false;
+            }
+            replaceDocument();
+            return true;
+        }
+        finally
+        {
+            _isPreparingTextEditClose = false;
         }
     }
 
@@ -2716,7 +2747,7 @@ public partial class MainWindow : Window
                 FileDropOverlayEvent.DragLeftWindow));
     }
 
-    private void OnWindowDrop(object sender, DragEventArgs e)
+    private async void OnWindowDrop(object sender, DragEventArgs e)
     {
         if (e.Data.GetDataPresent(LayerDragDataFormat))
         {
@@ -2741,27 +2772,27 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!ConfirmCanLeaveCurrentDocument())
+        if (!await TryReplaceCurrentDocumentAsync(() =>
+        {
+            InboundFileDropEvaluation finalEvaluation =
+                _inboundFileDropPolicy.Evaluate([path]);
+            if (!finalEvaluation.IsAccepted
+                || finalEvaluation.FullPath is not string finalPath)
+            {
+                _viewModel.SetOperationStatus(
+                    finalEvaluation.StatusMessage);
+                return;
+            }
+
+            OpenDocument(finalPath);
+        }))
         {
             ApplyFileDropOverlay(
                 _fileDropOverlayState.Transition(
                     FileDropOverlayEvent.Cancelled));
             _viewModel.SetOperationStatus(
                 "File drop cancelled; the current document was not changed.");
-            return;
         }
-
-        InboundFileDropEvaluation finalEvaluation =
-            _inboundFileDropPolicy.Evaluate([path]);
-        if (!finalEvaluation.IsAccepted
-            || finalEvaluation.FullPath is not string finalPath)
-        {
-            _viewModel.SetOperationStatus(
-                finalEvaluation.StatusMessage);
-            return;
-        }
-
-        OpenDocument(finalPath);
     }
 
     private void OnWindowQueryContinueDrag(

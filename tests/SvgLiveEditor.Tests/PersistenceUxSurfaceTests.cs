@@ -164,6 +164,42 @@ public sealed class PersistenceUxSurfaceTests
             "autoSaveEligible: true");
     }
 
+    [TestMethod]
+    public void ReplacementRoutesPrepareTextWithoutChangingChooserOrDropOrdering()
+    {
+        string main = ReadUi("MainWindow.xaml.cs");
+        string persistence = ReadUi("MainWindow.Persistence.cs");
+        static string Handler(string source, string name)
+        {
+            int start = source.IndexOf($" {name}(", StringComparison.Ordinal);
+            Assert.IsTrue(start >= 0);
+            int end = source.IndexOf("\n    private ", start, StringComparison.Ordinal);
+            Assert.IsTrue(end > start);
+            return source[start..end];
+        }
+        const string prepare = "await TryReplaceCurrentDocumentAsync(";
+        string create = Handler(main, "OnNewClick");
+        string open = Handler(main, "OnOpenClick");
+        string drop = Handler(main, "OnWindowDrop");
+        string template = Handler(persistence, "OnNewFromTemplateClick");
+        foreach (string handler in new[] { create, open, drop, template })
+            StringAssert.Contains(handler, prepare);
+        Assert.IsTrue(create.IndexOf(prepare, StringComparison.Ordinal)
+            < create.IndexOf("LoadIntoEditor(", StringComparison.Ordinal));
+        Assert.IsTrue(open.IndexOf("dialog.ShowDialog(this)", StringComparison.Ordinal)
+            < open.IndexOf(prepare, StringComparison.Ordinal));
+        Assert.IsTrue(template.IndexOf("dialog.ShowDialog()", StringComparison.Ordinal)
+            < template.IndexOf(prepare, StringComparison.Ordinal));
+        Assert.IsTrue(template.IndexOf(prepare, StringComparison.Ordinal)
+            < template.IndexOf("LoadIntoEditor(", StringComparison.Ordinal));
+        Assert.IsTrue(drop.IndexOf("_inboundFileDropPolicy.Evaluate(e.Data)", StringComparison.Ordinal)
+            < drop.IndexOf(prepare, StringComparison.Ordinal));
+        Assert.IsTrue(drop.IndexOf(prepare, StringComparison.Ordinal)
+            < drop.IndexOf("_inboundFileDropPolicy.Evaluate([path])", StringComparison.Ordinal));
+        Assert.IsTrue(drop.IndexOf("_inboundFileDropPolicy.Evaluate([path])", StringComparison.Ordinal)
+            < drop.IndexOf("OpenDocument(finalPath)", StringComparison.Ordinal));
+    }
+
     private static string ReadUi(string fileName)
     {
         return File.ReadAllText(

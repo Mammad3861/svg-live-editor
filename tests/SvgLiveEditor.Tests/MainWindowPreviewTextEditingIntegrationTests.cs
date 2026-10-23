@@ -63,8 +63,35 @@ public sealed class MainWindowPreviewTextEditingIntegrationTests
     public Task RepeatedPreviewCloseHasOneDecisionAndRejectsInvalidatedReply() =>
         PendingTextCloseHonorsTheUnsavedDecision("preview", "repeated");
 
+    [TestMethod]
+    [TestCategory("DesktopIntegration")]
+    [DataRow("preview", "cancel", "new")]
+    [DataRow("properties", "cancel", "new")]
+    [DataRow("preview", "save", "new")]
+    [DataRow("properties", "discard", "new")]
+    [DataRow("properties", "save-as-cancel", "new")]
+    [DataRow("properties", "save-failure", "new")]
+    [DataRow("preview", "timeout", "new")]
+    [DataRow("preview", "chooser-cancel", "open")]
+    [DataRow("properties", "chooser-cancel", "template")]
+    public async Task PendingTextReplacementHonorsTheDecision(string editor, string decision, string command)
+    {
+        TaskCompletionSource<bool> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        Thread thread = new(() =>
+        {
+            SynchronizationContext.SetSynchronizationContext(
+                new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
+            _ = RunPendingTextCloseAsync(completion, editor, decision, command);
+            Dispatcher.Run();
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        Assert.IsTrue(await completion.Task.WaitAsync(TimeSpan.FromSeconds(40)));
+        Assert.IsTrue(thread.Join(TimeSpan.FromSeconds(5)));
+    }
+
     private static async Task RunPendingTextCloseAsync(
-        TaskCompletionSource<bool> completion, string editor, string decision)
+        TaskCompletionSource<bool> completion, string editor, string decision, string command = "close")
     {
         string profile = Path.Combine(Path.GetTempPath(), "SvgLiveEditor.Close.Tests", Guid.NewGuid().ToString("N"));
         string path = Path.Combine(profile, "document.svg");
@@ -112,6 +139,11 @@ public sealed class MainWindowPreviewTextEditingIntegrationTests
             }
             Assert.AreEqual(Fixture, window.SourceEditor.Text, "The candidate must still be pending.");
             Assert.IsFalse(GetViewModel(window).IsModified);
+            if (command != "close")
+            {
+                await VerifyPendingTextReplacementAsync(window, core, path, expected, decision, command);
+                return;
+            }
             if (decision is "timeout" or "repeated")
             {
                 await VerifyDelayedPreviewCloseAsync(window, core, value, expected, decision);
@@ -152,7 +184,7 @@ public sealed class MainWindowPreviewTextEditingIntegrationTests
         catch (Exception exception)
         {
             failure = new InvalidOperationException(
-                $"Close scenario {editor}/{decision}; closed={closed}; "
+                $"Document scenario {command}/{editor}/{decision}; closed={closed}; "
                 + $"status={(window?.DataContext is MainViewModel vm ? vm.OperationStatus : "unavailable")}; "
                 + $"source={window?.SourceEditor.Text}", exception);
         }
@@ -184,6 +216,122 @@ public sealed class MainWindowPreviewTextEditingIntegrationTests
             if (failure is null) completion.TrySetResult(true);
             else completion.TrySetException(failure);
             Dispatcher.CurrentDispatcher.BeginInvokeShutdown(DispatcherPriority.Send);
+        }
+    }
+
+    private static async Task VerifyPendingTextReplacementAsync(
+        MainWindow window, CoreWebView2 core, string path, string expected, string decision, string command)
+    {
+        long session = GetField<long>(window, "_documentSession");
+        string? originalPath = GetViewModel(window).CurrentFilePath;
+        if (decision == "chooser-cancel")
+        {
+            if (command == "open")
+            {
+                nint owner = new WindowInteropHelper(window).Handle;
+                Task chooser = Task.Run(() => RespondToCloseDialogsAsync(owner, "open-cancel", CancellationToken.None));
+                InvokePrivate(window, "OnOpenClick", window, new RoutedEventArgs());
+                await chooser.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            else
+            {
+                DispatcherOperation chooser = window.Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+                {
+                    TemplateGalleryWindow gallery = window.OwnedWindows.OfType<TemplateGalleryWindow>().Single();
+                    gallery.DialogResult = false;
+                }));
+                InvokePrivate(window, "OnNewFromTemplateClick", window, new RoutedEventArgs());
+                await chooser.Task;
+            }
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.AreEqual(session, GetField<long>(window, "_documentSession"));
+            Assert.AreEqual(originalPath, GetViewModel(window).CurrentFilePath);
+            Assert.AreEqual(Fixture, File.ReadAllText(path));
+            if (window.SourceEditor.Text == Fixture)
+            {
+                if (command == "open")
+                    Assert.IsTrue(await ReadScriptBooleanAsync(core,
+                        "document.querySelector('.text-editor-input')?.value === 'Closing <متن> & exact'"));
+                else
+                    Assert.AreEqual("Closing <متن> & exact", GetViewModel(window).Inspector.TextContent!.Value);
+            }
+            else Assert.AreEqual(expected, window.SourceEditor.Text);
+            return;
+        }
+
+        if (decision == "timeout")
+        {
+            await core.ExecuteScriptAsync("""
+                window.closeTestReplies = [];
+                window.closeTestPost = window.chrome.webview.postMessage.bind(window.chrome.webview);
+                window.chrome.webview.postMessage = message => {
+                  if (message.type === 'textEdit' && message.action === 'commit') {
+                    window.closeTestReplies.push(message);
+                  } else {
+                    window.closeTestPost(message);
+                  }
+                };
+                """);
+            InvokePrivate(window, "OnNewClick", window, new RoutedEventArgs());
+            object? pending = GetField<object?>(window, "_pendingPreviewTextEditCommit");
+            Assert.IsNotNull(pending);
+            InvokePrivate(window, "OnNewClick", window, new RoutedEventArgs());
+            window.Close();
+            Assert.AreSame(pending, GetField<object?>(window, "_pendingPreviewTextEditCommit"));
+            await WaitForScriptConditionAsync(core, "window.closeTestReplies.length === 1");
+            await WaitUntilAsync(() => !GetField<bool>(window, "_isPreparingTextEditClose"), "Unanswered New did not time out.");
+            Assert.AreEqual(session, GetField<long>(window, "_documentSession"));
+            Assert.AreEqual(Fixture, window.SourceEditor.Text);
+            Assert.AreEqual(originalPath, GetViewModel(window).CurrentFilePath);
+            Assert.IsTrue(window.IsVisible);
+            await WaitForScriptConditionAsync(core,
+                "document.querySelector('.text-editor-input')?.value === 'Closing <متن> & exact' && !document.querySelector('.text-editor-input').disabled");
+            await SetEditorValueAsync(core, "Replacement <جدید>");
+            InvokePrivate(window, "OnNewClick", window, new RoutedEventArgs());
+            await WaitForScriptConditionAsync(core, "window.closeTestReplies.length === 2");
+            await ReleaseHeldCloseReplyAsync(core, 0);
+            Assert.AreEqual(Fixture, window.SourceEditor.Text);
+            Assert.AreEqual(session, GetField<long>(window, "_documentSession"));
+            Assert.IsTrue(GetField<bool>(window, "_isPreparingTextEditClose"));
+        }
+
+        string? delayedReply = decision == "timeout"
+            ? JsonSerializer.Deserialize<string>(await core.ExecuteScriptAsync("JSON.stringify(window.closeTestReplies[0])"))
+            : null;
+        using CancellationTokenSource stop = new();
+        nint dialogOwner = new WindowInteropHelper(window).Handle;
+        Task dialogs = Task.Run(() => RespondToCloseDialogsAsync(dialogOwner,
+            decision == "timeout" ? "discard" : decision, stop.Token));
+        if (decision == "save-failure") File.SetAttributes(path, FileAttributes.ReadOnly);
+        try
+        {
+            if (decision == "timeout") await ReleaseHeldCloseReplyAsync(core, 1);
+            else InvokePrivate(window, "OnNewClick", window, new RoutedEventArgs());
+            if (decision is "cancel" or "save-as-cancel" or "save-failure")
+                Assert.AreEqual(originalPath, GetViewModel(window).CurrentFilePath,
+                    "New replaced the document before resolving pending text.");
+            await dialogs.WaitAsync(TimeSpan.FromSeconds(10));
+            await WaitUntilAsync(() => !GetField<bool>(window, "_isPreparingTextEditClose"), "New did not finish its decision.");
+            bool replaced = decision is "save" or "discard" or "timeout";
+            string welcome = GetField<WelcomeSvgProvider>(window, "_welcomeSvgProvider").Load();
+            Assert.AreEqual(replaced ? welcome : expected, window.SourceEditor.Text);
+            Assert.AreEqual(replaced ? session + 1 : session, GetField<long>(window, "_documentSession"));
+            Assert.AreEqual(decision == "save" ? expected : Fixture, File.ReadAllText(path));
+            Assert.IsTrue(window.IsVisible);
+            if (delayedReply is not null)
+            {
+                await WaitUntilAsync(() => GetField<long?>(window, "_visiblePreviewSourceRevision") == GetRevision(window),
+                    "The replacement Preview did not become current.");
+                await ReleaseHeldCloseReplyAsync(core, 0, delayedReply);
+                Assert.AreEqual(welcome, window.SourceEditor.Text, "An old reply edited the replacement document.");
+                Assert.AreEqual(session + 1, GetField<long>(window, "_documentSession"));
+            }
+        }
+        finally
+        {
+            stop.Cancel();
+            try { await dialogs; }
+            catch (OperationCanceledException) { }
         }
     }
 
@@ -316,7 +464,7 @@ public sealed class MainWindowPreviewTextEditingIntegrationTests
         Assert.IsFalse(GetField<bool>(window, "_isWindowClosing"));
     }
 
-    private static async Task ReleaseHeldCloseReplyAsync(CoreWebView2 core, int index)
+    private static async Task ReleaseHeldCloseReplyAsync(CoreWebView2 core, int index, string? messageJson = null)
     {
         TaskCompletionSource<bool> received = new(TaskCreationOptions.RunContinuationsAsynchronously);
         void OnMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs args)
@@ -332,8 +480,10 @@ public sealed class MainWindowPreviewTextEditingIntegrationTests
         core.WebMessageReceived += OnMessage;
         try
         {
-            Assert.IsTrue(await ReadScriptBooleanAsync(core,
-                $"(() => {{ window.closeTestPost(window.closeTestReplies.at({index})); return true; }})()"));
+            string post = messageJson is null
+                ? $"window.closeTestPost(window.closeTestReplies.at({index}))"
+                : $"window.chrome.webview.postMessage({messageJson})";
+            Assert.IsTrue(await ReadScriptBooleanAsync(core, $"(() => {{ {post}; return true; }})()"));
             await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
         }
         finally
@@ -346,6 +496,7 @@ public sealed class MainWindowPreviewTextEditingIntegrationTests
     {
         (string Title, int Command)[] replies = decision switch
         {
+            "open-cancel" => [("Open SVG or text file", 2)],
             "save" => [("Unsaved changes", 6)],
             "discard" => [("Unsaved changes", 7)],
             "save-as-cancel" => [("Unsaved changes", 6), ("Save SVG source", 2)],
