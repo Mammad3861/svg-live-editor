@@ -361,7 +361,7 @@ public partial class MainWindow
         return true;
     }
 
-    private void OnNewFromTemplateClick(
+    private async void OnNewFromTemplateClick(
         object sender,
         RoutedEventArgs e)
     {
@@ -388,21 +388,23 @@ public partial class MainWindow
             Owner = this
         };
         if (dialog.ShowDialog() != true
-            || dialog.SelectedTemplate is not SvgTemplateDefinition selected
-            || !ConfirmCanLeaveCurrentDocument())
+            || dialog.SelectedTemplate is not SvgTemplateDefinition selected)
         {
             return;
         }
 
-        LoadIntoEditor(
-            selected.Source,
-            path: null,
-            isModified: true,
-            recoverySnapshotId: null,
-            autoSaveEligible: false,
-            queueInitialRecovery: true);
-        _viewModel.SetOperationStatus(
-            $"Template opened · {selected.Name} · Save As required");
+        await TryReplaceCurrentDocumentAsync(() =>
+        {
+            LoadIntoEditor(
+                selected.Source,
+                path: null,
+                isModified: true,
+                recoverySnapshotId: null,
+                autoSaveEligible: false,
+                queueInitialRecovery: true);
+            _viewModel.SetOperationStatus(
+                $"Template opened · {selected.Name} · Save As required");
+        });
     }
 
     private void OnAutoSaveClick(object sender, RoutedEventArgs e)
