@@ -8,7 +8,7 @@ public readonly record struct UserPreferences(
 
     public bool ReopenLastDocumentOnStartup { get; init; } = true;
 
-    public bool SnapToObjects { get; init; } = true;
+    public bool SnapToObjects { get; init; }
 
     public string? LastDocumentPath { get; init; }
 

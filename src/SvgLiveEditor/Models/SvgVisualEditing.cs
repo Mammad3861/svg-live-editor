@@ -21,7 +21,8 @@ public enum SvgResizeHandle
     BottomLeft,
     Left,
     Start,
-    End
+    End,
+    Uniform
 }
 
 public readonly record struct SvgVisualPoint(double X, double Y);
@@ -75,7 +76,9 @@ public sealed record SvgVisualElement(
     SvgVisualShapeGeometry? Geometry,
     string? UnsupportedReason,
     SvgVisualTextMeasurementSpec? TextMeasurement = null,
-    bool BlocksLowerVisualHits = false)
+    bool BlocksLowerVisualHits = false,
+    string? ResizeUnavailableReason = null,
+    SvgTextResizeSource? TextResizeSource = null)
 {
     public bool IsSelectable => Geometry is not null;
 
@@ -84,10 +87,14 @@ public sealed record SvgVisualElement(
 
     public bool IsResizable =>
         IsMovable
-        && Kind is SvgVisualElementKind.Rect
-            or SvgVisualElementKind.Circle
-            or SvgVisualElementKind.Ellipse
-            or SvgVisualElementKind.Line;
+        && (Kind is SvgVisualElementKind.Rect
+                or SvgVisualElementKind.Circle
+                or SvgVisualElementKind.Ellipse
+                or SvgVisualElementKind.Line
+            || (Kind == SvgVisualElementKind.Text
+                && TextMeasurement is not null
+                && TextResizeSource is not null
+                && string.IsNullOrWhiteSpace(ResizeUnavailableReason)));
 }
 
 public readonly record struct SvgVisualHitTestResult(
@@ -109,6 +116,10 @@ public sealed record SvgVisualTextMeasurementSpec(
     string TextAnchor,
     string Direction,
     string UnicodeBidi);
+
+public sealed record SvgTextResizeSource(
+    double FontSize,
+    string Suffix);
 
 public sealed record SvgVisualTextMeasurementResult(
     int Index,

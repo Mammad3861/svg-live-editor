@@ -22,6 +22,8 @@ public sealed class PreviewHtmlBuilder
             '.selection-overlay');
           const resizeHandleLayer = document.querySelector(
             '.resize-handle-layer');
+          const textEditorLayer = document.querySelector(
+            '.text-editor-layer');
           const bridge = window.chrome && window.chrome.webview;
           const bridgeToken = document.body.dataset.bridgeToken;
           let sourceRevision = Number.parseInt(
@@ -37,6 +39,7 @@ public sealed class PreviewHtmlBuilder
           let activeVisualGesture = null;
           let activeResizeGesture = null;
           let activeVisualSelection = null;
+          let activeTextEditor = null;
           let startX = 0;
           let startY = 0;
           let startScrollLeft = 0;
@@ -363,6 +366,40 @@ public sealed class PreviewHtmlBuilder
             }
           };
 
+          const postTextEdit = (
+              action,
+              value = null,
+              restorePreviewFocus = false) => {
+            if (!bridge || !Number.isSafeInteger(sourceRevision) ||
+                sourceRevision < 0) {
+              return;
+            }
+            const selectionId = action === 'begin'
+              ? activeVisualSelection?.selectionId
+              : activeTextEditor?.selectionId;
+            if (!selectionId) {
+              return;
+            }
+            const message = {
+              type: 'textEdit',
+              token: bridgeToken,
+              sourceRevision,
+              action,
+              selectionId
+            };
+            if (action !== 'begin') {
+              if (activeTextEditor === null) {
+                return;
+              }
+              message.sessionId = activeTextEditor.sessionId;
+              message.restorePreviewFocus = restorePreviewFocus;
+              if (action === 'commit') {
+                message.value = value ?? '';
+              }
+            }
+            bridge.postMessage(message);
+          };
+
           const createGestureId = () => {
             if (!globalThis.crypto ||
                 typeof globalThis.crypto.getRandomValues !== 'function') {
@@ -405,6 +442,9 @@ public sealed class PreviewHtmlBuilder
             (event.altKey && !event.ctrlKey && !event.shiftKey && !event.metaKey);
 
           const choosePointerAction = event => {
+            if (activeTextEditor !== null) {
+              return 'none';
+            }
             if (event.button === 1) {
               return event.ctrlKey || event.shiftKey || event.altKey ||
                 event.metaKey || spaceHeld ? 'none' : 'pan';
@@ -461,8 +501,8 @@ public sealed class PreviewHtmlBuilder
 
             const stopped = activeVisualGesture;
             activeVisualGesture = null;
-            if (viewport.hasPointerCapture(stopped.pointerId)) {
-              viewport.releasePointerCapture(stopped.pointerId);
+            if (image.hasPointerCapture(stopped.pointerId)) {
+              image.releasePointerCapture(stopped.pointerId);
             }
             if (notify) {
               postVisualPointer('cancel', stopped, event);
@@ -548,6 +588,11 @@ public sealed class PreviewHtmlBuilder
           const renderVisualSelection = message => {
             const primary = message.selections.find(item => item.isPrimary)
               || null;
+            if (activeTextEditor !== null &&
+                (primary === null ||
+                 primary.selectionId !== activeTextEditor.selectionId)) {
+              closeTextEditor(false);
+            }
             if (activeResizeGesture !== null &&
                 (primary === null ||
                  primary.selectionId !== activeResizeGesture.selectionId)) {
@@ -636,8 +681,13 @@ public sealed class PreviewHtmlBuilder
             updateInteractionSurface();
 
             activeVisualSelection = primary === null ? null : {
+              kind: primary.kind,
               selectionId: primary.selectionId,
               handles: primary.handles,
+              x1: primary.x1,
+              y1: primary.y1,
+              x2: primary.x2,
+              y2: primary.y2,
               deltaX: primary.deltaX,
               deltaY: primary.deltaY
             };
@@ -649,7 +699,9 @@ public sealed class PreviewHtmlBuilder
               resizeHandleLayer.appendChild(handle);
             }
             positionResizeHandles();
+            positionTextEditor();
             requestAnimationFrame(positionResizeHandles);
+            requestAnimationFrame(positionTextEditor);
             refreshCursor();
           };
 
@@ -679,6 +731,127 @@ public sealed class PreviewHtmlBuilder
             });
           };
 
+          const positionTextEditor = () => {
+            if (activeTextEditor === null || activeVisualSelection === null ||
+                activeTextEditor.selectionId !==
+                  activeVisualSelection.selectionId) {
+              return;
+            }
+            const matrix = selectionOverlay.getScreenCTM();
+            if (matrix === null) {
+              return;
+            }
+            const stageRect = stage.getBoundingClientRect();
+            const first = new DOMPoint(
+              activeVisualSelection.x1 + activeVisualSelection.deltaX,
+              activeVisualSelection.y1 + activeVisualSelection.deltaY)
+              .matrixTransform(matrix);
+            const second = new DOMPoint(
+              activeVisualSelection.x2 + activeVisualSelection.deltaX,
+              activeVisualSelection.y2 + activeVisualSelection.deltaY)
+              .matrixTransform(matrix);
+            const left = Math.min(first.x, second.x) - stageRect.left;
+            const top = Math.min(first.y, second.y) - stageRect.top;
+            const width = Math.max(120, Math.abs(second.x - first.x) + 20);
+            const height = Math.max(32, Math.abs(second.y - first.y) + 8);
+            activeTextEditor.input.style.left = `${left}px`;
+            activeTextEditor.input.style.top = `${top}px`;
+            activeTextEditor.input.style.width = `${width}px`;
+            activeTextEditor.input.style.height = `${height}px`;
+          };
+
+          const closeTextEditor = (restorePreviewFocus = false) => {
+            if (activeTextEditor === null) {
+              return;
+            }
+            activeTextEditor.input.remove();
+            activeTextEditor = null;
+            textEditorLayer.replaceChildren();
+            if (restorePreviewFocus) {
+              viewport.focus({ preventScroll: true });
+            }
+            refreshCursor();
+          };
+
+          const openTextEditor = message => {
+            if (activeVisualSelection === null ||
+                activeVisualSelection.kind !== 'text' ||
+                activeVisualSelection.selectionId !== message.selectionId) {
+              return;
+            }
+            closeTextEditor(false);
+            stopPan();
+            stopDirectDrag();
+            stopResizeGesture(null, false);
+            stopVisualGesture(null, false);
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'text-editor-input';
+            input.setAttribute('aria-label', 'Edit selected SVG text content');
+            input.autocomplete = 'off';
+            input.spellcheck = false;
+            input.maxLength = 1024;
+            input.dir = message.direction;
+            input.value = message.value;
+            activeTextEditor = {
+              sessionId: message.sessionId,
+              selectionId: message.selectionId,
+              input,
+              composing: false,
+              submitted: false
+            };
+            const submit = (action, restorePreviewFocus) => {
+              if (activeTextEditor === null || activeTextEditor.submitted) {
+                return;
+              }
+              activeTextEditor.submitted = true;
+              postTextEdit(
+                action,
+                action === 'commit' ? input.value : null,
+                restorePreviewFocus);
+              input.disabled = true;
+            };
+            input.addEventListener('compositionstart', () => {
+              if (activeTextEditor !== null) {
+                activeTextEditor.composing = true;
+              }
+            });
+            input.addEventListener('compositionend', () => {
+              if (activeTextEditor !== null) {
+                activeTextEditor.composing = false;
+              }
+            });
+            input.addEventListener('keydown', event => {
+              event.stopPropagation();
+              const textEditKey = event.code || event.key;
+              if (textEditKey === 'Escape') {
+                event.preventDefault();
+                submit('cancel', true);
+              } else if (textEditKey === 'Enter' && !event.isComposing &&
+                         activeTextEditor !== null &&
+                         !activeTextEditor.composing) {
+                event.preventDefault();
+                submit('commit', true);
+              }
+            });
+            input.addEventListener('blur', () => {
+              if (activeTextEditor === null || activeTextEditor.submitted) {
+                return;
+              }
+              submit(
+                activeTextEditor.composing ? 'cancel' : 'commit',
+                false);
+            });
+            textEditorLayer.appendChild(input);
+            positionTextEditor();
+            requestAnimationFrame(() => {
+              positionTextEditor();
+              input.focus({ preventScroll: true });
+              input.select();
+            });
+            refreshCursor();
+          };
+
           const areHandlesAllowedForKind = (kind, handles) => {
             const allowed = kind === 'rect' || kind === 'ellipse'
               ? ['top-left', 'top', 'top-right', 'right',
@@ -687,7 +860,9 @@ public sealed class PreviewHtmlBuilder
                 ? ['top', 'right', 'bottom', 'left']
                 : kind === 'line'
                   ? ['start', 'end']
-                  : [];
+                  : kind === 'text'
+                    ? ['uniform']
+                    : [];
             return handles.every(handle => allowed.includes(handle.id));
           };
 
@@ -718,7 +893,7 @@ public sealed class PreviewHtmlBuilder
               typeof handle.id === 'string' &&
               ['top-left', 'top', 'top-right', 'right',
                'bottom-right', 'bottom', 'bottom-left', 'left',
-               'start', 'end'].includes(handle.id) &&
+               'start', 'end', 'uniform'].includes(handle.id) &&
               Number.isFinite(handle.x) && Math.abs(handle.x) <= 1000000000 &&
               Number.isFinite(handle.y) && Math.abs(handle.y) <= 1000000000) &&
             new Set(item.handles.map(handle => handle.id)).size ===
@@ -956,6 +1131,7 @@ public sealed class PreviewHtmlBuilder
                   updateInteractionSurface(false);
                   restoreViewportCenter(message.centerX, message.centerY);
                   positionResizeHandles();
+                  positionTextEditor();
                 });
                 return;
               }
@@ -1059,6 +1235,33 @@ public sealed class PreviewHtmlBuilder
                 return;
               }
 
+              if (message.type === 'textEditState' &&
+                  Number.isSafeInteger(message.sourceRevision) &&
+                  message.sourceRevision === sourceRevision &&
+                  typeof message.action === 'string' &&
+                  typeof message.sessionId === 'string' &&
+                  /^[0-9a-fA-F]{32}$/.test(message.sessionId)) {
+                if (message.action === 'open' &&
+                    Object.keys(message).length === 8 &&
+                    typeof message.selectionId === 'string' &&
+                    /^[0-9a-fA-F]{32}$/.test(message.selectionId) &&
+                    typeof message.value === 'string' &&
+                    message.value.length <= 1024 &&
+                    !/[\u0000-\u001f\u007f]/.test(message.value) &&
+                    ['ltr', 'rtl'].includes(message.direction)) {
+                  openTextEditor(message);
+                  return;
+                }
+                if (message.action === 'close' &&
+                    Object.keys(message).length === 6 &&
+                    typeof message.restorePreviewFocus === 'boolean' &&
+                    activeTextEditor !== null &&
+                    activeTextEditor.sessionId === message.sessionId) {
+                  closeTextEditor(message.restorePreviewFocus);
+                  return;
+                }
+              }
+
               if (message.type === 'copyPng' &&
                   Object.keys(message).length === 5 &&
                   typeof message.requestId === 'string' &&
@@ -1104,6 +1307,10 @@ public sealed class PreviewHtmlBuilder
           };
 
           const handleWheel = event => {
+            if (activeTextEditor !== null) {
+              event.preventDefault();
+              return;
+            }
             rememberPointer(event);
             const horizontalDelta = normalizeWheelDelta(
               event.deltaX,
@@ -1206,7 +1413,8 @@ public sealed class PreviewHtmlBuilder
                 gestureId,
                 pointerId: event.pointerId
               };
-              viewport.setPointerCapture(event.pointerId);
+              viewport.focus({ preventScroll: true });
+              image.setPointerCapture(event.pointerId);
               postVisualPointer(
                 'down',
                 activeVisualGesture,
@@ -1408,7 +1616,12 @@ public sealed class PreviewHtmlBuilder
             stopVisualGesture(event);
           }, true);
           viewport.addEventListener('dragstart', event => event.preventDefault());
-          viewport.addEventListener('selectstart', event => event.preventDefault());
+          viewport.addEventListener('selectstart', event => {
+            if (!(event.target instanceof HTMLInputElement &&
+                  event.target.classList.contains('text-editor-input'))) {
+              event.preventDefault();
+            }
+          });
           viewport.addEventListener('auxclick', event => {
             if (event.button === 1) {
               event.preventDefault();
@@ -1416,6 +1629,9 @@ public sealed class PreviewHtmlBuilder
           });
           viewport.addEventListener('contextmenu', event => {
             event.preventDefault();
+            if (activeTextEditor !== null) {
+              return;
+            }
             viewport.classList.add('pointer-focused');
             stopDirectDrag();
             stopResizeGesture();
@@ -1425,9 +1641,45 @@ public sealed class PreviewHtmlBuilder
             postContextMenuRequest();
           });
 
+          const beginTextEditFromClick = event => {
+            if (activeTextEditor !== null || panModeEnabled || spaceHeld ||
+                activeVisualSelection === null ||
+                activeVisualSelection.kind !== 'text' ||
+                event.button !== 0 || event.ctrlKey || event.shiftKey ||
+                event.altKey || event.metaKey || event.target !== image) {
+              return;
+            }
+            event.preventDefault();
+            stopDirectDrag();
+            stopResizeGesture();
+            stopVisualGesture();
+            viewport.focus({ preventScroll: true });
+            postTextEdit('begin');
+          };
+          viewport.addEventListener('dblclick', beginTextEditFromClick);
+          // WPF composition input can report the second physical click as a
+          // repeated click without a DOM dblclick. Keep the image as the visual
+          // capture target so both routes retain the same artwork-only guard.
+          viewport.addEventListener('click', event => {
+            if (event.detail > 1) {
+              beginTextEditFromClick(event);
+            }
+          });
+
           window.addEventListener('keydown', event => {
             viewport.classList.remove('pointer-focused');
-            if (event.code === 'KeyC' &&
+            if (activeTextEditor !== null) {
+              return;
+            }
+            const textEditKey = event.code || event.key;
+            if ((textEditKey === 'F2' || textEditKey === 'Enter') &&
+                !event.ctrlKey && !event.shiftKey && !event.altKey &&
+                !event.metaKey && !event.repeat && !event.isComposing &&
+                !panModeEnabled && activeVisualSelection !== null &&
+                activeVisualSelection.kind === 'text') {
+              event.preventDefault();
+              postTextEdit('begin');
+            } else if (event.code === 'KeyC' &&
                 event.ctrlKey && !event.shiftKey &&
                 !event.altKey && !event.metaKey) {
               event.preventDefault();
@@ -1669,6 +1921,7 @@ public sealed class PreviewHtmlBuilder
             document.body.dataset.initialCenterX = `${message.centerX}`;
             document.body.dataset.initialCenterY = `${message.centerY}`;
             viewport.style.pointerEvents = 'none';
+            closeTextEditor(false);
             stopPan();
             stopDirectDrag();
             stopResizeGesture(null, false);
@@ -1700,6 +1953,7 @@ public sealed class PreviewHtmlBuilder
             refreshCursor();
             scheduleViewportState();
             positionResizeHandles();
+            positionTextEditor();
           }).observe(viewport);
           document.body.dataset.hostScriptReady = 'true';
         })();
@@ -1915,6 +2169,34 @@ public sealed class PreviewHtmlBuilder
                   overflow: visible;
                   z-index: 2;
                 }
+                .text-editor-layer {
+                  position: absolute;
+                  inset: 0;
+                  pointer-events: none;
+                  overflow: visible;
+                  z-index: 3;
+                }
+                .text-editor-input {
+                  position: absolute;
+                  box-sizing: border-box;
+                  min-width: 120px;
+                  min-height: 32px;
+                  padding: 4px 7px;
+                  border: 2px solid {{SelectionAccentStrongColor}};
+                  border-radius: 4px;
+                  color: #0f172a;
+                  background: rgba(255, 255, 255, 0.98);
+                  font: 16px "Segoe UI", sans-serif;
+                  pointer-events: auto;
+                  user-select: text;
+                  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.28);
+                  outline: none;
+                }
+                .text-editor-input:focus-visible {
+                  box-shadow:
+                    0 3px 10px rgba(15, 23, 42, 0.28),
+                    0 0 0 2px rgba(37, 99, 235, 0.3);
+                }
                 .resize-handle {
                   position: absolute;
                   width: {{ResizeHandleSizeCssPixels}}px;
@@ -1937,7 +2219,8 @@ public sealed class PreviewHtmlBuilder
                   transform: translate(-50%, -50%) scale(1.15);
                 }
                 .resize-handle[data-handle="top-left"],
-                .resize-handle[data-handle="bottom-right"] {
+                .resize-handle[data-handle="bottom-right"],
+                .resize-handle[data-handle="uniform"] {
                   cursor: nwse-resize;
                 }
                 .resize-handle[data-handle="top-right"],
@@ -1972,6 +2255,12 @@ public sealed class PreviewHtmlBuilder
                     border-color: Highlight;
                     box-shadow: none;
                   }
+                  .text-editor-input {
+                    color: CanvasText;
+                    background: Canvas;
+                    border-color: Highlight;
+                    box-shadow: none;
+                  }
                 }
               </style>
             </head>
@@ -1994,7 +2283,8 @@ public sealed class PreviewHtmlBuilder
                        viewBox="{{overlayViewBox}}"
                        preserveAspectRatio="{{overlayPreserveAspectRatio}}"></svg>
                   <div class="resize-handle-layer"
-                       aria-hidden="true"></div>
+                        aria-hidden="true"></div>
+                  <div class="text-editor-layer"></div>
                 </main>
               </div>
               <script>{{normalizedHostScript}}</script>

@@ -62,6 +62,16 @@ Later v0.10 polish (not part of Stage 1):
 - Preserve exact invalid source and the last valid Preview while disabling revision-sensitive visual and Properties mutations until validity returns.
 - Keep Undo/Redo selection-aware and expose only the bounded multi-selection primary to Source and Properties.
 
+### v0.12.0 — Preview text editing and consistent resize handles
+
+- Edit eligible direct simple `<text>` content from Live Preview with double-click, `F2`, or `Enter`; commit with `Enter` or focus loss and cancel with `Escape`.
+- Provide the same exact text-content edit in Properties as a keyboard- and screen-reader-accessible fallback, including eligible empty direct text that has no Preview hit area.
+- Keep Source authoritative through one exact XML-escaped source replacement and one Undo unit; preserve unrelated bytes, selection, Inspector, Properties, and latest-wins Preview synchronization.
+- Bind every Preview edit session to the current navigation token, source revision, opaque single selection, eligible text kind, and unlocked state; stale, malformed, replayed, complex, or unsafe requests fail closed without exposing the SVG DOM.
+- Add one uniform single-selection text resize handle based on trusted measured bounds. It edits only a supported direct `font-size` value on release and keeps the existing shape-handle rules consistent.
+- Disable object snapping for fresh user profiles while preserving an explicitly saved preference.
+- Keep nested `tspan`/`textPath`, mixed-content or multiline text, complex typography, multi-selection resize, rotation, path resize, and live source mutation during pointer movement outside this milestone.
+
 ### v1.0.0 — Stable Release / stabilization
 
 - Accessibility.

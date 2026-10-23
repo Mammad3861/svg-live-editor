@@ -108,6 +108,9 @@ public sealed class MainWindowPreviewCommandRoutingIntegrationTests
 
             await FocusPreviewAsync(window, core);
             Select(window, "rect");
+            string previewInputState = $"{DescribeWindowState(window)}; modifiers={Keyboard.Modifiers}; "
+                + $"revision={GetField<SourceRevisionTracker>(window, "_sourceRevisionTracker").Current}; "
+                + $"visible={GetField<long?>(window, "_visiblePreviewSourceRevision")}";
             SendKey(window.PreviewWebView, VirtualKey.Right);
             await WaitUntilAsync(
                 () => window.SourceEditor.Text.Contains(
@@ -118,7 +121,8 @@ public sealed class MainWindowPreviewCommandRoutingIntegrationTests
                     + $"original source: {previewOriginalSource ?? "<none>"}; "
                     + $"IsKeyboardFocusWithin: {window.PreviewWebView.IsKeyboardFocusWithin}; "
                     + $"WPF focused element: {Keyboard.FocusedElement?.GetType().Name ?? "<none>"}; "
-                    + $"status: {GetViewModel(window).OperationStatus}");
+                    + $"status: {GetViewModel(window).OperationStatus}; "
+                    + $"before input: {previewInputState}");
             Assert.AreEqual(1, Count(window.SourceEditor.Text, "x=\"11\""));
             Assert.IsTrue(previewKeyEvents > 0);
             Assert.AreEqual(
@@ -243,13 +247,19 @@ public sealed class MainWindowPreviewCommandRoutingIntegrationTests
 
             await FocusSourceAsync(window);
             window.SourceEditor.CaretOffset = 0;
+            string sourceInputState = $"caret={window.SourceEditor.CaretOffset}; "
+                + $"selection={window.SourceEditor.SelectionStart}/{window.SourceEditor.SelectionLength}; "
+                + $"modifiers={Keyboard.Modifiers}; {DescribeWindowState(window)}";
             SendKey(window.SourceEditor.TextArea, VirtualKey.Right);
+            int immediateCaretOffset = window.SourceEditor.CaretOffset;
             await WaitUntilAsync(
                 () => window.SourceEditor.CaretOffset == 1,
                 "Source Arrow input did not remain local to AvalonEdit.",
                 () => $"Source focus: {window.SourceEditor.IsKeyboardFocusWithin}; "
                     + $"Preview tracked focus: {GetField<bool>(window, "_isPreviewControllerKeyboardFocused")}; "
-                    + $"WPF focused element: {Keyboard.FocusedElement?.GetType().Name ?? "<none>"}");
+                    + $"WPF focused element: {Keyboard.FocusedElement?.GetType().Name ?? "<none>"}; "
+                    + $"caret immediately={immediateCaretOffset}, now={window.SourceEditor.CaretOffset}; "
+                    + $"before input: {sourceInputState}");
             Assert.AreEqual(Fixture, window.SourceEditor.Text);
 
         }
@@ -261,17 +271,13 @@ public sealed class MainWindowPreviewCommandRoutingIntegrationTests
         {
             try
             {
-                if (window is not null)
-                {
-                    GetViewModel(window).MarkSaved(string.Empty);
-                    window.Close();
-                }
-                await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
-                await TryDeleteAsync(localApplicationData);
+                await DesktopTestWindowCleanup.CloseAndDeleteProfileAsync(window, localApplicationData);
             }
             catch (Exception exception)
             {
-                failure ??= exception;
+                failure = failure is null
+                    ? exception
+                    : new AggregateException(failure, exception);
             }
             if (failure is null)
             {
@@ -290,6 +296,7 @@ public sealed class MainWindowPreviewCommandRoutingIntegrationTests
     {
         window.SourceEditor.Text = Fixture;
         await WaitForCurrentIndexAsync(window, "ellipse");
+        await WaitForVisiblePreviewRevisionAsync(window);
         window.SourceEditor.Document.UndoStack.ClearAll();
     }
 
@@ -711,29 +718,6 @@ public sealed class MainWindowPreviewCommandRoutingIntegrationTests
             + $"WPF focus={Keyboard.FocusedElement?.GetType().Name ?? "<none>"}; "
             + $"Preview WPF focus={window.PreviewWebView.IsKeyboardFocusWithin}; "
             + $"Preview core={window.PreviewWebView.CoreWebView2 is not null}";
-    }
-
-    private static async Task TryDeleteAsync(string directory)
-    {
-        for (int attempt = 0; attempt < 10; attempt++)
-        {
-            try
-            {
-                if (Directory.Exists(directory))
-                {
-                    Directory.Delete(directory, recursive: true);
-                }
-                return;
-            }
-            catch (IOException) when (attempt < 9)
-            {
-                await Task.Delay(50);
-            }
-            catch (UnauthorizedAccessException) when (attempt < 9)
-            {
-                await Task.Delay(50);
-            }
-        }
     }
 
     private enum VirtualKey : ushort

@@ -63,7 +63,7 @@ public sealed class EditorWordWrapTests
             Assert.AreEqual(PreviewZoomMode.Fit, defaults.PreviewZoom.Mode);
             Assert.IsFalse(defaults.AutoSaveEnabled);
             Assert.IsTrue(defaults.ReopenLastDocumentOnStartup);
-            Assert.IsTrue(defaults.SnapToObjects);
+            Assert.IsFalse(defaults.SnapToObjects);
             Assert.IsNull(defaults.LastDocumentPath);
 
             UserPreferences changed = new(
@@ -72,7 +72,7 @@ public sealed class EditorWordWrapTests
             {
                 AutoSaveEnabled = true,
                 ReopenLastDocumentOnStartup = false,
-                SnapToObjects = false,
+                SnapToObjects = true,
                 LastDocumentPath = Path.Combine(directory, "sample.svg")
             };
             Assert.IsTrue(service.TrySave(changed));
@@ -83,7 +83,7 @@ public sealed class EditorWordWrapTests
             Assert.AreEqual(1.25, restored.PreviewZoom.ManualScale, 0.0001);
             Assert.IsTrue(restored.AutoSaveEnabled);
             Assert.IsFalse(restored.ReopenLastDocumentOnStartup);
-            Assert.IsFalse(restored.SnapToObjects);
+            Assert.IsTrue(restored.SnapToObjects);
             Assert.AreEqual(changed.LastDocumentPath, restored.LastDocumentPath);
         }
         finally
@@ -103,7 +103,7 @@ public sealed class EditorWordWrapTests
             Assert.IsFalse(preferences.WordWrap);
             Assert.AreEqual(PreviewZoomState.Fit, preferences.PreviewZoom);
             Assert.IsTrue(preferences.ReopenLastDocumentOnStartup);
-            Assert.IsTrue(preferences.SnapToObjects);
+            Assert.IsFalse(preferences.SnapToObjects);
             Assert.IsNull(preferences.LastDocumentPath);
         });
     }

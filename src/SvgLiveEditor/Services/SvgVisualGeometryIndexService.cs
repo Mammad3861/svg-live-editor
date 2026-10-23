@@ -136,6 +136,20 @@ public sealed class SvgVisualGeometryIndexService
             if (kind == SvgVisualElementKind.Text)
             {
                 SvgVisualTextMeasurementSpec? measurement = null;
+                SvgTextResizeSource? resizeSource = null;
+                string? resizeUnavailableReason = null;
+                if (textIndex is null)
+                {
+                    resizeUnavailableReason =
+                        "The text source mapping is unavailable.";
+                }
+                else if (!textIndex.TryCreateResizeSource(
+                             element,
+                             out resizeSource,
+                             out resizeUnavailableReason))
+                {
+                    resizeSource = null;
+                }
                 if (unsupportedReason is null)
                 {
                     if (textIndex is null)
@@ -164,7 +178,9 @@ public sealed class SvgVisualGeometryIndexService
                     Geometry: null,
                     unsupportedReason,
                     measurement,
-                    BlocksLowerVisualHits: unsupportedReason is not null));
+                    BlocksLowerVisualHits: unsupportedReason is not null,
+                    ResizeUnavailableReason: resizeUnavailableReason,
+                    TextResizeSource: resizeSource));
                 continue;
             }
 
@@ -353,7 +369,7 @@ public sealed class SvgVisualGeometryIndexService
         return double.IsFinite(alignX) && double.IsFinite(alignY);
     }
 
-    private static string? GetUnsupportedReason(
+    internal static string? GetUnsupportedReason(
         SvgElementNode element,
         IReadOnlyDictionary<string, SvgElementNode> elementsByPath)
     {

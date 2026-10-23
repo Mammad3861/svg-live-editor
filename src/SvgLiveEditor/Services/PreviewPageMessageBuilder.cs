@@ -148,6 +148,63 @@ public sealed class PreviewPageMessageBuilder
         });
     }
 
+    public string BuildTextEditOpenMessage(
+        string bridgeToken,
+        long sourceRevision,
+        string sessionId,
+        string selectionId,
+        string value,
+        string direction)
+    {
+        ValidateBridgeToken(bridgeToken);
+        ValidateHexToken(sessionId, nameof(sessionId));
+        ValidateHexToken(selectionId, nameof(selectionId));
+        ArgumentNullException.ThrowIfNull(value);
+        if (sourceRevision is < 0 or > MaximumJavaScriptSafeInteger
+            || value.Length > SvgVisualTextIndexService.MaximumTextLength
+            || value.Any(char.IsControl)
+            || direction is not ("ltr" or "rtl"))
+        {
+            throw new ArgumentOutOfRangeException(nameof(value));
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            type = "textEditState",
+            token = bridgeToken,
+            sourceRevision,
+            action = "open",
+            sessionId,
+            selectionId,
+            value,
+            direction
+        });
+    }
+
+    public string BuildTextEditCloseMessage(
+        string bridgeToken,
+        long sourceRevision,
+        string sessionId,
+        bool restorePreviewFocus)
+    {
+        ValidateBridgeToken(bridgeToken);
+        ValidateHexToken(sessionId, nameof(sessionId));
+        if (sourceRevision is < 0 or > MaximumJavaScriptSafeInteger)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sourceRevision));
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            type = "textEditState",
+            token = bridgeToken,
+            sourceRevision,
+            action = "close",
+            sessionId,
+            restorePreviewFocus
+        });
+    }
+
     public string BuildVisualSelectionMessage(
         string bridgeToken,
         long sourceRevision,
@@ -435,6 +492,8 @@ public sealed class PreviewPageMessageBuilder
                 or SvgResizeHandle.Left,
         SvgVisualElementKind.Line =>
             handle is SvgResizeHandle.Start or SvgResizeHandle.End,
+        SvgVisualElementKind.Text =>
+            handle == SvgResizeHandle.Uniform,
         _ => false
     };
 }
