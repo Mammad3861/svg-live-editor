@@ -22,6 +22,405 @@ public sealed class MainWindowPreviewTextEditingIntegrationTests
 
     [TestMethod]
     [TestCategory("DesktopIntegration")]
+    [DataRow("preview", "cancel")]
+    [DataRow("properties", "cancel")]
+    [DataRow("preview", "save")]
+    [DataRow("properties", "save")]
+    [DataRow("preview", "discard")]
+    [DataRow("properties", "discard")]
+    [DataRow("preview", "save-as-cancel")]
+    [DataRow("properties", "save-as-cancel")]
+    public async Task PendingTextCloseHonorsTheUnsavedDecision(string editor, string decision)
+    {
+        TaskCompletionSource<bool> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        Thread thread = new(() =>
+        {
+            SynchronizationContext.SetSynchronizationContext(
+                new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
+            _ = RunPendingTextCloseAsync(completion, editor, decision);
+            Dispatcher.Run();
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        Assert.IsTrue(await completion.Task.WaitAsync(TimeSpan.FromSeconds(40)));
+        Assert.IsTrue(thread.Join(TimeSpan.FromSeconds(5)));
+    }
+
+    [TestMethod]
+    [TestCategory("DesktopIntegration")]
+    [DataRow("preview")]
+    [DataRow("properties")]
+    public Task PendingTextCloseSaveFailureKeepsDocumentOpen(string editor) =>
+        PendingTextCloseHonorsTheUnsavedDecision(editor, "save-failure");
+
+    [TestMethod]
+    [TestCategory("DesktopIntegration")]
+    public Task PreviewCloseTimeoutRetainsTextAndRejectsLateReplyOnRetry() =>
+        PendingTextCloseHonorsTheUnsavedDecision("preview", "timeout");
+
+    [TestMethod]
+    [TestCategory("DesktopIntegration")]
+    public Task RepeatedPreviewCloseHasOneDecisionAndRejectsInvalidatedReply() =>
+        PendingTextCloseHonorsTheUnsavedDecision("preview", "repeated");
+
+    private static async Task RunPendingTextCloseAsync(
+        TaskCompletionSource<bool> completion, string editor, string decision)
+    {
+        string profile = Path.Combine(Path.GetTempPath(), "SvgLiveEditor.Close.Tests", Guid.NewGuid().ToString("N"));
+        string path = Path.Combine(profile, "document.svg");
+        MainWindow? window = null;
+        bool closed = false;
+        TaskCompletionSource<bool> decisionFinished = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource<bool> browserExited = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        Exception? failure = null;
+        using CancellationTokenSource stopDialogs = new();
+        Task? dialogs = null;
+        try
+        {
+            Directory.CreateDirectory(profile);
+            File.WriteAllText(path, Fixture);
+            window = new MainWindow(profile) { Width = 1100, Height = 700, ShowInTaskbar = false };
+            TaskCompletionSource<CoreWebView2> ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            window.PreviewWebView.CoreWebView2InitializationCompleted += (_, e) =>
+            {
+                if (e.IsSuccess) ready.TrySetResult(window.PreviewWebView.CoreWebView2!);
+                else ready.TrySetException(e.InitializationException);
+            };
+            window.Closed += (_, _) => closed = true;
+            window.Show();
+            CoreWebView2 core = await ready.Task.WaitAsync(TimeSpan.FromSeconds(20));
+            uint browserId = core.BrowserProcessId;
+            core.Environment.BrowserProcessExited += (_, e) =>
+            {
+                if (e.BrowserProcessId == browserId) browserExited.TrySetResult(true);
+            };
+            await SetFixtureAsync(window);
+            GetViewModel(window).MarkSaved(decision == "save-as-cancel" ? string.Empty : path);
+            Select(window, "label");
+            const string value = "Closing <متن> & exact";
+            string expected = Fixture.Replace("Hello فارسی", "Closing &lt;متن&gt; &amp; exact", StringComparison.Ordinal);
+            if (editor == "preview")
+            {
+                await OpenPreviewEditorAsync(window, core, useDoubleClick: false);
+                await SetEditorValueAsync(core, value);
+            }
+            else
+            {
+                window.InspectorTextContentBox.Focus();
+                window.InspectorTextContentBox.Text = value;
+                window.InspectorTextContentBox.GetBindingExpression(TextBox.TextProperty)?.UpdateSource();
+            }
+            Assert.AreEqual(Fixture, window.SourceEditor.Text, "The candidate must still be pending.");
+            Assert.IsFalse(GetViewModel(window).IsModified);
+            if (decision is "timeout" or "repeated")
+            {
+                await VerifyDelayedPreviewCloseAsync(window, core, value, expected, decision);
+                return;
+            }
+            if (decision == "save-failure") File.SetAttributes(path, FileAttributes.ReadOnly);
+
+            // Keep a broken implementation from disposing the test editor before reporting
+            // that it would bypass the decision. This handler never supplies the decision.
+            bool bypassedDecision = false;
+            window.Closing += (_, args) =>
+            {
+                if (!args.Cancel && window.SourceEditor.Text != expected)
+                {
+                    bypassedDecision = true;
+                    args.Cancel = true;
+                }
+                if (window.SourceEditor.Text == expected) decisionFinished.TrySetResult(true);
+            };
+            nint owner = new WindowInteropHelper(window).Handle;
+            dialogs = Task.Run(() => RespondToCloseDialogsAsync(owner, decision, stopDialogs.Token));
+            window.Close();
+            Assert.IsFalse(bypassedDecision, "Closing allowed an unmodified Source to bypass the unsaved decision while text was pending.");
+            await dialogs.WaitAsync(TimeSpan.FromSeconds(10));
+            await decisionFinished.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.AreEqual(expected, window.SourceEditor.Text, "The close decision must account for the intended text.");
+            bool shouldClose = decision is "save" or "discard";
+            await WaitUntilAsync(() => closed == shouldClose, "Unexpected close outcome.");
+            Assert.AreEqual(decision == "save" ? expected : Fixture, File.ReadAllText(path));
+            if (!shouldClose)
+            {
+                Assert.IsTrue(window.IsVisible);
+                Assert.IsTrue(GetViewModel(window).IsModified);
+                Assert.IsFalse(GetField<bool>(window, "_isWindowClosing"));
+            }
+        }
+        catch (Exception exception)
+        {
+            failure = new InvalidOperationException(
+                $"Close scenario {editor}/{decision}; closed={closed}; "
+                + $"status={(window?.DataContext is MainViewModel vm ? vm.OperationStatus : "unavailable")}; "
+                + $"source={window?.SourceEditor.Text}", exception);
+        }
+        finally
+        {
+            stopDialogs.Cancel();
+            if (dialogs is not null)
+            {
+                try { await dialogs; }
+                catch (OperationCanceledException) { }
+                catch (Exception exception) { failure ??= exception; }
+            }
+            try
+            {
+                if (File.Exists(path)) File.SetAttributes(path, FileAttributes.Normal);
+                if (!closed && window is not null)
+                {
+                    InvokePrivate(window, "ClosePreviewTextEditSession", false);
+                    GetViewModel(window).Inspector.TextContent?.Revert();
+                    await DesktopTestWindowCleanup.CloseAndDeleteProfileAsync(window, profile);
+                }
+                else
+                {
+                    await browserExited.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                    await DesktopTestWindowCleanup.CloseAndDeleteProfileAsync(null, profile);
+                }
+            }
+            catch (Exception exception) { failure ??= exception; }
+            if (failure is null) completion.TrySetResult(true);
+            else completion.TrySetException(failure);
+            Dispatcher.CurrentDispatcher.BeginInvokeShutdown(DispatcherPriority.Send);
+        }
+    }
+
+    private static async Task VerifyDelayedPreviewCloseAsync(
+        MainWindow window, CoreWebView2 core, string value, string expected, string scenario)
+    {
+        // Delay only app-owned commit messages; the WebView and its input stay alive.
+        await core.ExecuteScriptAsync("""
+            window.closeTestReplies = [];
+            window.closeTestPost = window.chrome.webview.postMessage.bind(window.chrome.webview);
+            window.chrome.webview.postMessage = message => {
+              if (message.type === 'textEdit' && message.action === 'commit') {
+                window.closeTestReplies.push(message);
+              } else {
+                window.closeTestPost(message);
+              }
+            };
+            """);
+        window.Close();
+        object? pending = GetField<object?>(window, "_pendingPreviewTextEditCommit");
+        Assert.IsNotNull(pending);
+        window.Close();
+        window.Close();
+        Assert.AreSame(pending, GetField<object?>(window, "_pendingPreviewTextEditCommit"));
+        await WaitForScriptConditionAsync(core, "window.closeTestReplies.length === 1");
+        Assert.AreEqual(Fixture, window.SourceEditor.Text);
+
+        if (scenario == "timeout")
+        {
+            await WaitUntilAsync(() => !GetField<bool>(window, "_isPreparingTextEditClose"),
+                "The unanswered close did not time out.");
+            Assert.IsTrue(window.IsVisible);
+            Assert.IsFalse(GetField<bool>(window, "_isWindowClosing"));
+            Assert.IsNotNull(GetField<object?>(window, "_previewTextEditSession"));
+            await WaitForScriptConditionAsync(core,
+                $"document.querySelector('.text-editor-input')?.value === {JsonSerializer.Serialize(value)} && !document.querySelector('.text-editor-input').disabled");
+            await SetEditorValueAsync(core, "Retry <جدید>");
+            expected = Fixture.Replace("Hello فارسی", "Retry &lt;جدید&gt;", StringComparison.Ordinal);
+            window.Close();
+            await WaitForScriptConditionAsync(core, "window.closeTestReplies.length === 2");
+            await ReleaseHeldCloseReplyAsync(core, 0);
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.AreEqual(Fixture, window.SourceEditor.Text, "A timed-out reply must not commit the older candidate.");
+            Assert.IsTrue(GetField<bool>(window, "_isPreparingTextEditClose"));
+        }
+
+        int prompts = 0;
+        using CancellationTokenSource stop = new();
+        nint owner = new WindowInteropHelper(window).Handle;
+        Task dialogs = Task.Run(async () =>
+        {
+            try
+            {
+                while (!stop.IsCancellationRequested)
+                    await RespondToCloseDialogsAsync(owner, "cancel", stop.Token,
+                        () => Interlocked.Increment(ref prompts));
+            }
+            catch (OperationCanceledException) { }
+        });
+        bool repeatedAtYield = false;
+        void RepeatAtYield(object? sender, DispatcherHookEventArgs args)
+        {
+            if (scenario == "repeated" && !repeatedAtYield
+                && args.Operation.Priority == DispatcherPriority.Background
+                && window.SourceEditor.Text == expected)
+            {
+                repeatedAtYield = true;
+                window.Dispatcher.BeginInvoke(DispatcherPriority.Normal, new Action(window.Close));
+            }
+        }
+        window.Dispatcher.Hooks.OperationPosted += RepeatAtYield;
+        try
+        {
+            await ReleaseHeldCloseReplyAsync(core, -1);
+            await WaitUntilAsync(() => prompts >= 1, "The successful retry did not reach the unsaved decision.");
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.IsFalse(GetField<bool>(window, "_isPreparingTextEditClose"));
+            Assert.IsTrue(window.IsVisible);
+            Assert.AreEqual(1, prompts, "Repeated closing produced competing unsaved-change decisions.");
+            if (scenario == "repeated") Assert.IsTrue(repeatedAtYield);
+            Assert.AreEqual(expected, window.SourceEditor.Text);
+            window.SourceEditor.Undo();
+            Assert.AreEqual(Fixture, window.SourceEditor.Text);
+            Assert.IsFalse(window.SourceEditor.CanUndo, "Only one source commit/Undo unit is allowed.");
+            window.SourceEditor.Redo();
+            Assert.AreEqual(expected, window.SourceEditor.Text);
+            await ReleaseHeldCloseReplyAsync(core, 0);
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Assert.AreEqual(expected, window.SourceEditor.Text);
+            Assert.AreEqual(1, prompts);
+        }
+        finally
+        {
+            window.Dispatcher.Hooks.OperationPosted -= RepeatAtYield;
+            stop.Cancel();
+            await dialogs;
+        }
+
+        if (scenario != "repeated") return;
+
+        // Cancellation must end closing even if its commit reply arrives later.
+        await SetFixtureAsync(window);
+        Select(window, "label");
+        await OpenPreviewEditorAsync(window, core, useDoubleClick: false);
+        await SetEditorValueAsync(core, "must not commit");
+        await core.ExecuteScriptAsync("window.closeTestReplies = []");
+        window.Close();
+        await WaitForScriptConditionAsync(core, "window.closeTestReplies.length === 1");
+        InvokePrivate(window, "ClosePreviewTextEditSession", false);
+        await WaitUntilAsync(() => !GetField<bool>(window, "_isPreparingTextEditClose"), "Cancel did not abandon closing.");
+        await ReleaseHeldCloseReplyAsync(core, 0);
+        await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+        Assert.AreEqual(Fixture, window.SourceEditor.Text);
+        Assert.IsTrue(window.IsVisible);
+
+        // Independently invalidate another unanswered close by changing Source.
+        await WaitForScriptConditionAsync(core, "document.querySelector('.text-editor-input') === null");
+        await OpenPreviewEditorAsync(window, core, useDoubleClick: false);
+        await SetEditorValueAsync(core, "also must not commit");
+        await core.ExecuteScriptAsync("window.closeTestReplies = []");
+        window.Close();
+        await WaitForScriptConditionAsync(core, "window.closeTestReplies.length === 1");
+        string newer = Fixture.Replace("Hello فارسی", "Newer source", StringComparison.Ordinal);
+        window.SourceEditor.Text = newer;
+        await WaitUntilAsync(() => !GetField<bool>(window, "_isPreparingTextEditClose"), "A source change did not abandon closing.");
+        await ReleaseHeldCloseReplyAsync(core, 0);
+        await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+        Assert.AreEqual(newer, window.SourceEditor.Text);
+        Assert.IsTrue(window.IsVisible);
+        Assert.IsFalse(GetField<bool>(window, "_isWindowClosing"));
+    }
+
+    private static async Task ReleaseHeldCloseReplyAsync(CoreWebView2 core, int index)
+    {
+        TaskCompletionSource<bool> received = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs args)
+        {
+            using JsonDocument message = JsonDocument.Parse(args.WebMessageAsJson);
+            if (message.RootElement.TryGetProperty("type", out JsonElement type)
+                && type.GetString() == "textEdit"
+                && message.RootElement.GetProperty("action").GetString() == "commit")
+            {
+                received.TrySetResult(true);
+            }
+        }
+        core.WebMessageReceived += OnMessage;
+        try
+        {
+            Assert.IsTrue(await ReadScriptBooleanAsync(core,
+                $"(() => {{ window.closeTestPost(window.closeTestReplies.at({index})); return true; }})()"));
+            await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            core.WebMessageReceived -= OnMessage;
+        }
+    }
+
+    private static async Task RespondToCloseDialogsAsync(nint owner, string decision, CancellationToken cancellationToken, Action? onReply = null)
+    {
+        (string Title, int Command)[] replies = decision switch
+        {
+            "save" => [("Unsaved changes", 6)],
+            "discard" => [("Unsaved changes", 7)],
+            "save-as-cancel" => [("Unsaved changes", 6), ("Save SVG source", 2)],
+            "save-failure" => [("Unsaved changes", 6), ("Cannot save file", 1)],
+            _ => [("Unsaved changes", 2)]
+        };
+        foreach ((string title, int command) in replies)
+        {
+            DateTime deadline = DateTime.UtcNow.AddSeconds(8);
+            bool replied = false;
+            HashSet<string> observed = [];
+            while (DateTime.UtcNow < deadline)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                nint popup = 0;
+                _ = EnumThreadWindows(GetWindowThreadProcessId(owner, out _), (candidate, parameter) =>
+                {
+                    System.Text.StringBuilder text = new(256);
+                    _ = GetWindowText(candidate, text, text.Capacity);
+                    observed.Add($"{text}; button1={GetDlgItem(candidate, 1)}; button2={GetDlgItem(candidate, 2)}; button6={GetDlgItem(candidate, 6)}");
+                    if (candidate != owner && text.ToString() == title) popup = candidate;
+                    return true;
+                }, 0);
+                nint button = popup == 0 ? 0 : GetDlgItem(popup, command);
+                // This runtime exposes the single error-dialog OK button as IDCANCEL.
+                if (button == 0 && popup != 0 && title == "Cannot save file")
+                {
+                    button = GetDlgItem(popup, 2);
+                }
+                if (button != 0 && IsWindowEnabled(button))
+                {
+                    Assert.IsTrue(PostMessage(button, 0x00F5, 0, 0));
+                    onReply?.Invoke();
+                    if (onReply is not null)
+                    {
+                        while (IsWindow(button)) await Task.Delay(25, cancellationToken);
+                    }
+                    replied = true;
+                    break;
+                }
+                await Task.Delay(25, cancellationToken);
+            }
+            Assert.IsTrue(replied, $"The owned '{title}' dialog was not shown. Observed: {string.Join(" | ", observed)}");
+        }
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(nint window, out uint processId);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern nint GetDlgItem(nint dialog, int identifier);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool IsWindowEnabled(nint window);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool IsWindow(nint window);
+
+    private delegate bool ThreadWindowCallback(nint window, nint parameter);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool EnumThreadWindows(uint threadId, ThreadWindowCallback callback, nint parameter);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int GetWindowText(nint window, System.Text.StringBuilder text, int maximum);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool PostMessage(nint window, uint message, nint wParam, nint lParam);
+
+    [TestMethod]
+    [TestCategory("DesktopIntegration")]
     public async Task RealWindow_PreviewAndPropertiesTextEditsStayAtomicAndSynchronized()
     {
         TaskCompletionSource<bool> completion = new(

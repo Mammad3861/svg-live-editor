@@ -811,6 +811,7 @@ public sealed class PreviewHtmlBuilder
                 restorePreviewFocus);
               input.disabled = true;
             };
+            activeTextEditor.submit = submit;
             input.addEventListener('compositionstart', () => {
               if (activeTextEditor !== null) {
                 activeTextEditor.composing = true;
@@ -1250,6 +1251,25 @@ public sealed class PreviewHtmlBuilder
                     !/[\u0000-\u001f\u007f]/.test(message.value) &&
                     ['ltr', 'rtl'].includes(message.direction)) {
                   openTextEditor(message);
+                  return;
+                }
+                if (message.action === 'commit' &&
+                    Object.keys(message).length === 5 &&
+                    activeTextEditor !== null &&
+                    activeTextEditor.sessionId === message.sessionId &&
+                    !activeTextEditor.composing) {
+                  activeTextEditor.submit('commit', false);
+                  return;
+                }
+                if (message.action === 'resume' &&
+                    Object.keys(message).length === 6 &&
+                    typeof message.nextSessionId === 'string' &&
+                    /^[0-9a-fA-F]{32}$/.test(message.nextSessionId) &&
+                    activeTextEditor !== null &&
+                    activeTextEditor.sessionId === message.sessionId) {
+                  activeTextEditor.sessionId = message.nextSessionId;
+                  activeTextEditor.submitted = false;
+                  activeTextEditor.input.disabled = false;
                   return;
                 }
                 if (message.action === 'close' &&
