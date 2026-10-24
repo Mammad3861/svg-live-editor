@@ -294,6 +294,7 @@
         <Separator />
         <MenuItem Header="_Save" InputGestureText="Ctrl+S" Click="OnSaveClick" />
         <MenuItem Header="Save _As..." InputGestureText="Ctrl+Shift+S" Click="OnSaveAsClick" />
+        <MenuItem Header="Export _PNG..." Click="OnExportPngClick" AutomationProperties.Name="Export PNG" />
         <Separator />
         <MenuItem x:Name="AutoSaveMenuItem"
                   Header="_Auto Save"
