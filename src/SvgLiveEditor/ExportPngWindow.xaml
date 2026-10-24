@@ -1,0 +1,30 @@
+<Window x:Class="SvgLiveEditor.ExportPngWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Export PNG" Icon="Assets/SvgLiveEditor.ico"
+        Width="440" Height="350" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False" Background="#F8FAFC">
+  <StackPanel Margin="24">
+    <TextBlock Text="Output size in pixels" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,16" />
+    <Grid>
+      <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+      <StackPanel Margin="0,0,12,0">
+        <Label Content="_Width (px)" Target="{Binding ElementName=WidthBox}" />
+        <TextBox x:Name="WidthBox" TextChanged="OnWidthChanged" AutomationProperties.Name="PNG width in pixels" />
+      </StackPanel>
+      <StackPanel Grid.Column="1">
+        <Label Content="_Height (px)" Target="{Binding ElementName=HeightBox}" />
+        <TextBox x:Name="HeightBox" TextChanged="OnHeightChanged" AutomationProperties.Name="PNG height in pixels" />
+      </StackPanel>
+    </Grid>
+    <CheckBox x:Name="LockRatio" Content="_Lock aspect ratio" IsChecked="True" Margin="0,14,0,10" Checked="OnLockRatioChecked" />
+    <TextBlock Text="The complete SVG canvas is fitted proportionally. Extra space stays transparent; authored backgrounds are preserved."
+               TextWrapping="Wrap" Foreground="#475569" />
+    <TextBlock x:Name="ErrorText" MinHeight="40" Margin="0,10,0,8" TextWrapping="Wrap" Foreground="#B91C1C"
+               AutomationProperties.LiveSetting="Polite" />
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+      <Button Content="Cancel" IsCancel="True" Padding="14,6" Margin="0,0,8,0" />
+      <Button x:Name="ExportButton" Content="Choose file..." IsDefault="True" Padding="14,6" Click="OnExportClick" />
+    </StackPanel>
+  </StackPanel>
+</Window>

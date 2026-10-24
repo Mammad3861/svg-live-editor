@@ -90,6 +90,243 @@ public sealed class MainWindowPreviewTextEditingIntegrationTests
         Assert.IsTrue(thread.Join(TimeSpan.FromSeconds(5)));
     }
 
+    [TestMethod]
+    [TestCategory("DesktopIntegration")]
+    public async Task PngFileExportRendersTheCurrentCanvasAndPreservesDocumentState()
+    {
+        TaskCompletionSource<bool> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        Thread thread = new(() =>
+        {
+            SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
+            _ = RunPngFileExportAsync(completion);
+            Dispatcher.Run();
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        Assert.IsTrue(await completion.Task.WaitAsync(TimeSpan.FromSeconds(90)));
+        Assert.IsTrue(thread.Join(TimeSpan.FromSeconds(5)));
+    }
+
+    private static async Task RunPngFileExportAsync(TaskCompletionSource<bool> completion)
+    {
+        string profile = Path.Combine(Path.GetTempPath(), "SvgLiveEditor.PngExport.Tests", Guid.NewGuid().ToString("N"));
+        MainWindow? window = null;
+        Exception? failure = null;
+        try
+        {
+            Directory.CreateDirectory(profile);
+            window = new MainWindow(profile) { Width = 1100, Height = 700, ShowInTaskbar = false };
+            TaskCompletionSource<CoreWebView2> ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            window.PreviewWebView.CoreWebView2InitializationCompleted += (_, e) =>
+            {
+                if (e.IsSuccess) ready.TrySetResult(window.PreviewWebView.CoreWebView2!);
+                else ready.TrySetException(e.InitializationException);
+            };
+            window.Show();
+            CoreWebView2 core = await ready.Task.WaitAsync(TimeSpan.FromSeconds(20));
+            const string source = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 50\"><rect width=\"100\" height=\"50\" fill=\"red\"/><rect x=\"90\" width=\"10\" height=\"50\" fill=\"blue\"/><text id=\"label\" x=\"10\" y=\"30\" font-size=\"12\">Hello فارسی</text></svg>";
+            window.SourceEditor.Text = source;
+            await WaitForSourceAndIndexAsync(window, source);
+            string document = Path.Combine(profile, "document.svg");
+            string destination = Path.Combine(profile, "export.png");
+            File.WriteAllText(document, source);
+            GetViewModel(window).MarkSaved(document);
+            window.SourceEditor.Document.UndoStack.ClearAll();
+            Select(window, "label");
+
+            FieldInfo canvasField = typeof(MainWindow).GetField("_lastValidCanvasSize", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            object? originalCanvas = canvasField.GetValue(window);
+            try
+            {
+                canvasField.SetValue(window, new SvgCanvasSize(1_000_000_001, 50));
+                Assert.IsFalse((bool)InvokePrivate(window, "TryCapturePngExport", new object[] { null! })!,
+                    "Unsupported intrinsic dimensions must be rejected before constructing the dialog.");
+            }
+            finally { canvasField.SetValue(window, originalCanvas); }
+
+            Task<bool> ExportAsync(CancellationToken token = default) => (Task<bool>)InvokePrivate(
+                window, "ExportPngToFileAsync", destination, new PreviewPngSize(100, 100), token)!;
+            async Task HoldRepliesAsync()
+            {
+                await core.ExecuteScriptAsync("""
+                    window.pngExportPost ??= window.chrome.webview.postMessage.bind(window.chrome.webview);
+                    window.pngExportReplies = [];
+                    window.chrome.webview.postMessage = message => {
+                      if (message.type === 'png') window.pngExportReplies.push(message);
+                      else window.pngExportPost(message);
+                    };
+                    """);
+            }
+            async Task<string> HeldReplyAsync()
+            {
+                await WaitForScriptConditionAsync(core, "window.pngExportReplies.length === 1");
+                return JsonSerializer.Deserialize<string>(await core.ExecuteScriptAsync("JSON.stringify(window.pngExportReplies[0])"))!;
+            }
+            async Task DeliverAsync(string json)
+            {
+                using JsonDocument parsed = JsonDocument.Parse(json);
+                string request = parsed.RootElement.GetProperty("requestId").GetString()!;
+                TaskCompletionSource<bool> received = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                void OnMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs args)
+                {
+                    using JsonDocument message = JsonDocument.Parse(args.WebMessageAsJson);
+                    if (message.RootElement.TryGetProperty("type", out JsonElement type) && type.GetString() == "png"
+                        && message.RootElement.GetProperty("requestId").GetString() == request) received.TrySetResult(true);
+                }
+                core.WebMessageReceived += OnMessage;
+                try
+                {
+                    Assert.IsTrue(await ReadScriptBooleanAsync(core,
+                        $"(() => {{ (window.pngExportPost ?? window.chrome.webview.postMessage.bind(window.chrome.webview))({json}); return true; }})()"));
+                    await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                }
+                finally { core.WebMessageReceived -= OnMessage; }
+            }
+
+            await OpenPreviewEditorAsync(window, core, useDoubleClick: false);
+            await SetEditorValueAsync(core, "pending preview");
+            object? textSession = GetField<object?>(window, "_previewTextEditSession");
+            Assert.IsFalse(await ExportAsync());
+            InvokePrivate(window, "OnExportPngClick", window, new RoutedEventArgs());
+            Assert.AreSame(textSession, GetField<object?>(window, "_previewTextEditSession"));
+            Assert.AreEqual(source, window.SourceEditor.Text);
+            Assert.IsFalse(window.SourceEditor.CanUndo);
+            InvokePrivate(window, "ClosePreviewTextEditSession", false);
+            await WaitForScriptConditionAsync(core, "document.querySelector('.text-editor-input') === null");
+            window.InspectorTextContentBox.Text = "pending properties";
+            window.InspectorTextContentBox.GetBindingExpression(TextBox.TextProperty)?.UpdateSource();
+            Assert.IsTrue(GetViewModel(window).Inspector.TextContent!.HasUncommittedValue);
+            Assert.IsFalse(await ExportAsync());
+            Assert.AreEqual("pending properties", GetViewModel(window).Inspector.TextContent!.Value);
+            GetViewModel(window).Inspector.TextContent!.Revert();
+
+            window.Width = 900;
+            window.UpdateLayout();
+            InvokePrivate(window, "ApplyPreviewZoomState", new PreviewZoomState(PreviewZoomMode.Manual, 5));
+            await WaitForScriptConditionAsync(core, "document.querySelector('img').getBoundingClientRect().width >= 499");
+            await core.ExecuteScriptAsync("const v=document.querySelector('.preview-viewport');v.scrollLeft=v.scrollWidth;v.scrollTop=v.scrollHeight;");
+            await WaitForScriptConditionAsync(core,
+                "(() => { const v=document.querySelector('.preview-viewport');const p=JSON.stringify([v.scrollLeft,v.scrollTop]);const stable=window.exportViewport===p;window.exportViewport=p;return stable; })()");
+            string viewport = await core.ExecuteScriptAsync("JSON.stringify([document.querySelector('.preview-viewport').scrollLeft,document.querySelector('.preview-viewport').scrollTop])");
+            File.WriteAllText(destination, "existing destination");
+            Assert.IsTrue(await ExportAsync());
+            using (FileStream stream = File.OpenRead(destination))
+            {
+                System.Windows.Media.Imaging.PngBitmapDecoder decoder = new(stream,
+                    System.Windows.Media.Imaging.BitmapCreateOptions.PreservePixelFormat, System.Windows.Media.Imaging.BitmapCacheOption.OnLoad);
+                System.Windows.Media.Imaging.FormatConvertedBitmap image = new(decoder.Frames[0], PixelFormats.Bgra32, null, 0);
+                Assert.AreEqual(100, image.PixelWidth);
+                Assert.AreEqual(100, image.PixelHeight);
+                byte[] Pixel(int x, int y)
+                {
+                    byte[] pixel = new byte[4];
+                    image.CopyPixels(new Int32Rect(x, y, 1, 1), pixel, 4, 0);
+                    return pixel;
+                }
+                Assert.AreEqual((byte)0, Pixel(5, 5)[3], "Padding must be transparent.");
+                CollectionAssert.AreEqual(new byte[] { 0, 0, 255, 255 }, Pixel(5, 30), "The authored background must remain red.");
+                CollectionAssert.AreEqual(new byte[] { 255, 0, 0, 255 }, Pixel(95, 50), "The full canvas must include the far blue edge.");
+                Assert.AreEqual((byte)0, Pixel(5, 95)[3]);
+            }
+            Assert.AreEqual(source, window.SourceEditor.Text);
+            Assert.AreEqual(document, GetViewModel(window).CurrentFilePath);
+            Assert.IsFalse(GetViewModel(window).IsModified);
+            Assert.IsFalse(window.SourceEditor.CanUndo);
+            Assert.AreEqual(source, File.ReadAllText(document));
+            Assert.AreEqual(viewport, await core.ExecuteScriptAsync("JSON.stringify([document.querySelector('.preview-viewport').scrollLeft,document.querySelector('.preview-viewport').scrollTop])"));
+            byte[] exported = File.ReadAllBytes(destination);
+            // Exercise the unchanged legacy render branch without touching the real clipboard.
+            await HoldRepliesAsync();
+            string copyToken = GetField<string>(window, "_activePreviewBridgeToken");
+            string copyRequest = Guid.NewGuid().ToString("N");
+            core.PostWebMessageAsJson(new PreviewPageMessageBuilder().BuildPngRequestMessage(copyToken, copyRequest, new(100, 50)));
+            string legacyReply = await HeldReplyAsync();
+            Assert.IsTrue(new PreviewPngMessageParser().TryParse(legacyReply,
+                new(copyToken, copyRequest, new(new(100, 50), PreviewPngSourceState.CurrentValid), PreviewPngRequestPurpose.ClipboardCopy),
+                out PreviewPngPayload? legacyPng));
+            Assert.AreEqual(new PreviewPngSize(100, 50), legacyPng!.Size);
+
+            window.SourceEditor.Text = "<svg";
+            Assert.IsFalse(await ExportAsync(), "Pending validation must not export an older valid image.");
+            await WaitUntilAsync(() => GetField<PreviewPngSourceState>(window, "_previewPngSourceState") == PreviewPngSourceState.CurrentInvalid,
+                "Invalid Source did not finish validation.");
+            Assert.IsFalse(await ExportAsync(), "Invalid Source must not export an older valid image.");
+            window.SourceEditor.Text = source;
+            Assert.IsFalse(await ExportAsync(), "A valid edit must wait for the matching Preview confirmation.");
+            await WaitForSourceAndIndexAsync(window, source);
+            await HoldRepliesAsync();
+            using (CancellationTokenSource cancel = new())
+            {
+                Task<bool> canceled = ExportAsync(cancel.Token);
+                _ = await HeldReplyAsync();
+                cancel.Cancel();
+                Assert.IsFalse(await canceled);
+            }
+            await HoldRepliesAsync();
+            Task<bool> timedOut = ExportAsync();
+            string expired = await HeldReplyAsync();
+            Assert.IsFalse(await timedOut.WaitAsync(TimeSpan.FromSeconds(15)));
+            CollectionAssert.AreEqual(exported, File.ReadAllBytes(destination));
+
+            await HoldRepliesAsync();
+            Task<bool> stale = ExportAsync();
+            string staleReply = await HeldReplyAsync();
+            string changed = source + " ";
+            window.SourceEditor.Document.Insert(window.SourceEditor.Document.TextLength, " ");
+            Assert.IsTrue(window.SourceEditor.CanUndo);
+            Assert.IsFalse(await stale);
+            await WaitForSourceAndIndexAsync(window, changed);
+            await HoldRepliesAsync();
+            Task<bool> retry = ExportAsync();
+            string current = await HeldReplyAsync();
+            await DeliverAsync(expired);
+            await DeliverAsync(staleReply);
+            Assert.IsFalse(retry.IsCompleted, "Old replies must not complete a newer export request.");
+            CollectionAssert.AreEqual(exported, File.ReadAllBytes(destination));
+            await DeliverAsync(current);
+            Assert.IsTrue(await retry);
+            Assert.AreEqual(changed, window.SourceEditor.Text);
+            Assert.IsTrue(GetViewModel(window).IsModified);
+            Assert.AreEqual(document, GetViewModel(window).CurrentFilePath);
+            window.SourceEditor.Undo();
+            Assert.AreEqual(source, window.SourceEditor.Text);
+            Assert.IsFalse(window.SourceEditor.CanUndo, "Export must not add an Undo unit.");
+            window.SourceEditor.Redo();
+            Assert.AreEqual(changed, window.SourceEditor.Text);
+            await WaitForSourceAndIndexAsync(window, changed);
+
+            await HoldRepliesAsync();
+            Task<bool> replaced = ExportAsync();
+            string oldDocumentReply = await HeldReplyAsync();
+            GetViewModel(window).MarkSaved(document);
+            InvokePrivate(window, "OnNewClick", window, new RoutedEventArgs());
+            Assert.IsFalse(await replaced);
+            string replacement = window.SourceEditor.Text;
+            await WaitUntilAsync(() => GetField<long?>(window, "_visiblePreviewSourceRevision") == GetRevision(window), "Replacement Preview did not settle.");
+            await DeliverAsync(oldDocumentReply);
+            Assert.AreEqual(replacement, window.SourceEditor.Text);
+            Assert.AreEqual(0, Directory.GetFiles(profile, "*.png.tmp").Length, "No staging file may remain.");
+        }
+        catch (Exception exception) { failure = exception; }
+        finally
+        {
+            try
+            {
+                if (window is not null)
+                {
+                    InvokePrivate(window, "CancelPngExport");
+                    InvokePrivate(window, "ClosePreviewTextEditSession", false);
+                    GetViewModel(window).Inspector.TextContent?.Revert();
+                }
+                await DesktopTestWindowCleanup.CloseAndDeleteProfileAsync(window, profile);
+            }
+            catch (Exception exception) { failure ??= exception; }
+            if (failure is null) completion.TrySetResult(true);
+            else completion.TrySetException(failure);
+            Dispatcher.CurrentDispatcher.BeginInvokeShutdown(DispatcherPriority.Send);
+        }
+    }
+
     private static async Task RunPendingTextCloseAsync(
         TaskCompletionSource<bool> completion, string editor, string decision, string command = "close")
     {

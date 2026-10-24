@@ -1030,7 +1030,14 @@ public sealed class PreviewHtmlBuilder
 
             try {
               context.clearRect(0, 0, message.width, message.height);
-              context.drawImage(image, 0, 0, message.width, message.height);
+              if (message.type === 'exportPng') {
+                context.drawImage(image,
+                  (message.width - message.drawWidth) / 2,
+                  (message.height - message.drawHeight) / 2,
+                  message.drawWidth, message.drawHeight);
+              } else {
+                context.drawImage(image, 0, 0, message.width, message.height);
+              }
               const dataUrl = canvas.toDataURL('image/png');
               const prefix = 'data:image/png;base64,';
               if (!dataUrl.startsWith(prefix) ||
@@ -1280,6 +1287,21 @@ public sealed class PreviewHtmlBuilder
                   closeTextEditor(message.restorePreviewFocus);
                   return;
                 }
+              }
+
+              if (message.type === 'exportPng' &&
+                  Object.keys(message).length === 8 &&
+                  Number.isSafeInteger(message.sourceRevision) &&
+                  message.sourceRevision === sourceRevision &&
+                  typeof message.requestId === 'string' &&
+                  /^[0-9a-fA-F]{32}$/.test(message.requestId) &&
+                  Number.isInteger(message.width) && message.width > 0 && message.width <= 4096 &&
+                  Number.isInteger(message.height) && message.height > 0 && message.height <= 4096 &&
+                  message.width * message.height <= 8000000 &&
+                  Number.isFinite(message.drawWidth) && message.drawWidth > 0 && message.drawWidth <= message.width &&
+                  Number.isFinite(message.drawHeight) && message.drawHeight > 0 && message.drawHeight <= message.height) {
+                renderPng(message);
+                return;
               }
 
               if (message.type === 'copyPng' &&

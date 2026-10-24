@@ -2,6 +2,10 @@
 
 This roadmap records product direction. Post-v1 entries are ideas, not promises, deadlines, or a fixed delivery schedule. Priorities may change as accessibility, security, reliability, and user feedback are evaluated.
 
+## Current bounded addition (unreleased)
+
+Custom-size transparent PNG file export is implemented without assigning a new version. It reuses the validated image bridge, exports only the current confirmed revision, and leaves SVG/TXT Save As and Clipboard/Drag unchanged. PDF and other export formats remain excluded.
+
 ## Shipped
 
 - **v0.1 through v0.7:** application foundations, the security-restricted preview, Inspector, sharing, templates, persistence, visual selection and movement, resizing, same-parent Arrange, and opacity.
@@ -124,4 +128,3 @@ These entries are optional product-direction ideas, not promises or deadlines.
    - Additional carefully audited export formats and distribution options after the stable baseline.
 10. **Future integrations**
    - External design-tool workflows and advanced AI-assisted workflows.
-

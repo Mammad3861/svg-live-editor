@@ -27,7 +27,8 @@ public sealed record PreviewPngPayload(
 public enum PreviewPngRequestPurpose
 {
     ClipboardCopy,
-    DragOut
+    DragOut,
+    FileExport
 }
 
 public sealed record PendingPreviewPngRequest(

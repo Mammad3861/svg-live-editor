@@ -128,6 +128,23 @@ public sealed class PreviewPageMessageBuilder
         });
     }
 
+    public string BuildPngExportMessage(string bridgeToken, string requestId,
+        long sourceRevision, PreviewPngSize size, SvgCanvasSize canvasSize)
+    {
+        ValidateHexToken(bridgeToken, nameof(bridgeToken));
+        ValidateHexToken(requestId, nameof(requestId));
+        if (sourceRevision is < 0 or > MaximumJavaScriptSafeInteger)
+            throw new ArgumentOutOfRangeException(nameof(sourceRevision));
+        SvgCanvasSize fit = PreviewPngSizeCalculator.FitExport(canvasSize, size);
+        return JsonSerializer.Serialize(new
+        {
+            type = "exportPng", token = bridgeToken, requestId, sourceRevision,
+            width = size.Width, height = size.Height,
+            drawWidth = Math.Min(size.Width, fit.Width),
+            drawHeight = Math.Min(size.Height, fit.Height)
+        });
+    }
+
     public string BuildHorizontalScrollMessage(
         string bridgeToken,
         double deltaX)

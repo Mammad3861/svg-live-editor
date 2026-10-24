@@ -408,11 +408,7 @@ public partial class MainWindow : Window
                     messageJson,
                     pending))
             {
-                _pendingPreviewPngRequest = null;
-                _pendingPreviewDragOrigin = null;
-                _viewModel.SetCanCopyPreviewAsPng(_hasVisiblePreview);
-                _viewModel.SetOperationStatus(
-                    "The preview could not be converted to PNG.");
+                CancelPendingPreviewPngRequest("The preview could not be converted to PNG.");
                 return;
             }
 
@@ -732,7 +728,8 @@ public partial class MainWindow : Window
 
     private void StartPreviewPngRequest(
         PreviewPngRequestPurpose purpose,
-        PreviewDragRequestOrigin? dragOrigin = null)
+        PreviewDragRequestOrigin? dragOrigin = null,
+        PreviewPngSize? exportSize = null)
     {
         if ((purpose == PreviewPngRequestPurpose.DragOut)
             != (dragOrigin is not null))
@@ -766,6 +763,14 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (purpose == PreviewPngRequestPurpose.FileExport)
+        {
+            if (exportSize is not PreviewPngSize requested
+                || _pngExportSnapshot is not PngExportSnapshot snapshot
+                || !IsPngExportCurrent(snapshot)) return;
+            plan = new PreviewPngCopyPlan(requested, PreviewPngSourceState.CurrentValid);
+        }
+
         string requestId =
             Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
         PendingPreviewPngRequest pending =
@@ -780,10 +785,10 @@ public partial class MainWindow : Window
                     ? "Preparing image\u2026"
                     : "Preparing PNG for the clipboard...");
             core.PostWebMessageAsJson(
-                _previewPageMessageBuilder.BuildPngRequestMessage(
-                    bridgeToken,
-                    requestId,
-                    plan.Size));
+                purpose == PreviewPngRequestPurpose.FileExport
+                    ? _previewPageMessageBuilder.BuildPngExportMessage(bridgeToken, requestId,
+                        _pngExportSnapshot!.Revision, plan.Size, _pngExportSnapshot.CanvasSize)
+                    : _previewPageMessageBuilder.BuildPngRequestMessage(bridgeToken, requestId, plan.Size));
             _ = ExpirePreviewPngRequestAsync(pending);
         }
         catch (Exception exception)
@@ -802,6 +807,11 @@ public partial class MainWindow : Window
         PreviewPngPayload pngPayload,
         PreviewDragRequestOrigin? dragOrigin)
     {
+        if (pending.Purpose == PreviewPngRequestPurpose.FileExport)
+        {
+            _pngExportCompletion?.TrySetResult(pngPayload);
+            return;
+        }
         if (pending.Purpose == PreviewPngRequestPurpose.DragOut)
         {
             if (dragOrigin is not PreviewDragRequestOrigin origin)
@@ -1075,6 +1085,8 @@ public partial class MainWindow : Window
 
     private void CancelPendingPreviewPngRequest(string? status = null)
     {
+        if (_pendingPreviewPngRequest?.Purpose == PreviewPngRequestPurpose.FileExport)
+            _pngExportCompletion?.TrySetResult(null);
         _pendingPreviewDragOrigin = null;
         if (_pendingPreviewPngRequest is null)
         {
@@ -1105,6 +1117,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        CancelPngExport();
         ClearPendingSourceNavigationIntent();
         _sourceRevisionTracker.Advance(
             _activeSourceChangeOrigin ?? SourceChangeOrigin.SourceEditor);
@@ -1495,6 +1508,7 @@ public partial class MainWindow : Window
         long recoveryRevisionBaseline = 0,
         bool queueInitialRecovery = false)
     {
+        CancelPngExport();
         _previewDebouncer.Cancel();
         BeginDocumentSession(
             recoverySnapshotId,
@@ -2401,6 +2415,13 @@ public partial class MainWindow : Window
             _previewDirectDragHandshake.Reset();
         }
 
+        if (pressedKey == Key.Escape && _pngExportCancellation is not null)
+        {
+            CancelPngExport();
+            e.Handled = true;
+            return;
+        }
+
         if (pressedKey == Key.Escape
             && _pendingPreviewPngRequest?.Purpose
                 == PreviewPngRequestPurpose.DragOut)
@@ -2855,6 +2876,7 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _isWindowClosing = true;
+        CancelPngExport();
         DetachNativePreviewInputHook();
         ClosePreviewContextMenu();
         SourceEditor.Document.TextChanged -= OnEditorDocumentTextChanged;
